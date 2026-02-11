@@ -26,6 +26,9 @@ class XprofSession(contextlib.AbstractContextManager):
   def start_session(self, *args, **kwargs):
     pass
 
+  def end_session_and_get_session_id(self):
+    pass
+
   def end_session_and_get_url(self):
     # MUST return a string to satisfy the f-string formatter
     return "http://dummy-url-for-oss"
