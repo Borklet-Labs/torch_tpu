@@ -12,8 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("//build_files:build_defs.bzl", "define_cpp_filegroup", "torch_tpu_py_test")
-load("//shims/py_rules:pytype.bzl", "pytype_strict_binary", "pytype_strict_library")
+load("//build_files:build_defs.bzl", "define_cpp_filegroup")
 
 package(
     default_applicable_licenses = ["//:license"],
