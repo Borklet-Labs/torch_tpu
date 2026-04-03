@@ -26,13 +26,11 @@
 #include "xla/pjrt/pjrt_client.h"
 
 namespace torch_tpu {
-namespace pjrt {
 
 // Initializes and returns a PjRtClient based on the provided device type.
 absl::StatusOr<absl_nonnull std::unique_ptr<xla::PjRtClient>> GetPjRtClient(
     const std::string& device_type, int64_t tpu_premapped_buffer_size);
 
-}  // namespace pjrt
 }  // namespace torch_tpu
 
 #endif  // TORCH_TPU_pjrt_PJRT_CLIENT_H_
