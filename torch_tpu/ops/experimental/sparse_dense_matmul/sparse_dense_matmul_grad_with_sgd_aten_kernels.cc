@@ -83,8 +83,8 @@ auto SparseDenseMatmulGradWithSgdBuilder(int64_t device_batch_size,
     auto prev_insertion_point = op_builder.saveInsertionPoint();
 
     op_builder.setInsertionPointToEnd(module.getBody());
-    auto func = op_builder.create<mlir::func::FuncOp>(
-        builder.getLoc(), computation_name, func_type);
+    auto func = mlir::func::FuncOp::create(op_builder, builder.getLoc(),
+                                           computation_name, func_type);
     func.setVisibility(mlir::SymbolTable::Visibility::Private);
 
     auto* entry_block = func.addEntryBlock();
@@ -99,10 +99,11 @@ auto SparseDenseMatmulGradWithSgdBuilder(int64_t device_batch_size,
     // updated_param = param - lr * grad
     auto updated_param = mlir::stablehlo::Subtract(param, lr_grad);
 
-    auto tuple_op = op_builder.create<mlir::stablehlo::TupleOp>(
-        builder.getLoc(), mlir::ValueRange{updated_param.getValue()});
-    op_builder.create<mlir::func::ReturnOp>(
-        builder.getLoc(), tuple_op.getOperation()->getResults());
+    auto tuple_op = mlir::stablehlo::TupleOp::create(
+        op_builder, builder.getLoc(),
+        mlir::ValueRange{updated_param.getValue()});
+    mlir::func::ReturnOp::create(op_builder, builder.getLoc(),
+                                 tuple_op.getOperation()->getResults());
 
     // Restore insertion point
     op_builder.restoreInsertionPoint(prev_insertion_point);
@@ -169,8 +170,8 @@ auto SparseDenseMatmulGradWithSgdBuilder(int64_t device_batch_size,
         {call_target_attr, has_side_effect_attr, api_version_attr,
          called_computations_attr, frontend_attrs_attr});
 
-    auto gte = op_builder.create<mlir::stablehlo::GetTupleElementOp>(
-        builder.getLoc(), op.getResult(0), 0);
+    auto gte = mlir::stablehlo::GetTupleElementOp::create(
+        op_builder, builder.getLoc(), op.getResult(0), 0);
 
     return mlir::MlirOp(builder, gte.getResult());
   };
