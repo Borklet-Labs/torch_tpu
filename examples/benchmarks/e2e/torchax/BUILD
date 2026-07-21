@@ -33,6 +33,7 @@ torch_tpu_py_library(
         "//examples/benchmarks/e2e:device_utils",
         "//examples/benchmarks/e2e:mlcompass_utils",
         "//examples/benchmarks/e2e:performance_utils",
+        "//examples/benchmarks/e2e/harness:metrics",
         "//shims/absl_py/logging",
         "//shims/torch",
         "//shims/torch:pytorch",
