@@ -312,13 +312,13 @@ class Gemma4Attention(nn.Module):
 
     use_splash = (
         splash_attention is not None
-        and query_states.device.type in ('xla', 'tpu')
+        and query_states.device.type == 'tpu'
         and self.is_sliding
         and not skip_sliding_mask
         and attention_mask is None
     )
 
-    # Use TPU Splash attention SWA kernel on TPU/XLA devices.
+    # Use TPU Splash attention SWA kernel on TPU devices.
     if use_splash and splash_attention is not None:
       enable_gqa = self.num_heads != self.current_kv_heads
       attn_output = splash_attention.splash_sdpa(
