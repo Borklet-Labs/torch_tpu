@@ -34,6 +34,7 @@ from examples.benchmarks.e2e.harness import cases
 from examples.benchmarks.e2e.harness import compile as compile_lib
 from examples.benchmarks.e2e.harness import context as context_lib
 from examples.benchmarks.e2e.harness import discovery as discovery_lib
+from examples.benchmarks.e2e.harness import flags as flags_lib
 from examples.benchmarks.e2e.harness import measure as measure_lib
 from examples.benchmarks.e2e.harness import metrics as metrics_lib
 from examples.benchmarks.e2e.harness import mode as mode_lib
@@ -49,21 +50,6 @@ _FRAMEWORK = mode_lib.Framework.TORCH
 
 # Resolved once at import/collection time without acquiring device handles.
 _PLATFORM = target_lib.platform_from_env()
-
-# Some benchmarks may be registered but known to fail. This can be used to
-# define the desired behavior when encountering such benchmarks.
-_SKIP_BEHAVIOR = flags.DEFINE_enum(
-    "skip_behavior",
-    "skip",
-    ["skip", "assert_raise", "ignore", "run_skipped"],
-    "Behavior for run modes that are marked as skipped in the config."
-    " Options:\n  skip: Skips the test if the benchmark is marked as skipped.\n"
-    "  assert_raise: Runs the test and expects it to raise an exception if"
-    " skipped.\n  ignore: Runs the test normally even if it is marked as"
-    " skipped.\n  run_skipped: Only runs skipped tests (skips those not marked"
-    " as skipped).",
-)
-
 
 # Import all models and trigger registration of benchmarks.
 failures = discovery_lib.import_submodules(models)
@@ -118,11 +104,11 @@ class BenchmarkTest(parameterized.TestCase):
   ):
     is_skipped = mode.value in spec.skipped_run_modes
 
-    if is_skipped and _SKIP_BEHAVIOR.value == "skip":
+    if is_skipped and flags_lib.SKIP_BEHAVIOR.value == "skip":
       self.skipTest(
           f"Benchmark {spec.name} explicitly skips run mode {mode.value}"
       )
-    if not is_skipped and _SKIP_BEHAVIOR.value == "run_skipped":
+    if not is_skipped and flags_lib.SKIP_BEHAVIOR.value == "run_skipped":
       self.skipTest(
           f"Benchmark {spec.name} is not skipped for run mode {mode.value},"
           " skipping due to skip_behavior=run_skipped"
@@ -134,7 +120,7 @@ class BenchmarkTest(parameterized.TestCase):
         target=target, run_scope=context_lib.RUN_SCOPE.value
     )
 
-    if is_skipped and _SKIP_BEHAVIOR.value == "assert_raise":
+    if is_skipped and flags_lib.SKIP_BEHAVIOR.value == "assert_raise":
       with self.assertRaises(Exception):
         self._run_and_measure(spec, mode, target, device_ops, ctx)
     else:
