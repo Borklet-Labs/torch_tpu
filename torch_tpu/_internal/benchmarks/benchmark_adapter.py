@@ -22,6 +22,7 @@ class BenchmarkData:
     pass
 
 
+# DEPRECATED: Use torch_tpu._internal.benchmarks.export_adapter instead.
 def export_benchmark_results(*args, **kwargs):
   """No-op export_benchmark_results for OSS."""
   del args, kwargs
