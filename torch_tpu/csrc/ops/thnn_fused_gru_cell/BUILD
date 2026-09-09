@@ -35,6 +35,7 @@ torch_tpu_cc_library(
         "//torch_tpu/csrc/eager:tensor_to_buffer",
         "//torch_tpu/csrc/ops:op_builder_utils",
         "//torch_tpu/csrc/ops:op_names",
+        "//torch_tpu/csrc/ops/gru:gru_common",
         "//torch_tpu/csrc/ops/macros:kernel",
         "//torch_tpu/csrc/ops/reductions",
         "//torch_tpu/csrc/ops/reductions:reduction_utils",
