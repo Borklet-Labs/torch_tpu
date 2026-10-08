@@ -99,6 +99,11 @@ KNOWN_FAILURES: tuple[KnownFailure, ...] = (
         reason="aten::_grouped_mm has no lowering",
     ),
     KnownFailure(
+        benchmark="gpt_oss_120b_2_layers_training",
+        framework=mode_lib.Framework.TORCHAX,
+        reason="aten::_grouped_mm has no lowering",
+    ),
+    KnownFailure(
         benchmark="gpt_oss_120b_4_layers_forward",
         framework=mode_lib.Framework.TORCHAX,
         reason="aten::_grouped_mm has no lowering",

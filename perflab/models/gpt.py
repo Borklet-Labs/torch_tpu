@@ -31,6 +31,9 @@ def _load_hf_gpt(
     seq_len: int = 512,
     batch_size: int = 1,
     num_layers: int | None = None,
+    layer_types: list[str] | None = None,
+    hidden_size: int | None = None,
+    intermediate_size: int | None = None,
 ) -> tuple[torch.nn.Module, dict[str, Any]]:
   """Loads the HuggingFace GPT model and generates sample inputs for benchmarking."""
 
@@ -40,6 +43,12 @@ def _load_hf_gpt(
       config.num_hidden_layers = num_layers
       if hasattr(config, "layer_types"):
         config.layer_types = config.layer_types[:num_layers]
+    if layer_types is not None:
+      config.layer_types = layer_types
+    if hidden_size is not None:
+      config.hidden_size = hidden_size
+    if intermediate_size is not None:
+      config.intermediate_size = intermediate_size
     return config
 
   dtype = torch_device_ops.get_torch_dtype(ctx.dtype)
@@ -126,3 +135,33 @@ def gpt_oss_120b_4_layers_forward(ctx: context_lib.Context):
       num_layers=4,
   )
   return model, (), inputs
+
+
+@registry_lib.register_benchmark(stepper=step_lib.StepperType.TRAINING)
+def gpt_oss_120b_2_layers_training(ctx: context_lib.Context):
+  """Benchmark factory for GPT-OSS 120B (2 Layers) training."""
+  if ctx.run_scope == context_lib.RunScope.PRESUBMIT:
+    raise target_lib.UnsupportedBenchmark(
+        "GPT-OSS 120B training uses too much memory to run on TPUs with smaller"
+        " memory."
+    )
+  batch_size = 1
+  seq_len = 512
+  model, inputs = _load_hf_gpt(
+      ctx,
+      "openai/gpt-oss-120b",
+      is_training=True,
+      seq_len=seq_len,
+      batch_size=batch_size,
+      num_layers=2,
+      layer_types=["sliding_attention", "full_attention"],
+      hidden_size=1440,
+      intermediate_size=1440,
+  )
+  opt = torch.optim.AdamW(
+      model.parameters(),
+      lr=1e-4,
+      capturable=True,
+      fused=True,
+  )
+  return model, (), inputs, opt

@@ -237,6 +237,32 @@ def qwen3_4b_training(ctx: context_lib.Context):
   return model, (), inputs, opt
 
 
+# --- Qwen3 8B ---
+
+
+@registry_lib.register_benchmark(stepper=step_lib.StepperType.FORWARD)
+def qwen3_8b_forward(ctx: context_lib.Context):
+  """Benchmark factory for Qwen3-8B forward."""
+  if ctx.run_scope == context_lib.RunScope.PRESUBMIT:
+    batch_size = 1
+    seq_len = 128
+    num_layers = 2
+  else:
+    batch_size = 1
+    seq_len = 512
+    num_layers = None
+
+  model, inputs = _load_hf_qwen(
+      ctx,
+      "Qwen/Qwen3-8B",
+      is_training=False,
+      seq_len=seq_len,
+      batch_size=batch_size,
+      num_layers=num_layers,
+  )
+  return model, (), inputs
+
+
 # --- Qwen3-Coder-30B MoE ---
 
 
