@@ -18,6 +18,7 @@
 
 #include <array>
 #include <cstdint>
+#include <initializer_list>
 #include <optional>
 #include <utility>
 
@@ -29,6 +30,7 @@
 #include "csrc/ops/reductions/sum.h"
 #include "llvm/ADT/APFloat.h"
 #include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/Types.h"
 #include "stablehlo/integrations/cpp/builder/AttrTypeBuilderUtil.h"
 #include "stablehlo/integrations/cpp/builder/MlirBuilder.h"
 #include "stablehlo/integrations/cpp/builder/StablehloBuilder.h"
@@ -45,6 +47,285 @@ namespace {
   return mlir::stablehlo::Rsqrt(var_plus_eps);
 }
 
+bool HasZeroReductionDim(mlir::RankedTensorType input_type,
+                         const Dimensions& reduce_dims) {
+  for (int64_t d : reduce_dims) {
+    if (input_type.getDimSize(d) == 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+mlir::ElementType GetParamElementType(
+    mlir::ElementType input_dtype,
+    std::initializer_list<std::optional<mlir::MlirOp>> params) {
+  for (const std::optional<mlir::MlirOp>& param : params) {
+    if (param.has_value()) {
+      return GetElementTypeOrDie(*param);
+    }
+  }
+  return input_dtype;
+}
+
+absl::StatusOr<MlirOpResults<3>> BuildZeroBatchTrainingGradOutputs(
+    mlir::MlirOp input, mlir::MlirOp save_invstd, mlir::ElementType input_dtype,
+    mlir::ElementType weight_dtype, std::array<bool, 3> output_mask) {
+  mlir::MlirBuilder& builder = input.getBuilder();
+  mlir::MlirOp grad_input;
+  if (output_mask[0]) {
+    grad_input = input;
+  } else {
+    TT_ASSIGN_OR_RETURN(grad_input, MakeZeroSizedTensor(builder, input_dtype));
+  }
+
+  mlir::MlirOp grad_weight;
+  if (output_mask[1]) {
+    grad_weight = MakeConstantLike(save_invstd, 0.0, weight_dtype);
+  } else {
+    TT_ASSIGN_OR_RETURN(grad_weight,
+                        MakeZeroSizedTensor(builder, weight_dtype));
+  }
+
+  mlir::MlirOp grad_bias;
+  if (output_mask[2]) {
+    grad_bias = MakeConstantLike(save_invstd, 0.0, weight_dtype);
+  } else {
+    TT_ASSIGN_OR_RETURN(grad_bias, MakeZeroSizedTensor(builder, weight_dtype));
+  }
+
+  return {{grad_input, grad_weight, grad_bias}};
+}
+
+absl::StatusOr<mlir::MlirOp> ComputeReductionNormFactor(
+    mlir::MlirOp input, mlir::MlirOp invstd, const Dimensions& reduce_dims) {
+  const mlir::RankedTensorType input_type = GetTensorTypeOrDie(input);
+  if (input_type.hasStaticShape()) {
+    int64_t num_reduction_elements = 1;
+    for (int64_t d : reduce_dims) {
+      num_reduction_elements *= input_type.getDimSize(d);
+    }
+    return MakeConstantLike(invstd,
+                            1.0 / static_cast<double>(num_reduction_elements));
+  }
+
+  mlir::MlirBuilder& builder = input.getBuilder();
+  const mlir::Type invstd_elem_type =
+      GetTensorTypeOrDie(invstd).getElementType();
+  mlir::MlirOp num_elements =
+      GetNumElements(input, invstd_elem_type, reduce_dims);
+  mlir::MlirOp one = MakeScalarConstant(builder, 1.0, invstd_elem_type);
+  mlir::MlirOp inv_num_elements = mlir::stablehlo::Div(one, num_elements);
+  return BroadcastIfNeeded(inv_num_elements, invstd);
+}
+
+absl::StatusOr<mlir::MlirOp> ComputeTrainingGradInput(
+    mlir::MlirOp grad_out, mlir::MlirOp input, mlir::MlirOp x_minus_mean,
+    mlir::MlirOp weight, mlir::MlirOp invstd, mlir::MlirOp grad_output_sum,
+    mlir::MlirOp dot_p, const Dimensions& reduce_dims,
+    mlir::ElementType input_dtype) {
+  TT_ASSIGN_OR_RETURN(mlir::MlirOp norm_const,
+                      ComputeReductionNormFactor(input, invstd, reduce_dims));
+
+  mlir::MlirOp grad_mean_1d = mlir::stablehlo::Mul(grad_output_sum, norm_const);
+  TT_ASSIGN_OR_RETURN(
+      mlir::MlirOp grad_mean,
+      BroadcastIfNeeded(grad_mean_1d, input, {kTorchFeaturesDimensionIndex}));
+
+  mlir::MlirOp invstd_sq = mlir::stablehlo::Mul(invstd, invstd);
+  mlir::MlirOp dot_p_times_norm = mlir::stablehlo::Mul(dot_p, norm_const);
+  mlir::MlirOp proj_scale_1d =
+      mlir::stablehlo::Mul(dot_p_times_norm, invstd_sq);
+  TT_ASSIGN_OR_RETURN(
+      mlir::MlirOp proj_scale,
+      BroadcastIfNeeded(proj_scale_1d, input, {kTorchFeaturesDimensionIndex}));
+
+  mlir::MlirOp proj = mlir::stablehlo::Mul(x_minus_mean, proj_scale);
+
+  mlir::MlirOp w_times_invstd = mlir::stablehlo::Mul(weight, invstd);
+  TT_ASSIGN_OR_RETURN(
+      mlir::MlirOp grad_scale,
+      BroadcastIfNeeded(w_times_invstd, input, {kTorchFeaturesDimensionIndex}));
+
+  mlir::MlirOp grad_out_minus_proj = mlir::stablehlo::Subtract(grad_out, proj);
+  mlir::MlirOp diff = mlir::stablehlo::Subtract(grad_out_minus_proj, grad_mean);
+  mlir::MlirOp grad_input = mlir::stablehlo::Mul(diff, grad_scale);
+  return mlir::stablehlo::ConvertElementType(grad_input, input_dtype);
+}
+
+absl::StatusOr<MlirOpResults<3>> BuildBatchNormBackwardTraining(
+    mlir::MlirOp grad_out, mlir::MlirOp input,
+    std::optional<mlir::MlirOp> weight_opt,
+    std::optional<mlir::MlirOp> save_mean_opt,
+    std::optional<mlir::MlirOp> save_invstd_opt,
+    std::array<bool, 3> output_mask, mlir::ElementType acc_dtype) {
+  if (!save_mean_opt || !save_invstd_opt) {
+    return TT_ERROR(error::kInternal)
+           << "save_mean and save_invstd must be provided when training=True";
+  }
+
+  mlir::MlirBuilder& builder = input.getBuilder();
+  const mlir::RankedTensorType input_type = GetTensorTypeOrDie(input);
+  const mlir::ElementType input_dtype = GetElementTypeOrDie(input);
+  const mlir::ElementType weight_dtype = GetParamElementType(
+      input_dtype, {weight_opt, save_mean_opt, save_invstd_opt});
+  const Dimensions reduce_dims =
+      GetBatchDimensions(input_type.getRank(), kTorchFeaturesDimensionIndex);
+
+  if (HasZeroReductionDim(input_type, reduce_dims)) {
+    return BuildZeroBatchTrainingGradOutputs(
+        input, *save_invstd_opt, input_dtype, weight_dtype, output_mask);
+  }
+
+  input = mlir::stablehlo::ConvertElementType(input, acc_dtype);
+  grad_out = mlir::stablehlo::ConvertElementType(grad_out, acc_dtype);
+  mlir::MlirOp mean =
+      mlir::stablehlo::ConvertElementType(*save_mean_opt, acc_dtype);
+  mlir::MlirOp invstd =
+      mlir::stablehlo::ConvertElementType(*save_invstd_opt, acc_dtype);
+  mlir::MlirOp weight =
+      weight_opt ? mlir::stablehlo::ConvertElementType(*weight_opt, acc_dtype)
+                 : MakeConstantLike(invstd, 1.0);
+
+  TT_ASSIGN_OR_RETURN(
+      mlir::MlirOp broadcasted_mean,
+      BroadcastIfNeeded(mean, input, {kTorchFeaturesDimensionIndex}));
+  mlir::MlirOp x_minus_mean =
+      mlir::stablehlo::Subtract(input, broadcasted_mean);
+
+  mlir::MlirOp grad_output_sum;
+  if (output_mask[0] || output_mask[2]) {
+    TT_ASSIGN_OR_RETURN(grad_output_sum, BuildSumShlo(grad_out, reduce_dims));
+  }
+
+  mlir::MlirOp dot_p;
+  if (output_mask[0] || output_mask[1]) {
+    mlir::MlirOp grad_out_times_x_minus_mean =
+        mlir::stablehlo::Mul(grad_out, x_minus_mean);
+    TT_ASSIGN_OR_RETURN(dot_p,
+                        BuildSumShlo(grad_out_times_x_minus_mean, reduce_dims));
+  }
+
+  mlir::MlirOp grad_input;
+  if (output_mask[0]) {
+    TT_ASSIGN_OR_RETURN(
+        grad_input, ComputeTrainingGradInput(grad_out, input, x_minus_mean,
+                                             weight, invstd, grad_output_sum,
+                                             dot_p, reduce_dims, input_dtype));
+  } else {
+    TT_ASSIGN_OR_RETURN(grad_input, MakeZeroSizedTensor(builder, input_dtype));
+  }
+
+  mlir::MlirOp grad_weight;
+  if (output_mask[1]) {
+    grad_weight = mlir::stablehlo::Mul(dot_p, invstd);
+    grad_weight =
+        mlir::stablehlo::ConvertElementType(grad_weight, weight_dtype);
+  } else {
+    TT_ASSIGN_OR_RETURN(grad_weight,
+                        MakeZeroSizedTensor(builder, weight_dtype));
+  }
+
+  mlir::MlirOp grad_bias;
+  if (output_mask[2]) {
+    grad_bias =
+        mlir::stablehlo::ConvertElementType(grad_output_sum, weight_dtype);
+  } else {
+    TT_ASSIGN_OR_RETURN(grad_bias, MakeZeroSizedTensor(builder, weight_dtype));
+  }
+
+  return {{grad_input, grad_weight, grad_bias}};
+}
+
+// Inference backward assumes that mean and variance are fixed constants
+// (running statistics) that do not depend on the current input batch. This
+// changes the gradient computation w.r.t training since dmean/dx and
+// dvariance/dx are 0.
+//
+// y = (x - mean) / sqrt(var + eps) * weight + bias
+// grad_out = dL/dy
+// dL/dx = grad_out * weight / sqrt(var + eps)
+// dL/dweight = grad_out * (x - mean) / sqrt(var + eps)
+// dL/dbias = grad_out
+absl::StatusOr<MlirOpResults<3>> BuildBatchNormBackwardInference(
+    mlir::MlirOp grad_out, mlir::MlirOp input,
+    std::optional<mlir::MlirOp> weight_opt,
+    std::optional<mlir::MlirOp> running_mean_opt,
+    std::optional<mlir::MlirOp> running_variance_opt, double eps,
+    std::array<bool, 3> output_mask, mlir::ElementType acc_dtype) {
+  mlir::MlirBuilder& builder = input.getBuilder();
+  const mlir::RankedTensorType input_type = GetTensorTypeOrDie(input);
+  const mlir::ElementType input_dtype = GetElementTypeOrDie(input);
+  const mlir::ElementType weight_dtype = GetParamElementType(
+      input_dtype, {weight_opt, running_mean_opt, running_variance_opt});
+  const int64_t num_features =
+      input_type.getDimSize(kTorchFeaturesDimensionIndex);
+  const Dimensions reduce_dims =
+      GetBatchDimensions(input_type.getRank(), kTorchFeaturesDimensionIndex);
+
+  input = mlir::stablehlo::ConvertElementType(input, acc_dtype);
+  grad_out = mlir::stablehlo::ConvertElementType(grad_out, acc_dtype);
+
+  mlir::MlirOp weight =
+      weight_opt ? mlir::stablehlo::ConvertElementType(*weight_opt, acc_dtype)
+                 : MakeConstant(builder, 1.0, acc_dtype, {num_features});
+  mlir::MlirOp mean =
+      running_mean_opt
+          ? mlir::stablehlo::ConvertElementType(*running_mean_opt, acc_dtype)
+          : MakeConstant(builder, 0.0, acc_dtype, {num_features});
+  mlir::MlirOp variance =
+      running_variance_opt
+          ? mlir::stablehlo::ConvertElementType(*running_variance_opt,
+                                                acc_dtype)
+          : MakeConstant(builder, 1.0, acc_dtype, {num_features});
+
+  mlir::MlirOp inv_std = ComputeInvStd(variance, eps);
+
+  mlir::MlirOp grad_input;
+  if (output_mask[0]) {
+    mlir::MlirOp w_times_inv_std = mlir::stablehlo::Mul(weight, inv_std);
+    TT_ASSIGN_OR_RETURN(mlir::MlirOp broadcasted_w,
+                        BroadcastIfNeeded(w_times_inv_std, input,
+                                          {kTorchFeaturesDimensionIndex}));
+    grad_input = mlir::stablehlo::Mul(grad_out, broadcasted_w);
+    grad_input = mlir::stablehlo::ConvertElementType(grad_input, input_dtype);
+  } else {
+    TT_ASSIGN_OR_RETURN(grad_input, MakeZeroSizedTensor(builder, input_dtype));
+  }
+
+  mlir::MlirOp grad_weight;
+  if (output_mask[1]) {
+    TT_ASSIGN_OR_RETURN(
+        mlir::MlirOp broadcasted_mean,
+        BroadcastIfNeeded(mean, input, {kTorchFeaturesDimensionIndex}));
+    mlir::MlirOp x_minus_mean =
+        mlir::stablehlo::Subtract(input, broadcasted_mean);
+    TT_ASSIGN_OR_RETURN(
+        mlir::MlirOp broadcasted_inv_std,
+        BroadcastIfNeeded(inv_std, input, {kTorchFeaturesDimensionIndex}));
+    mlir::MlirOp norm = mlir::stablehlo::Mul(x_minus_mean, broadcasted_inv_std);
+    mlir::MlirOp grad_out_times_norm = mlir::stablehlo::Mul(grad_out, norm);
+
+    TT_ASSIGN_OR_RETURN(grad_weight,
+                        BuildSumShlo(grad_out_times_norm, reduce_dims));
+    grad_weight =
+        mlir::stablehlo::ConvertElementType(grad_weight, weight_dtype);
+  } else {
+    TT_ASSIGN_OR_RETURN(grad_weight,
+                        MakeZeroSizedTensor(builder, weight_dtype));
+  }
+
+  mlir::MlirOp grad_bias;
+  if (output_mask[2]) {
+    TT_ASSIGN_OR_RETURN(grad_bias, BuildSumShlo(grad_out, reduce_dims));
+    grad_bias = mlir::stablehlo::ConvertElementType(grad_bias, weight_dtype);
+  } else {
+    TT_ASSIGN_OR_RETURN(grad_bias, MakeZeroSizedTensor(builder, weight_dtype));
+  }
+
+  return {{grad_input, grad_weight, grad_bias}};
+}
+
 }  // namespace
 
 absl::StatusOr<MlirOpResults<3>> BuildBatchNormBackward(
@@ -58,162 +339,14 @@ absl::StatusOr<MlirOpResults<3>> BuildBatchNormBackward(
   ABSL_VLOG(1) << "BuildBatchNormBackward "
                << " input=" << input.ToString() << " training=" << training
                << " eps=" << eps;
-  mlir::MlirBuilder& builder = input.getBuilder();
-  const mlir::RankedTensorType input_type = GetTensorTypeOrDie(input);
-  const mlir::ElementType input_dtype = GetElementTypeOrDie(input);
-  auto input_dims = input_type.getShape();
-  int64_t num_features = input_dims[kTorchFeaturesDimensionIndex];
-
-  mlir::MlirOp weight =
-      weight_opt ? *weight_opt
-                 : MakeConstant(builder, 1.0, input_dtype, {num_features});
-
   if (training) {
-    // Promotion to accumulation precision.
-    input = mlir::stablehlo::ConvertElementType(input, acc_dtype);
-    grad_out = mlir::stablehlo::ConvertElementType(grad_out, acc_dtype);
-    weight = mlir::stablehlo::ConvertElementType(weight, acc_dtype);
-
-    // Compute mean and variance.
-    if (!save_mean_opt || !save_invstd_opt) {
-      return TT_ERROR(error::kInternal)
-             << "save_mean and save_invstd must be provided when training=True";
-    }
-
-    auto mean = *save_mean_opt;
-    mean = mlir::stablehlo::ConvertElementType(mean, acc_dtype);
-
-    auto invstd = *save_invstd_opt;
-    invstd = mlir::stablehlo::ConvertElementType(invstd, acc_dtype);
-
-    // Reconstruct variance: variance = 1/invstd^2 - eps
-    auto invstd_sq = mlir::stablehlo::Mul(invstd, invstd);
-    auto one_op = MakeConstantLike(invstd, 1.0);
-    auto var_plus_eps = mlir::stablehlo::Div(one_op, invstd_sq);
-    auto eps_op = MakeConstantLike(invstd, eps);
-    auto variance = mlir::stablehlo::Subtract(var_plus_eps, eps_op);
-
-    // If training, we can use BatchNormGrad, which is defined for training mode
-    // only and it assumes that the mean and variance are derived from the
-    // current input batch.
-    // Returns in outputs: grad_input, grad_weight, grad_bias
-    auto outputs = mlir::stablehlo::BatchNormGrad(
-        input, weight, mean, variance, grad_out,
-        llvm::APFloat(static_cast<float>(eps)), kTorchFeaturesDimensionIndex);
-
-    auto grad_input = std::move(outputs[0]);
-    auto grad_weight = std::move(outputs[1]);
-    auto grad_bias = std::move(outputs[2]);
-
-    // Cast results back to input precision if needed.
-    grad_input = mlir::stablehlo::ConvertElementType(grad_input, input_dtype);
-    grad_weight = mlir::stablehlo::ConvertElementType(grad_weight, input_dtype);
-    grad_bias = mlir::stablehlo::ConvertElementType(grad_bias, input_dtype);
-
-    if (!output_mask[0]) {
-      TT_ASSIGN_OR_RETURN(grad_input,
-                          MakeZeroSizedTensor(builder, input_dtype));
-    }
-    if (!output_mask[1]) {
-      TT_ASSIGN_OR_RETURN(grad_weight,
-                          MakeZeroSizedTensor(builder, input_dtype));
-    }
-    if (!output_mask[2]) {
-      TT_ASSIGN_OR_RETURN(grad_bias, MakeZeroSizedTensor(builder, input_dtype));
-    }
-
-    return {{grad_input, grad_weight, grad_bias}};
-
-  } else {
-    // Inference mode.
-
-    // Inference backward assumes that mean and variance are fixed constants
-    // (running statistics) that do not depend on the current input batch. This
-    // changes the gradient computation w.r.t training since dmean/dx and
-    // dvariance/dx are 0.
-    //
-    // y = (x - mean) / sqrt(var + eps) * weight + bias
-    // grad_out = dL/dy
-    // dL/dx = grad_out * weight / sqrt(var + eps)
-    // dL/dweight = grad_out * (x - mean) / sqrt(var + eps)
-    // dL/dbias = grad_out
-
-    // Promotion to accumulation precision.
-    input = mlir::stablehlo::ConvertElementType(input, acc_dtype);
-    grad_out = mlir::stablehlo::ConvertElementType(grad_out, acc_dtype);
-    weight = mlir::stablehlo::ConvertElementType(weight, acc_dtype);
-
-    // Compute mean and variance.
-    mlir::MlirOp mean =
-        running_mean_opt
-            ? *running_mean_opt
-            : MakeConstant(builder, 0.0, input_dtype, {num_features});
-    mean = mlir::stablehlo::ConvertElementType(mean, acc_dtype);
-
-    mlir::MlirOp variance =
-        running_variance_opt
-            ? *running_variance_opt
-            : MakeConstant(builder, 1.0, input_dtype, {num_features});
-    variance = mlir::stablehlo::ConvertElementType(variance, acc_dtype);
-
-    auto inv_std = ComputeInvStd(variance, eps);
-
-    mlir::MlirOp grad_input, grad_weight, grad_bias;
-
-    if (output_mask[0]) {
-      // inv_std = 1 / sqrt(var + eps)
-      // grad_input = dL/dx = grad_out * (weight * inv_std)
-      auto w_times_inv_std = mlir::stablehlo::Mul(weight, inv_std);
-      // Broadcast w_times_inv_std to grad_out shape
-      TT_ASSIGN_OR_RETURN(auto broadcasted_w,
-                          Broadcast(w_times_inv_std, input_type.getShape(),
-                                    {kTorchFeaturesDimensionIndex}));
-      grad_input = mlir::stablehlo::Mul(grad_out, broadcasted_w);
-    } else {
-      TT_ASSIGN_OR_RETURN(grad_input, MakeZeroSizedTensor(builder, acc_dtype));
-    }
-
-    // Used to reduce over all dims except the feature dim.
-    Dimensions reduce_dims;
-    for (auto i = 0; i < input_dims.size(); ++i) {
-      if (i != kTorchFeaturesDimensionIndex) {
-        reduce_dims.push_back(i);
-      }
-    }
-
-    if (output_mask[1]) {
-      // grad_weight = grad_out * (x - mean) * inv_std
-      TT_ASSIGN_OR_RETURN(auto broadcasted_mean,
-                          Broadcast(mean, input_type.getShape(),
-                                    {kTorchFeaturesDimensionIndex}));
-      auto x_minus_mean = mlir::stablehlo::Subtract(input, broadcasted_mean);
-      TT_ASSIGN_OR_RETURN(auto broadcasted_inv_std,
-                          Broadcast(inv_std, input_type.getShape(),
-                                    {kTorchFeaturesDimensionIndex}));
-      auto norm = mlir::stablehlo::Mul(x_minus_mean, broadcasted_inv_std);
-      auto grad_out_times_norm = mlir::stablehlo::Mul(grad_out, norm);
-
-      // Reduce over all dims except the feature dim.
-      TT_ASSIGN_OR_RETURN(grad_weight,
-                          BuildSumShlo(grad_out_times_norm, reduce_dims));
-    } else {
-      TT_ASSIGN_OR_RETURN(grad_weight, MakeZeroSizedTensor(builder, acc_dtype));
-    }
-
-    if (output_mask[2]) {
-      // grad_bias = grad_out
-      TT_ASSIGN_OR_RETURN(grad_bias, BuildSumShlo(grad_out, reduce_dims));
-    } else {
-      TT_ASSIGN_OR_RETURN(grad_bias, MakeZeroSizedTensor(builder, acc_dtype));
-    }
-
-    // Cast results back to input precision.
-    grad_input = mlir::stablehlo::ConvertElementType(grad_input, input_dtype);
-    grad_weight = mlir::stablehlo::ConvertElementType(grad_weight, input_dtype);
-    grad_bias = mlir::stablehlo::ConvertElementType(grad_bias, input_dtype);
-
-    return {{grad_input, grad_weight, grad_bias}};
+    return BuildBatchNormBackwardTraining(grad_out, input, weight_opt,
+                                          save_mean_opt, save_invstd_opt,
+                                          output_mask, acc_dtype);
   }
+  return BuildBatchNormBackwardInference(grad_out, input, weight_opt,
+                                         running_mean_opt, running_variance_opt,
+                                         eps, output_mask, acc_dtype);
 }
 
 absl::StatusOr<MlirOpResults<3>> BuildBatchNorm(

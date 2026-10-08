@@ -245,9 +245,13 @@ absl::StatusOr<DeviceBufferRefArray<3>> TpuBatchNormBackward(
                       ConvertTo<mlir::ElementType>(grad_out.scalar_type()));
 
   mlir::ElementType weight_dtype = output_dtype;
-  if (weight) {
-    TT_ASSIGN_OR_RETURN(weight_dtype,
-                        ConvertTo<mlir::ElementType>(weight->scalar_type()));
+  for (const auto& param :
+       {weight, running_mean, running_variance, save_mean, save_invstd}) {
+    if (param.has_value()) {
+      TT_ASSIGN_OR_RETURN(weight_dtype,
+                          ConvertTo<mlir::ElementType>(param->scalar_type()));
+      break;
+    }
   }
 
   absl::Span<const int64_t> input_dims = input.sizes();

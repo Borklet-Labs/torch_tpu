@@ -2287,6 +2287,136 @@ class OpsUnitTest(TorchTpuVsCpuTestBase):
     # Relax tolerances because we are running in BF16 on TPU for performance.
     self.assert_close_tpu_vs_cpu(run_backward, rtol=6e-2, atol=4e-2)
 
+  @parameterized.product(
+      shape=[(2, 4, 8, 8), (4, 3, 16), (2, 5, 4, 4, 4)],
+      dtype=[torch.float32, torch.bfloat16],
+      has_weight=[True, False],
+      mask=[
+          [True, True, True],
+          [True, False, False],
+          [False, True, False],
+          [False, False, True],
+          [True, True, False],
+      ],
+  )
+  def test_native_batch_norm_backward_comprehensive(
+      self, shape, dtype, has_weight, mask
+  ):
+    """Tests training batch_norm_backward across shapes, dtypes, weights, and masks."""
+    c = shape[1]
+    stats_dtype = torch.float32
+    grad_out = torch.randn(*shape, dtype=dtype)
+    input_val = torch.randn(*shape, dtype=dtype)
+    weight = torch.randn(c, dtype=stats_dtype) if has_weight else None
+    save_mean = torch.randn(c, dtype=stats_dtype)
+    save_invstd = torch.rand(c, dtype=stats_dtype) + 0.1
+
+    def run_backward(device):
+      return torch.ops.aten.native_batch_norm_backward(
+          grad_out.to(device),
+          input_val.to(device),
+          weight.to(device) if weight is not None else None,
+          None,
+          None,
+          save_mean.to(device),
+          save_invstd.to(device),
+          True,  # training
+          1e-5,  # eps
+          mask,
+      )
+
+    rtol = 5e-2 if dtype == torch.bfloat16 else 1e-4
+    atol = 5e-2 if dtype == torch.bfloat16 else 1e-4
+    self.assert_close_tpu_vs_cpu(run_backward, rtol=rtol, atol=atol)
+
+  @parameterized.product(
+      dtype=[torch.float32, torch.bfloat16],
+      has_weight=[True, False],
+  )
+  def test_native_batch_norm_backward_zero_batch(self, dtype, has_weight):
+    """Tests training batch_norm_backward on zero-batch inputs (where forward stats are NaN)."""
+    shape = (0, 4, 8, 8)
+    c = shape[1]
+    stats_dtype = torch.float32
+    grad_out = torch.empty(*shape, dtype=dtype, device="tpu")
+    input_val = torch.empty(*shape, dtype=dtype, device="tpu")
+    weight = (
+        torch.randn(c, dtype=stats_dtype, device="tpu") if has_weight else None
+    )
+    save_mean = torch.full((c,), float("nan"), dtype=stats_dtype, device="tpu")
+    save_invstd = torch.full(
+        (c,), float("nan"), dtype=stats_dtype, device="tpu"
+    )
+
+    grad_input, grad_weight, grad_bias = (
+        torch.ops.aten.native_batch_norm_backward(
+            grad_out,
+            input_val,
+            weight,
+            None,
+            None,
+            save_mean,
+            save_invstd,
+            True,
+            1e-5,
+            [True, True, True],
+        )
+    )
+    self.assertEqual(grad_input.shape, shape)
+    self.assertEqual(grad_input.dtype, dtype)
+    expected_zeros = torch.zeros(c, dtype=stats_dtype)
+    self.assert_close(
+        golden_result=expected_zeros, torch_tpu_result=grad_weight.cpu()
+    )
+    self.assert_close(
+        golden_result=expected_zeros, torch_tpu_result=grad_bias.cpu()
+    )
+
+  @parameterized.product(
+      has_weight=[True, False],
+      training=[True, False],
+      dynamic_dim=[0, 2],
+  )
+  def test_native_batch_norm_backward_dynamic(
+      self, has_weight, training, dynamic_dim
+  ):
+    """Tests batch_norm_backward with bounded dynamic batch or spatial dimension."""
+    shape = (4, 3, 6, 6)
+    c = shape[1]
+    grad_out = torch.randn(*shape, dtype=torch.float32)
+    input_val = torch.randn(*shape, dtype=torch.float32)
+    weight = torch.randn(c, dtype=torch.float32) if has_weight else None
+    running_mean = torch.randn(c, dtype=torch.float32)
+    running_var = torch.rand(c, dtype=torch.float32) + 0.1
+    save_mean = torch.randn(c, dtype=torch.float32)
+    save_invstd = torch.rand(c, dtype=torch.float32) + 0.1
+
+    def run_backward(device):
+      g = grad_out.to(device)
+      x = input_val.to(device)
+      w = weight.to(device) if weight is not None else None
+      if str(device).startswith("tpu"):
+        dynamism.mark_dynamic(
+            g, dimension=dynamic_dim, lower_bound=2, upper_bound=10
+        )
+        dynamism.mark_dynamic(
+            x, dimension=dynamic_dim, lower_bound=2, upper_bound=10
+        )
+      return torch.ops.aten.native_batch_norm_backward(
+          g,
+          x,
+          w,
+          running_mean.to(device),
+          running_var.to(device),
+          save_mean.to(device),
+          save_invstd.to(device),
+          training,
+          1e-5,
+          [True, True, True],
+      )
+
+    self.assert_close_tpu_vs_cpu(run_backward, rtol=1e-4, atol=1e-4)
+
   def test_native_batch_norm_legit_out(self):
     input_dtype = torch.float32
     stats_dtype = torch.float32
