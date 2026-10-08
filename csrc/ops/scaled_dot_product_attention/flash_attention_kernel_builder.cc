@@ -50,7 +50,6 @@
 #include "csrc/common/libtpu_version.h"
 #include "csrc/common/version.h"
 #include "csrc/eager/device_buffer.h"
-#include "csrc/eager/events_queue.h"
 #include "csrc/eager/op_dispatcher.h"
 #include "csrc/eager/tensor_to_buffer.h"
 #include "csrc/internal/mosaic/op_builders.h"
@@ -913,7 +912,7 @@ CreateFlashAttentionBackwardKernel(
   // TODO(bawilson): this is clunky. A better way is to only do background
   // materializations after returning from this function, immediately before
   // returning to Python, so that the Tensor state has stabilized.
-  RecordNewDataPtrCreated(results[0]);
+  results[0].device_buffer_list()->IncrementLiveDataPtrs(results[0].index());
 
   // Return the gradients with the strides of the meta function, which
   // allocates them with `torch.empty_like`.
@@ -927,7 +926,7 @@ CreateFlashAttentionBackwardKernel(
   // It's okay if the materialization happens during the third ContiguousToView;
   // all other necessary tensors have already been created, so nothing can be
   // invalidated.
-  RecordDataPtrDestroyed(results[0]);
+  results[0].device_buffer_list()->DecrementLiveDataPtrs(results[0].index());
 
   TT_ASSIGN_OR_RETURN(at::Tensor strided_grad_value,
                       ContiguousToView(results[2], EmptyLikeStrides(value),
