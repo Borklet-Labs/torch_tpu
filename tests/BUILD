@@ -1959,6 +1959,7 @@ torch_tpu_py_test(
         ":accelerator_test_utils",
         ":seed_test_utils",
         "//shims/absl_py/flags",
+        "//shims/absl_py/logging",
         "//shims/absl_py/testing:absltest",
         "//shims/torch:pytorch",
         "//src/torch_tpu",
@@ -1981,6 +1982,7 @@ torch_tpu_py_test(
         ":accelerator_test_utils",
         ":seed_test_utils",
         "//shims/absl_py/flags",
+        "//shims/absl_py/logging",
         "//shims/absl_py/testing:absltest",
         "//shims/torch:pytorch",
         "//src/torch_tpu",
@@ -2001,9 +2003,11 @@ torch_tpu_py_test(
         ":accelerator_test_utils",
         ":seed_test_utils",
         "//shims/absl_py/flags",
+        "//shims/absl_py/logging",
         "//shims/absl_py/testing:absltest",
         "//shims/torch:pytorch",
         "//src/torch_tpu",
+        "//src/torch_tpu/_internal/utils:annotations",
     ],
 )
 
@@ -2021,9 +2025,11 @@ torch_tpu_py_test(
         ":accelerator_test_utils",
         ":seed_test_utils",
         "//shims/absl_py/flags",
+        "//shims/absl_py/logging",
         "//shims/absl_py/testing:absltest",
         "//shims/torch:pytorch",
         "//src/torch_tpu",
+        "//src/torch_tpu/_internal/utils:annotations",
     ],
 )
 

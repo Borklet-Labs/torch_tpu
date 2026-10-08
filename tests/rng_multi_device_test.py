@@ -20,14 +20,21 @@ import threading
 import unittest
 
 from absl import flags
+from absl import logging
 from absl.testing import absltest
 import torch
+from torch_tpu._internal.utils import annotations
 from tests import accelerator_test_utils
 from tests import seed_test_utils
 
 _BACKEND = flags.DEFINE_string(
     "backend", "tpu", "The backend to test: 'tpu' or 'gpu'."
 )
+
+
+def setUpModule():
+  # The tests compare the internal `torch.tpu` RNG APIs with `torch.cuda`.
+  annotations._internal_apis_allowed_for_testing = True  # pylint: disable=protected-access
 
 
 def _fails_on_tpu(reason: str):
@@ -41,8 +48,11 @@ def _fails_on_tpu(reason: str):
           func(self, *args, **kwargs)
         except unittest.SkipTest:
           raise
-        except Exception:
+        except Exception as e:  # pylint: disable=broad-exception-caught
           # Expected failure on TPU due to backend limitation or missing feature.
+          logging.exception(
+              "_fails_on_tpu swallowed expected failure (%s): %r", reason, e
+          )
           return
         self.fail(
             f"Expected test to fail on TPU ({reason}), but it unexpectedly"

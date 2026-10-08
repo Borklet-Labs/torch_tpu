@@ -21,6 +21,7 @@ import unittest
 from unittest import mock
 
 from absl import flags
+from absl import logging
 from absl.testing import absltest
 import torch
 from torch_tpu._internal.utils import annotations
@@ -48,8 +49,11 @@ def _fail_on_tpu(reason: str):
           func(self, *args, **kwargs)
         except unittest.SkipTest:
           raise
-        except Exception:
+        except Exception as e:  # pylint: disable=broad-exception-caught
           # Expected failure on TPU due to backend limitation or missing feature.
+          logging.exception(
+              "_fail_on_tpu swallowed expected failure (%s): %r", reason, e
+          )
           return
         self.fail(
             f"Expected test to fail on TPU ({reason}), but it unexpectedly"
