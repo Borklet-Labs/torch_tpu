@@ -1996,7 +1996,10 @@ torch_tpu_py_test(
     args = ["--backend=tpu"],
     main = "rng_multi_device_test.py",
     tags = if_oss(
-        [OSS_REQUIRES_V5_X4],
+        [
+            "exclusive",
+            OSS_REQUIRES_V5_X4,
+        ],
         ["requires-tpu-v5lite:8"],
     ),
     deps = [

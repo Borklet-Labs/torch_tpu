@@ -119,6 +119,13 @@ class SingleProcessMultiDeviceTest(_BaseRngTest):
   def setUp(self):
     super().setUp()
     self.device_idx = torch.accelerator.current_device_index()
+    self.num_devices = self._get_num_devices()
+    self.assertGreater(
+        self.num_devices,
+        1,
+        "Test target must be configured with multiple devices to verify"
+        " single-process multi-device RNG operations.",
+    )
 
   def _get_num_devices(self) -> int:
     """Returns the number of devices to test, capped at 4 on TPU in OSS."""
@@ -133,16 +140,9 @@ class SingleProcessMultiDeviceTest(_BaseRngTest):
   )
   def test_torch_manual_seed_sets_all_device_seeds(self):
     """Verifies torch.manual_seed seeds all devices."""
-    num_devices = self._get_num_devices()
-    self.assertGreater(
-        num_devices,
-        1,
-        "Test target must be configured with multiple devices to verify"
-        " seeding all devices.",
-    )
     torch.manual_seed(42)
 
-    for i in range(num_devices):
+    for i in range(self.num_devices):
       self.assertEqual(self._get_device_rng_seed(i), 42)
       self.assertEqual(self._get_device_rng_offset(i), 0)
 
@@ -153,17 +153,10 @@ class SingleProcessMultiDeviceTest(_BaseRngTest):
   )
   def test_backend_manual_seed_does_not_change_other_devices(self):
     """Verifies backend_mod.manual_seed does not modify other devices."""
-    num_devices = self._get_num_devices()
-    self.assertGreater(
-        num_devices,
-        1,
-        "Test target must be configured with multiple devices to verify"
-        " seeding behavior across devices.",
-    )
     torch.manual_seed(10)
     other_devices_state_before = {
         i: (self._get_device_rng_seed(i), self._get_device_rng_offset(i))
-        for i in range(num_devices)
+        for i in range(self.num_devices)
         if i != self.device_idx
     }
 
@@ -190,16 +183,9 @@ class SingleProcessMultiDeviceTest(_BaseRngTest):
   )
   def test_backend_manual_seed_all_sets_all_device_seeds(self):
     """Verifies backend_mod.manual_seed_all seeds all devices."""
-    num_devices = self._get_num_devices()
-    self.assertGreater(
-        num_devices,
-        1,
-        "Test target must be configured with multiple devices to verify"
-        " seeding all devices.",
-    )
     self.backend_mod.manual_seed_all(42)
 
-    for i in range(num_devices):
+    for i in range(self.num_devices):
       self.assertEqual(
           self._get_device_rng_seed(i),
           42,
@@ -218,21 +204,14 @@ class SingleProcessMultiDeviceTest(_BaseRngTest):
   )
   def test_torch_seed_sets_all_device_seeds(self):
     """Verifies torch.seed seeds all devices."""
-    num_devices = self._get_num_devices()
-    self.assertGreater(
-        num_devices,
-        1,
-        "Test target must be configured with multiple devices to verify"
-        " seeding all devices.",
-    )
-    for i in range(num_devices):
+    for i in range(self.num_devices):
       _ = torch.rand(
           100, device=accelerator_test_utils.get_device(self.backend, i)
       )
 
     new_seed = torch.seed()
 
-    for i in range(num_devices):
+    for i in range(self.num_devices):
       self.assertEqual(
           self._get_device_rng_seed(i),
           new_seed,
@@ -251,27 +230,20 @@ class SingleProcessMultiDeviceTest(_BaseRngTest):
   )
   def test_backend_get_set_rng_state_all(self):
     """Verifies get/set_rng_state_all restore all device states."""
-    num_devices = self._get_num_devices()
-    self.assertGreater(
-        num_devices,
-        1,
-        "Test target must be configured with multiple devices to verify"
-        " multi-device state snapshot.",
-    )
-    for i in range(num_devices):
+    for i in range(self.num_devices):
       self.backend_mod.manual_seed(42 + i)
 
     saved_states = self.backend_mod.get_rng_state_all()
-    self.assertLen(saved_states, num_devices)
+    self.assertLen(saved_states, self.num_devices)
 
     expected_outs = [
         torch.rand(
             10, device=accelerator_test_utils.get_device(self.backend, i)
         )
-        for i in range(num_devices)
+        for i in range(self.num_devices)
     ]
 
-    for i in range(num_devices):
+    for i in range(self.num_devices):
       _ = torch.rand(
           50, device=accelerator_test_utils.get_device(self.backend, i)
       )
@@ -282,27 +254,14 @@ class SingleProcessMultiDeviceTest(_BaseRngTest):
         torch.rand(
             10, device=accelerator_test_utils.get_device(self.backend, i)
         )
-        for i in range(num_devices)
+        for i in range(self.num_devices)
     ]
     for exp, act in zip(expected_outs, actual_outs):
       self.assertTrue(torch.equal(exp, act))
 
-  # TODO(b/570289109): Multi-threaded eager execution across devices is not
-  # thread-safe on TPU due to race conditions in eager graph compilation
-  # traversal.
-  @_fails_on_tpu(
-      "TPU backend does not support querying or executing on non-current"
-      " device in a single process."
-  )
   def test_multithread_eager_cross_device_isolation(self):
     """Verifies threads on distinct devices produce deterministic outputs."""
-    num_devices = self._get_num_devices()
-    self.assertGreater(
-        num_devices,
-        1,
-        "Test target must be configured with multiple devices to verify"
-        " multi-threaded cross-device execution.",
-    )
+    num_devices = self.num_devices
 
     def run_trial() -> list[torch.Tensor]:
       """Runs a multi-threaded cross-device trial and returns outputs.
