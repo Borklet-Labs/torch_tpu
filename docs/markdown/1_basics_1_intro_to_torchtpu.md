@@ -34,6 +34,22 @@ design principles:
     pipeline, bounded dynamism to avoid shape-driven recompilations, and custom
     kernel APIs to help you reach peak hardware utilization.
 
+Out of the box usability is a core tenet of TorchTPU. In the following cell you
+can see a simple example of a PyTorch program running on TPU, and if you run
+this in colab with the TPU runtime it should print that it is using the TPU:
+
+```python
+import torch
+
+device = torch.device("tpu")
+x = torch.randn((4, 4), device=device)
+y = torch.ones((4, 4), device=device)
+
+result = torch.matmul(x, y).cpu()
+print(f"Executed on device: {x.device}")
+print(f"Result shape on CPU: {result.shape}, sum: {result.sum():.4f}")
+```
+
 ## Key features
 
 *   **Comprehensive operator and model coverage:** Supports approximately 450
@@ -86,53 +102,22 @@ design principles:
     serving/training frameworks, including `torch.profiler` (with TensorBoard
     and XProf), vLLM, SGLang, TorchTitan, Ray, and TorchRec.
 
-## Understand the TorchTPU architecture
+## This documentation
 
-When you run PyTorch on a TPU VM with TorchTPU installed, your code interacts
-with specialized hardware units through the OpenXLA software stack:
+This documentation is split in 5 parts:
 
-*   **TPU hardware components:**
-    *   **TensorCores:** Each TensorCore contains scalar, vector (VPU), and
-        Matrix Multiply Units (MXUs) built from systolic arrays that natively
-        multiply `bfloat16` inputs and accumulate in `float32`.
-    *   **SparseCores:** Dedicated processors for sparse operations (such as
-        embedding lookups, gather, and scatter) and collective communication.
-        You can pin a `torch.tpu.Stream` to a SparseCore
-        (`torch.tpu.Stream(pinned="sparse")`) to overlap collective
-        communication with dense TensorCore math.
-    *   **High Bandwidth Memory (HBM):** High-capacity on-package memory shared
-        across operations on the chip.
-    *   **Hierarchical interconnects:** High-speed optical/copper Inter-Chip
-        Interconnect (ICI) links connect chips within a TPU slice in a 3D torus
-        or twisted torus topology, while Data Center Network (DCN) links connect
-        multiple slices across pods.
-*   **Software lowering pipeline:**
-    1.  PyTorch's dispatcher intercepts tensor and collective operations on the
-        `"tpu"` device.
-    2.  TorchTPU translates PyTorch stride views and in-place writes into
-        functional operations via automatic *view decomposition* and *view
-        inversion*.
-    3.  TorchTPU lowers ATen and `c10d` operations into **StableHLO** (or
-        **Mosaic** for custom Pallas kernels).
-    4.  A C++ [PjRT client](https://openxla.org/xla/pjrt/cpp_api_overview)
-        compiles the module with XLA into a TPU executable, caches it, and
-        dispatches asynchronous execution on the TPU.
-
-## Run a computation on a TPU
-
-Because TorchTPU uses PyTorch's autoload mechanism, importing `torch` in an
-environment where `torch_tpu` is installed automatically registers the `"tpu"`
-device. Run the following cell to initialize the TPU device, allocate tensors on
-the TPU, perform a matrix multiplication, and copy the result back to the CPU:
-
-```python
-import torch
-
-device = torch.device("tpu")
-x = torch.randn((4, 4), device=device)
-y = torch.ones((4, 4), device=device)
-
-result = torch.matmul(x, y).cpu()
-print(f"Executed on device: {x.device}")
-print(f"Result shape on CPU: {result.shape}, sum: {result.sum():.4f}")
-```
+*   First we show some of the basics: how to get started with a TorchTPU
+    program, how to dispatch it
+    [through a VM](./1_basics_2_get_started_on_vm.md) and
+    [through GKE](./1_basics_3_get_started_on_gke.md).
+*   Then we go into some of the details of
+    [how TorchTPU works](./2_in_depth_1_how_torchtpu_works.md): the TPU
+    hardware, the XLA compiler, the PyTorch op dispatcher, and how we put it all
+    together in a backend that supports features expected by PyTorch users.
+*   We follow with practical examples of using TorchTPU for common PyTorch use
+    cases, and in situations where TorchTPU is a little different from other
+    backends including how custom kernels are implemented and its support for
+    bounded dynamism.
+*   We show end-to-end case studies detailing how use of features changes the
+    result.
+*   Then we end with a reference.
