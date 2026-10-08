@@ -54,30 +54,6 @@ def run_all_reduce_error() -> None:
   handle.wait()
 
 
-def run_all_gather() -> None:
-  """Tests all-gather functionality."""
-  dist.init_process_group(backend="tpu_dist")
-  rank = int(os.environ["RANK"])
-  world_size = int(os.environ["WORLD_SIZE"])
-  x = torch.tensor([1.0, float(rank)], device="tpu", dtype=torch.float32)
-  outputs = [
-      torch.zeros(2, device="tpu", dtype=torch.float32)
-      for _ in range(world_size)
-  ]
-  handle = torch.distributed.all_gather(outputs, x, async_op=True)
-  handle.wait()
-  outputs_cpu = [o.to("cpu") for o in outputs]
-
-  for i, output in enumerate(outputs_cpu):
-    assert (
-        output[0] == 1.0
-    ), f"Got {output[0]} for the first element of tensor {i}, expected 1.0"
-    assert output[1] == i, (
-        f"Got {output[1]} for the second element of tensor {i}, expected {i}."
-        f" Full outputs: {outputs_cpu}."
-    )
-
-
 def run_all_gather_tensor_wrong_number_output_dimensions() -> None:
   """Tests incorrect output dimensionality."""
   dist.init_process_group(backend="tpu_dist")
@@ -500,8 +476,8 @@ _EARLY_TIMEOUT_RANK = _PG_WORLD_SIZE - 2
 
 # Store timeouts. The collector must time out well after
 # `_EARLY_TIMEOUT_RANK` and well before the other ranks.
-_EARLY_TIMEOUT = datetime.timedelta(seconds=10)
-_COLLECTOR_TIMEOUT = datetime.timedelta(seconds=30)
+_EARLY_TIMEOUT = datetime.timedelta(seconds=2)
+_COLLECTOR_TIMEOUT = datetime.timedelta(seconds=6)
 _LONG_TIMEOUT = datetime.timedelta(seconds=180)
 
 # Root op name that may prefix errors raised from the backend factory.
@@ -628,12 +604,6 @@ def _remove_node_local_store_file() -> None:
 
 class CollectiveErrorsTest(et.TpuOnlyDistributedErrorTestBase):
   _world_size = 8
-
-  def test_all_gather(self):
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=run_all_gather,
-    )
 
   def test_all_gather_tensor_wrong_number_output_dimensions(self):
     distributed_utils.dist_run(

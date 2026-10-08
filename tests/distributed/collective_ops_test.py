@@ -174,6 +174,29 @@ def run_all_reduce(
   utils.assert_close(x.cpu(), expected_tensor)
 
 
+def run_all_gather() -> None:
+  """Tests all-gather functionality."""
+  rank = int(os.environ["RANK"])
+  world_size = int(os.environ["WORLD_SIZE"])
+  x = torch.tensor([1.0, float(rank)], device="tpu", dtype=torch.float32)
+  outputs = [
+      torch.zeros(2, device="tpu", dtype=torch.float32)
+      for _ in range(world_size)
+  ]
+  handle = torch.distributed.all_gather(outputs, x, async_op=True)
+  handle.wait()
+  outputs_cpu = [o.to("cpu") for o in outputs]
+
+  for i, output in enumerate(outputs_cpu):
+    assert (
+        output[0] == 1.0
+    ), f"Got {output[0]} for the first element of tensor {i}, expected 1.0"
+    assert output[1] == i, (
+        f"Got {output[1]} for the second element of tensor {i}, expected {i}."
+        f" Full outputs: {outputs_cpu}."
+    )
+
+
 def run_all_gather_scalar() -> None:
   """Tests all_gather on scalar input."""
   rank = int(os.environ["RANK"])
@@ -889,6 +912,13 @@ class CollectiveOpsTest(seed_test_utils.MultiProcessRepeatableTest):
         reduce_op=torch.distributed.ReduceOp.PRODUCT,
         expected=[1.0, 256.0, 6561.0, 65536.0],
         dtype=torch.float32,
+    )
+
+  def test_all_gather(self):
+    distributed_utils.dist_run(
+        nproc_per_node=self._world_size,
+        fn=_test_wrapper,
+        test_fn=run_all_gather,
     )
 
   def test_all_gather_scalar(self):
