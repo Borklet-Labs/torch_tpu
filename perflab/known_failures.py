@@ -68,6 +68,19 @@ class KnownFailure:
 
 
 KNOWN_FAILURES: tuple[KnownFailure, ...] = (
+    # TorchTPU.
+    #
+    # TODO(b/571252258): Remove once eager_optimized fits in HBM.
+    KnownFailure(
+        benchmark="qwen3_coder_30b_moe_forward",
+        framework=mode_lib.Framework.TORCH,
+        device_kind=target_lib.DeviceKind.TPU,
+        run_modes=frozenset({common.RunMode.EAGER_OPTIMIZED}),
+        reason=(
+            "HBM OOM on v7_1x1x1 when local_scalar_dense() materializes the"
+            " deferred graph"
+        ),
+    ),
     # TODO(b/568037427): Remove the TorchAX entries as their failures are fixed.
     #
     # `torch._grouped_mm`, used by the transformers MoE experts, has no
