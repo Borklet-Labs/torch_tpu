@@ -40,6 +40,7 @@ torch_tpu_cc_library(
 torch_tpu_cc_library(
     name = "value_base",
     hdrs = ["value_base.h"],
+    deps = [":dtype"],
 )
 
 torch_tpu_cc_library(
@@ -59,6 +60,7 @@ torch_tpu_cc_library(
     hdrs = ["cond.h"],
     deps = [
         ":context",
+        ":dtype",
         ":value_base",
         "@com_google_absl//absl/log:absl_check",
         "@llvm-project//mlir:ArithDialect",
@@ -128,6 +130,7 @@ torch_tpu_cc_library(
     deps = [
         ":cond",
         ":context",
+        ":dtype",
         ":index_arg",
         ":scalar",
         "@com_google_absl//absl/functional:function_ref",

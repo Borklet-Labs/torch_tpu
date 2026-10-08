@@ -48,7 +48,6 @@ class Tile : public ValueBase,
   Tile MakeConstant(Literal value) const { return Full(value); }
 
   llvm::ArrayRef<int64_t> shape() const;
-  DType dtype() const;
   int64_t rank() const;
   int64_t num_elements() const;
 
@@ -81,7 +80,7 @@ class Tile : public ValueBase,
 
  private:
   friend struct internal::ValueAccess;
-  explicit Tile(const void* impl);
+  Tile(const void* impl, DType dtype);
 };
 
 // Tile constructors.

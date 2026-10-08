@@ -41,18 +41,13 @@ class Scalar : public ValueBase,
 
   Scalar MakeConstant(Literal value) const;
 
-  DType dtype() const;
-  bool IsBool() const;
-  bool IsFloat() const;
-  bool IsInt() const;
-  bool IsIntOrFloat() const;
-
  private:
   friend struct internal::ValueAccess;
-  explicit Scalar(const void* impl);
+  Scalar(const void* impl, DType dtype);
 };
 
 Scalar I32(Literal value);
+Scalar U32(Literal value);
 Scalar F32(Literal value);
 
 }  // namespace torch_tpu::kiln

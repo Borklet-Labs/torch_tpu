@@ -35,7 +35,8 @@ class IndexArg {
       : val_(static_cast<int64_t>(v)) {}
   /* implicit */ IndexArg(Scalar s)  // NOLINT(google-explicit-constructor)
       : val_(s) {
-    ABSL_CHECK(s.IsInt()) << "IndexArg requires an integer scalar";  // CRASH_OK
+    ABSL_CHECK(s.dtype().IsInt())  // CRASH_OK
+        << "IndexArg requires an integer scalar";
   }
 
   bool IsInt() const { return std::holds_alternative<int64_t>(val_); }

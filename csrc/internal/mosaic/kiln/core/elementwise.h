@@ -58,8 +58,7 @@ struct ElementwiseOps {
   static T Or(T lhs, T rhs);
   static T Xor(T lhs, T rhs);
   static T ShiftLeft(T lhs, T rhs);
-  static T ArithmeticShiftRight(T lhs, T rhs);
-  static T LogicalShiftRight(T lhs, T rhs);
+  static T ShiftRight(T lhs, T rhs);
 
   // Comparison.
   static CmpResult Eq(T lhs, T rhs);
@@ -103,6 +102,10 @@ class WithElementwiseOps {
     return Ops::Bitcast(derived(), target);
   }
   Derived ToI32() const { return AsType(Int32Type()); }
+  Derived ToU8() const { return AsType(UInt8Type()); }
+  Derived ToU16() const { return AsType(UInt16Type()); }
+  Derived ToU32() const { return AsType(UInt32Type()); }
+  Derived ToU64() const { return AsType(UInt64Type()); }
   Derived ToF32() const { return AsType(Float32Type()); }
   Derived ToBF16() const { return AsType(BFloat16Type()); }
 
@@ -120,13 +123,13 @@ class WithElementwiseOps {
   friend Derived operator/(Derived lhs, Derived rhs) {
     return Ops::Div(lhs, rhs);
   }
-  // Signed remainder; integer operands only.
+  // Remainder; integer operands only.
   friend Derived operator%(Derived lhs, Derived rhs) {
     return Ops::Rem(lhs, rhs);
   }
 
   // Bitwise / logical ops on integer and bool (mask) operands. `>>` is an
-  // arithmetic (signed) shift.
+  // arithmetic shift for signed types, and logical shift for unsigned types.
   friend Derived operator&(Derived lhs, Derived rhs) {
     return Ops::And(lhs, rhs);
   }
@@ -140,11 +143,7 @@ class WithElementwiseOps {
     return Ops::ShiftLeft(lhs, rhs);
   }
   friend Derived operator>>(Derived lhs, Derived rhs) {
-    return Ops::ArithmeticShiftRight(lhs, rhs);
-  }
-  // Logical (unsigned) right shift.
-  friend Derived LogicalRightShift(Derived lhs, Derived rhs) {
-    return Ops::LogicalShiftRight(lhs, rhs);
+    return Ops::ShiftRight(lhs, rhs);
   }
 
   // Comparisons on integer or floating-point operands.

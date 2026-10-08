@@ -31,9 +31,19 @@
 
 namespace torch_tpu::kiln {
 
-namespace arith = mlir::arith;
+namespace {
 
-Scalar::Scalar(const void* impl) : ValueBase(impl) {
+Scalar MakeScalarConstant(DType dtype, Literal value) {
+  mlir::ImplicitLocOpBuilder& b = internal::CurrentBuilder();
+  return internal::wrap<Scalar>(
+      mlir::arith::ConstantOp::create(b,
+                                      internal::LiteralToAttr(b, dtype, value)),
+      dtype);
+}
+
+}  // namespace
+
+Scalar::Scalar(const void* impl, DType dtype) : ValueBase(impl, dtype) {
   mlir::Value value = internal::unwrap(*this);
   ABSL_CHECK(!value.getType().isIndex())  // CRASH_OK
       << "Scalar must not hold an index";
@@ -42,39 +52,20 @@ Scalar::Scalar(const void* impl) : ValueBase(impl) {
 }
 
 Scalar::Scalar(Cond cond)
-    : Scalar(internal::unwrap(cond).getAsOpaquePointer()) {}
+    : Scalar(internal::unwrap(cond).getAsOpaquePointer(), BoolType()) {}
 
 Scalar::operator Cond() const {
-  ABSL_CHECK(IsBool()) << "Cond requires a bool scalar";  // CRASH_OK
-  return internal::wrap<Cond>(internal::unwrap(*this));
+  ABSL_CHECK(dtype().IsBool()) << "Cond requires a bool scalar";  // CRASH_OK
+  return internal::wrap<Cond>(internal::unwrap(*this), BoolType());
 }
-
-DType Scalar::dtype() const {
-  return internal::FromMlirType(internal::unwrap(*this).getType());
-}
-
-bool Scalar::IsBool() const { return dtype().IsBool(); }
-bool Scalar::IsFloat() const { return dtype().IsFloat(); }
-bool Scalar::IsInt() const { return dtype().IsInt(); }
-bool Scalar::IsIntOrFloat() const { return dtype().IsIntOrFloat(); }
 
 Scalar Scalar::MakeConstant(Literal value) const {
-  mlir::ImplicitLocOpBuilder& b = internal::CurrentBuilder();
-  return internal::wrap<Scalar>(
-      arith::ConstantOp::create(b, internal::LiteralToAttr(b, dtype(), value)));
+  return MakeScalarConstant(dtype(), value);
 }
 
-Scalar I32(Literal value) {
-  mlir::ImplicitLocOpBuilder& b = internal::CurrentBuilder();
-  return internal::wrap<Scalar>(
-      arith::ConstantOp::create(b, b.getI32IntegerAttr(value.AsInt())));
-}
-
-Scalar F32(Literal value) {
-  mlir::ImplicitLocOpBuilder& b = internal::CurrentBuilder();
-  return internal::wrap<Scalar>(
-      arith::ConstantOp::create(b, b.getF32FloatAttr(value.AsDouble())));
-}
+Scalar I32(Literal value) { return MakeScalarConstant(Int32Type(), value); }
+Scalar U32(Literal value) { return MakeScalarConstant(UInt32Type(), value); }
+Scalar F32(Literal value) { return MakeScalarConstant(Float32Type(), value); }
 
 template struct internal::ElementwiseOps<Scalar, Cond>;
 

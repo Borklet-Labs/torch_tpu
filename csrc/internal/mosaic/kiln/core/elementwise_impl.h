@@ -69,17 +69,24 @@ template <typename Op, typename T>
 T EmitBinary(T lhs, T rhs) {
   mlir::Value values[] = {unwrap(lhs), unwrap(rhs)};
   AlignShapes(values);
-  return wrap<T>(Op::create(CurrentBuilder(), values[0], values[1]));
+  return wrap<T>(Op::create(CurrentBuilder(), values[0], values[1]),
+                 lhs.dtype());
 }
 
 // Binary op on integer or floating-point operands, dispatching on the element
 // type to `FloatOp` or `IntOp`.
-template <typename FloatOp, typename IntOp, typename T>
+template <typename FloatOp, typename SIntOp, typename UIntOp = SIntOp,
+          typename T>
 T Arith(T lhs, T rhs, std::string_view what) {
   CheckSameDType(lhs, rhs, what);
   CheckIntOrFloat(lhs, what);
-  if (lhs.dtype().IsFloat()) return EmitBinary<FloatOp>(lhs, rhs);
-  return EmitBinary<IntOp>(lhs, rhs);
+  if (lhs.dtype().IsFloat()) {
+    return EmitBinary<FloatOp>(lhs, rhs);
+  }
+  if (lhs.dtype().IsUnsigned()) {
+    return EmitBinary<UIntOp>(lhs, rhs);
+  }
+  return EmitBinary<SIntOp>(lhs, rhs);
 }
 
 // Binary op on integer or bool (mask) operands.
@@ -101,34 +108,45 @@ CmpResult Compare(T lhs, T rhs, mlir::arith::CmpFPredicate fpred,
   mlir::ImplicitLocOpBuilder& b = CurrentBuilder();
   if (lhs.dtype().IsFloat()) {
     return wrap<CmpResult>(
-        mlir::arith::CmpFOp::create(b, fpred, values[0], values[1]));
+        mlir::arith::CmpFOp::create(b, fpred, values[0], values[1]),
+        BoolType());
   }
   return wrap<CmpResult>(
-      mlir::arith::CmpIOp::create(b, ipred, values[0], values[1]));
+      mlir::arith::CmpIOp::create(b, ipred, values[0], values[1]), BoolType());
+}
+
+template <typename CmpResult, typename T>
+CmpResult Compare(T lhs, T rhs, mlir::arith::CmpFPredicate fpred,
+                  mlir::arith::CmpIPredicate signed_ipred,
+                  mlir::arith::CmpIPredicate unsigned_ipred) {
+  return Compare<CmpResult>(
+      lhs, rhs, fpred,
+      lhs.dtype().IsUnsigned() ? unsigned_ipred : signed_ipred);
 }
 
 template <typename Op, typename T>
 T UnaryFloat(T v, std::string_view what) {
   ABSL_CHECK(v.dtype().IsFloat())  // CRASH_OK
       << what << " requires floating-point operands";
-  return wrap<T>(Op::create(CurrentBuilder(), unwrap(v)));
+  return wrap<T>(Op::create(CurrentBuilder(), unwrap(v)), v.dtype());
 }
 
 template <typename T, typename CmpResult>
 T ElementwiseOps<T, CmpResult>::AsType(T v, DType target) {
-  return wrap<T>(EmitCast(unwrap(v), v.dtype(), target));
+  return wrap<T>(EmitCast(unwrap(v), v.dtype(), target), target);
 }
 
 template <typename T, typename CmpResult>
 T ElementwiseOps<T, CmpResult>::Bitcast(T v, DType target) {
-  return wrap<T>(EmitBitcast(unwrap(v), v.dtype(), target));
+  return wrap<T>(EmitBitcast(unwrap(v), v.dtype(), target), target);
 }
 
 template <typename T, typename CmpResult>
 T ElementwiseOps<T, CmpResult>::Neg(T v) {
   CheckIntOrFloat(v, "Unary -");
   if (v.dtype().IsFloat()) {
-    return wrap<T>(mlir::arith::NegFOp::create(CurrentBuilder(), unwrap(v)));
+    return wrap<T>(mlir::arith::NegFOp::create(CurrentBuilder(), unwrap(v)),
+                   v.dtype());
   }
   return v.MakeConstant(0) - v;
 }
@@ -150,28 +168,36 @@ T ElementwiseOps<T, CmpResult>::Mul(T lhs, T rhs) {
 
 template <typename T, typename CmpResult>
 T ElementwiseOps<T, CmpResult>::Div(T lhs, T rhs) {
-  return Arith<mlir::arith::DivFOp, mlir::arith::DivSIOp>(lhs, rhs, "/");
+  return Arith<mlir::arith::DivFOp, mlir::arith::DivSIOp, mlir::arith::DivUIOp>(
+      lhs, rhs, "/");
 }
 
 template <typename T, typename CmpResult>
 T ElementwiseOps<T, CmpResult>::Rem(T lhs, T rhs) {
   CheckSameDType(lhs, rhs, "%");
   ABSL_CHECK(lhs.dtype().IsInt()) << "% requires integer operands";  // CRASH_OK
+  if (lhs.dtype().IsUnsigned()) {
+    return EmitBinary<mlir::arith::RemUIOp>(lhs, rhs);
+  }
   return EmitBinary<mlir::arith::RemSIOp>(lhs, rhs);
 }
 
 template <typename T, typename CmpResult>
 T ElementwiseOps<T, CmpResult>::Min(T lhs, T rhs) {
-  if (lhs.dtype().IsBool() && rhs.dtype().IsBool()) return lhs & rhs;
-  return Arith<mlir::arith::MinimumFOp, mlir::arith::MinSIOp>(lhs, rhs,
-                                                              "Min()");
+  if (lhs.dtype().IsBool() && rhs.dtype().IsBool()) {
+    return lhs & rhs;
+  }
+  return Arith<mlir::arith::MinimumFOp, mlir::arith::MinSIOp,
+               mlir::arith::MinUIOp>(lhs, rhs, "Min()");
 }
 
 template <typename T, typename CmpResult>
 T ElementwiseOps<T, CmpResult>::Max(T lhs, T rhs) {
-  if (lhs.dtype().IsBool() && rhs.dtype().IsBool()) return lhs | rhs;
-  return Arith<mlir::arith::MaximumFOp, mlir::arith::MaxSIOp>(lhs, rhs,
-                                                              "Max()");
+  if (lhs.dtype().IsBool() && rhs.dtype().IsBool()) {
+    return lhs | rhs;
+  }
+  return Arith<mlir::arith::MaximumFOp, mlir::arith::MaxSIOp,
+               mlir::arith::MaxUIOp>(lhs, rhs, "Max()");
 }
 
 template <typename T, typename CmpResult>
@@ -195,13 +221,11 @@ T ElementwiseOps<T, CmpResult>::ShiftLeft(T lhs, T rhs) {
 }
 
 template <typename T, typename CmpResult>
-T ElementwiseOps<T, CmpResult>::ArithmeticShiftRight(T lhs, T rhs) {
+T ElementwiseOps<T, CmpResult>::ShiftRight(T lhs, T rhs) {
+  if (lhs.dtype().IsUnsigned()) {
+    return Bitwise<mlir::arith::ShRUIOp>(lhs, rhs, ">>");
+  }
   return Bitwise<mlir::arith::ShRSIOp>(lhs, rhs, ">>");
-}
-
-template <typename T, typename CmpResult>
-T ElementwiseOps<T, CmpResult>::LogicalShiftRight(T lhs, T rhs) {
-  return Bitwise<mlir::arith::ShRUIOp>(lhs, rhs, "LogicalRightShift()");
 }
 
 template <typename T, typename CmpResult>
@@ -219,25 +243,29 @@ CmpResult ElementwiseOps<T, CmpResult>::Ne(T lhs, T rhs) {
 template <typename T, typename CmpResult>
 CmpResult ElementwiseOps<T, CmpResult>::Lt(T lhs, T rhs) {
   return Compare<CmpResult>(lhs, rhs, mlir::arith::CmpFPredicate::OLT,
-                            mlir::arith::CmpIPredicate::slt);
+                            mlir::arith::CmpIPredicate::slt,
+                            mlir::arith::CmpIPredicate::ult);
 }
 
 template <typename T, typename CmpResult>
 CmpResult ElementwiseOps<T, CmpResult>::Le(T lhs, T rhs) {
   return Compare<CmpResult>(lhs, rhs, mlir::arith::CmpFPredicate::OLE,
-                            mlir::arith::CmpIPredicate::sle);
+                            mlir::arith::CmpIPredicate::sle,
+                            mlir::arith::CmpIPredicate::ule);
 }
 
 template <typename T, typename CmpResult>
 CmpResult ElementwiseOps<T, CmpResult>::Gt(T lhs, T rhs) {
   return Compare<CmpResult>(lhs, rhs, mlir::arith::CmpFPredicate::OGT,
-                            mlir::arith::CmpIPredicate::sgt);
+                            mlir::arith::CmpIPredicate::sgt,
+                            mlir::arith::CmpIPredicate::ugt);
 }
 
 template <typename T, typename CmpResult>
 CmpResult ElementwiseOps<T, CmpResult>::Ge(T lhs, T rhs) {
   return Compare<CmpResult>(lhs, rhs, mlir::arith::CmpFPredicate::OGE,
-                            mlir::arith::CmpIPredicate::sge);
+                            mlir::arith::CmpIPredicate::sge,
+                            mlir::arith::CmpIPredicate::uge);
 }
 
 template <typename T, typename CmpResult>
@@ -248,7 +276,8 @@ T ElementwiseOps<T, CmpResult>::Select(CmpResult mask, T if_true, T if_false) {
       << "Select() mask must be bool";
   AlignShapes(values);
   return wrap<T>(mlir::arith::SelectOp::create(CurrentBuilder(), values[0],
-                                               values[1], values[2]));
+                                               values[1], values[2]),
+                 if_true.dtype());
 }
 
 template <typename T, typename CmpResult>
@@ -295,11 +324,14 @@ T ElementwiseOps<T, CmpResult>::Tanh(T v) {
 template <typename T, typename CmpResult>
 T ElementwiseOps<T, CmpResult>::Abs(T v) {
   CheckIntOrFloat(v, "Abs()");
+  if (v.dtype().IsUnsigned()) {
+    return v;
+  }
   mlir::ImplicitLocOpBuilder& b = CurrentBuilder();
   if (v.dtype().IsFloat()) {
-    return wrap<T>(mlir::math::AbsFOp::create(b, unwrap(v)));
+    return wrap<T>(mlir::math::AbsFOp::create(b, unwrap(v)), v.dtype());
   }
-  return wrap<T>(mlir::math::AbsIOp::create(b, unwrap(v)));
+  return wrap<T>(mlir::math::AbsIOp::create(b, unwrap(v)), v.dtype());
 }
 
 }  // namespace torch_tpu::kiln::internal

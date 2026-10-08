@@ -247,8 +247,8 @@ TEST_F(KilnTest, LiteralOverloads) {
                      Scalar s_plus = s + 1;
                      Cond c = s_plus == 1;
                      Scalar s_bool = c;
-                     EXPECT_TRUE(s_bool.IsBool());
-                     EXPECT_FALSE(s_bool.IsIntOrFloat());
+                     EXPECT_TRUE(s_bool.dtype().IsBool());
+                     EXPECT_FALSE(s_bool.dtype().IsIntOrFloat());
                      Cond c_roundtrip = static_cast<Cond>(s_bool);
 
                      If(
@@ -308,8 +308,8 @@ TEST_F(KilnTest, ScalarFloatOperations) {
                    OutSpec{{32, 128}, f32, IndexMap(), MemorySpace::kSmem},
                    [&](Ref in, Ref out) {
                      Scalar sf = F32(2.5);
-                     EXPECT_TRUE(sf.IsFloat());
-                     EXPECT_FALSE(sf.IsInt());
+                     EXPECT_TRUE(sf.dtype().IsFloat());
+                     EXPECT_FALSE(sf.dtype().IsInt());
 
                      Scalar sf2 = sf * 2.0;
                      Scalar sf3 = sf2 + 1.0;
@@ -371,26 +371,28 @@ TEST_F(KilnTest, ScalarFloatOperations) {
 // The same integer hash written once and applied to both a Scalar and a Tile.
 template <typename T>
 T Fmix32(T h) {
-  h = h ^ (LogicalRightShift(h, 16));
+  h = h ^ (h >> 16);
   h = h * 0x85EBCA6Bu;
-  h = h ^ (LogicalRightShift(h, 13));
+  h = h ^ (h >> 13);
   h = h * 0xC2B2AE35u;
-  h = h ^ (LogicalRightShift(h, 16));
+  h = h ^ (h >> 16);
   return h;
 }
 
 TEST_F(KilnTest, BitwiseOperations) {
-  DType i32 = Int32Type();
+  DType u32 = UInt32Type();
   absl::StatusOr<Kernel> kernel = CreateKernel(
-      GridSpec{.name = "bitwise_ops", .grid = {4}}, InSpec{{32, 128}, i32},
-      OutSpec{{32, 128}, i32}, [&](Ref in, Ref out) {
-        Scalar stream = Fmix32(ProgramId(0) ^ 0x9E3779B9u);
+      GridSpec{.name = "bitwise_ops", .grid = {4}}, InSpec{{32, 128}, u32},
+      OutSpec{{32, 128}, u32}, [&](Ref in, Ref out) {
+        Scalar pid = ProgramId(0).AsType(u32);
+        Scalar stream = Fmix32(pid ^ 0x9E3779B9u);
         Scalar shifted = (stream << 1) | (stream & 1);
 
         Tile t(in);
         Tile hashed = Fmix32(t ^ shifted);
-        Tile masked = (hashed & 0xFFFF) | (LogicalRightShift(hashed, 16));
-        out = Select(masked >= 0, masked, 0);
+        Tile masked = (hashed & 0xFFFF) | (hashed >> 16);
+        Tile masked_signed = masked.AsType(Int32Type());
+        out = Select(masked_signed >= 0, masked_signed, 0);
       });
   ASSERT_THAT(kernel, IsOk());
   ExpectKernelMatches(std::move(*kernel), R"(
@@ -581,8 +583,8 @@ TEST_F(KilnTest, ForLoopWithInductionVarAndBounds) {
       OutSpec{{32, 128}, f32}, [&](Ref in, Ref out) {
         // Loop with static bounds.
         For(0, 10, [&](Scalar i) {
-          EXPECT_TRUE(i.IsInt());
-          EXPECT_FALSE(i.IsFloat());
+          EXPECT_TRUE(i.dtype().IsInt());
+          EXPECT_FALSE(i.dtype().IsFloat());
           EXPECT_EQ(i.dtype(), i32);
           Scalar i_next = i + 1;
           If(i_next < 5, [&] { out = Tile(in); });
@@ -633,16 +635,25 @@ TEST_F(KilnTest, ScalarMismatchedTypesFail) {
   absl::StatusOr<Kernel> kernel = CreateKernel(
       GridSpec{.name = "mismatched", .grid = {1}},
       InSpec{{32, 128}, Float32Type()}, InSpec{{32, 128}, Int32Type()},
-      OutSpec{{32, 128}, Float32Type()}, [&](Ref f_in, Ref i_in, Ref out) {
+      InSpec{{32, 128}, UInt32Type()}, OutSpec{{32, 128}, Float32Type()},
+      [&](Ref f_in, Ref i_in, Ref u_in, Ref out) {
         Scalar s_i = I32(1);
+        Scalar s_u = U32(1);
         Scalar s_f = F32(1.0);
         EXPECT_DEATH(s_i + s_f, "\\+ requires operands of the same dtype");
+        EXPECT_DEATH(s_i + s_u, "\\+ requires operands of the same dtype");
         EXPECT_DEATH(For(s_f, [&](Scalar) {}),
                      "IndexArg requires an integer scalar");
 
         Tile t_f(f_in);
         Tile t_i(i_in);
+        Tile t_u(u_in);
         EXPECT_DEATH(t_f + t_i, "\\+ requires operands of the same dtype");
+        EXPECT_DEATH(t_i + t_u, "\\+ requires operands of the same dtype");
+        EXPECT_DEATH(static_cast<void>(t_i == t_u),
+                     "Comparison requires operands of the same dtype");
+        EXPECT_DEATH(Min(t_i, t_u),
+                     "Min\\(\\) requires operands of the same dtype");
         EXPECT_DEATH(t_f & t_f, "& requires integer or bool operands");
 
         EXPECT_DEATH(f_in(0, 0, 0), "Too many slice indices");
@@ -661,10 +672,11 @@ TEST_F(KilnTest, DTypeProperties) {
   DType f32 = Float32Type();
   EXPECT_TRUE(f32.IsFloat());
   EXPECT_FALSE(f32.IsInt());
+  EXPECT_FALSE(f32.IsSigned());
+  EXPECT_FALSE(f32.IsUnsigned());
   EXPECT_TRUE(f32.IsIntOrFloat());
   EXPECT_EQ(f32.GetIntOrFloatBitWidth(), 32);
   EXPECT_EQ(f32.ToString(), "f32");
-  EXPECT_TRUE(static_cast<bool>(f32));
 
   std::ostringstream ss;
   ss << f32;
@@ -673,14 +685,51 @@ TEST_F(KilnTest, DTypeProperties) {
   DType i32 = Int32Type();
   EXPECT_FALSE(i32.IsFloat());
   EXPECT_TRUE(i32.IsInt());
+  EXPECT_TRUE(i32.IsSigned());
+  EXPECT_FALSE(i32.IsUnsigned());
   EXPECT_TRUE(i32.IsIntOrFloat());
   EXPECT_TRUE(i32.IsInteger(32));
+  EXPECT_TRUE(i32.IsSignedInteger(32));
+  EXPECT_FALSE(i32.IsUnsignedInteger(32));
   EXPECT_FALSE(i32.IsInteger(64));
   EXPECT_EQ(i32.GetIntOrFloatBitWidth(), 32);
   EXPECT_EQ(i32.ToString(), "i32");
 
+  DType u8 = UInt8Type();
+  EXPECT_FALSE(u8.IsFloat());
+  EXPECT_TRUE(u8.IsInt());
+  EXPECT_FALSE(u8.IsSigned());
+  EXPECT_TRUE(u8.IsUnsigned());
+  EXPECT_TRUE(u8.IsUnsignedInteger(8));
+  EXPECT_FALSE(u8.IsSignedInteger(8));
+  EXPECT_EQ(u8.GetIntOrFloatBitWidth(), 8);
+  EXPECT_EQ(u8.ToString(), "u8");
+
+  DType u16 = UInt16Type();
+  EXPECT_TRUE(u16.IsUnsigned());
+  EXPECT_TRUE(u16.IsUnsignedInteger(16));
+  EXPECT_EQ(u16.GetIntOrFloatBitWidth(), 16);
+  EXPECT_EQ(u16.ToString(), "u16");
+
+  DType u32 = UInt32Type();
+  EXPECT_FALSE(u32.IsFloat());
+  EXPECT_TRUE(u32.IsInt());
+  EXPECT_FALSE(u32.IsSigned());
+  EXPECT_TRUE(u32.IsUnsigned());
+  EXPECT_TRUE(u32.IsUnsignedInteger(32));
+  EXPECT_FALSE(u32.IsSignedInteger(32));
+  EXPECT_EQ(u32.GetIntOrFloatBitWidth(), 32);
+  EXPECT_EQ(u32.ToString(), "u32");
+
+  DType u64 = UInt64Type();
+  EXPECT_TRUE(u64.IsUnsigned());
+  EXPECT_TRUE(u64.IsUnsignedInteger(64));
+  EXPECT_EQ(u64.GetIntOrFloatBitWidth(), 64);
+  EXPECT_EQ(u64.ToString(), "u64");
+
   EXPECT_EQ(f32, Float32Type());
   EXPECT_NE(f32, i32);
+  EXPECT_NE(u32, i32);
 }
 
 TEST_F(KilnTest, TypeHelpersInsideKernel) {
@@ -690,10 +739,14 @@ TEST_F(KilnTest, TypeHelpersInsideKernel) {
       OutSpec{{32, 128}, f32}, [&](Ref in, Ref out) {
         EXPECT_TRUE(BoolType().IsBool());
         EXPECT_FALSE(BoolType().IsIntOrFloat());
-        EXPECT_TRUE(Int8Type().IsInteger(8));
-        EXPECT_TRUE(Int16Type().IsInteger(16));
-        EXPECT_TRUE(Int32Type().IsInteger(32));
-        EXPECT_TRUE(Int64Type().IsInteger(64));
+        EXPECT_TRUE(Int8Type().IsSignedInteger(8));
+        EXPECT_TRUE(Int16Type().IsSignedInteger(16));
+        EXPECT_TRUE(Int32Type().IsSignedInteger(32));
+        EXPECT_TRUE(Int64Type().IsSignedInteger(64));
+        EXPECT_TRUE(UInt8Type().IsUnsignedInteger(8));
+        EXPECT_TRUE(UInt16Type().IsUnsignedInteger(16));
+        EXPECT_TRUE(UInt32Type().IsUnsignedInteger(32));
+        EXPECT_TRUE(UInt64Type().IsUnsignedInteger(64));
         EXPECT_TRUE(Float16Type().IsFloat());
         EXPECT_EQ(Float16Type().GetIntOrFloatBitWidth(), 16);
         EXPECT_TRUE(Float32Type().IsFloat());
@@ -703,14 +756,6 @@ TEST_F(KilnTest, TypeHelpersInsideKernel) {
         out = Tile(in);
       });
   ASSERT_THAT(kernel, IsOk());
-}
-
-TEST_F(KilnTest, DTypeNullability) {
-  DType null_dt;
-  EXPECT_FALSE(static_cast<bool>(null_dt));
-  EXPECT_EQ(null_dt, DType());
-  EXPECT_NE(null_dt, Float32Type());
-  EXPECT_EQ(null_dt.ToString(), "invalid");
 }
 
 TEST_F(KilnTest, DTypeInTileAndScalarOps) {
@@ -861,6 +906,141 @@ TEST_F(KilnTest, SimplifiedOverloadsAndBounds) {
     CHECK:         %[[C100:.*]] = arith.constant dense<100> : vector<32x128xi32>
     CHECK:         %[[MOD2:.*]] = arith.remsi %[[C100]], %[[PLUS1]] : vector<32x128xi32>
     CHECK:         arith.remsi %[[MOD1]], %[[MOD2]] : vector<32x128xi32>
+  )");
+}
+
+TEST_F(KilnTest, UnsignedOperations) {
+  DType u32 = UInt32Type();
+  absl::StatusOr<Kernel> kernel = CreateKernel(
+      GridSpec{.name = "unsigned_ops", .grid = {1}}, InSpec{{32, 128}, u32},
+      InSpec{{32, 128}, u32}, OutSpec{{32, 128}, u32},
+      [&](Ref in_a, Ref in_b, Ref out) {
+        Tile a(in_a);
+        Tile b(in_b);
+        EXPECT_TRUE(a.dtype().IsUnsigned());
+        EXPECT_FALSE(a.dtype().IsSigned());
+        EXPECT_TRUE(b.dtype().IsUnsigned());
+
+        // Arithmetic
+        Tile div = a / b;
+        Tile rem = a % b;
+        Tile min_val = Min(a, b);
+        Tile max_val = Max(a, b);
+
+        // Shifts: >> on unsigned should be logical right shift (shrui).
+        Tile shr = a >> b;
+
+        // Comparisons
+        Tile lt = a < b;
+        Tile le = a <= b;
+        Tile gt = a > b;
+        Tile ge = a >= b;
+        Tile eq = a == b;
+        Tile ne = a != b;
+
+        // Select
+        Tile sel = Select(lt, a, b) + Select(le, a, b) + Select(gt, a, b) +
+                   Select(ge, a, b) + Select(eq, a, b) + Select(ne, a, b);
+
+        // MaxReduce on unsigned uses MAXUI and 0 init
+        Tile max_red = MaxReduce(a, 1);
+        Tile red_lane = max_red.Lanes(128);
+
+        // Abs on unsigned is identity
+        Tile abs_a = Abs(a);
+
+        // Scalar unsigned
+        Scalar s_u = U32(42);
+        EXPECT_TRUE(s_u.dtype().IsUnsigned());
+        Scalar s_div = s_u / U32(2);
+        Scalar s_rem = s_u % U32(5);
+        Scalar s_shr = s_u >> U32(1);
+        Cond s_lt = s_u < U32(100);
+
+        Tile s_tile = Splat(s_div + s_rem + s_shr, {32, 128});
+        If(s_lt, [&] {
+          out = sel + red_lane + div + rem + min_val + max_val + shr + abs_a +
+                s_tile;
+        });
+      });
+  ASSERT_THAT(kernel, IsOk());
+  ExpectKernelMatches(std::move(*kernel), R"(
+    CHECK-LABEL: func.func @unsigned_ops(
+    CHECK-SAME:    %{{.*}}: i32, %[[A:arg[0-9]+]]: memref<32x128xi32, #tpu.memory_space<vmem>>, %[[B:arg[0-9]+]]: memref<32x128xi32, #tpu.memory_space<vmem>>, %[[OUT:arg[0-9]+]]: memref<32x128xi32, #tpu.memory_space<vmem>>)
+    CHECK-DAG:     %[[VA:.*]] = vector.load %[[A]]
+    CHECK-DAG:     %[[VB:.*]] = vector.load %[[B]]
+    CHECK:         arith.divui %[[VA]], %[[VB]] : vector<32x128xi32>
+    CHECK:         arith.remui %[[VA]], %[[VB]] : vector<32x128xi32>
+    CHECK:         arith.minui %[[VA]], %[[VB]] : vector<32x128xi32>
+    CHECK:         arith.maxui %[[VA]], %[[VB]] : vector<32x128xi32>
+    CHECK:         arith.shrui %[[VA]], %[[VB]] : vector<32x128xi32>
+    CHECK:         arith.cmpi ult, %[[VA]], %[[VB]] : vector<32x128xi32>
+    CHECK:         arith.cmpi ule, %[[VA]], %[[VB]] : vector<32x128xi32>
+    CHECK:         arith.cmpi ugt, %[[VA]], %[[VB]] : vector<32x128xi32>
+    CHECK:         arith.cmpi uge, %[[VA]], %[[VB]] : vector<32x128xi32>
+    CHECK:         arith.cmpi eq, %[[VA]], %[[VB]] : vector<32x128xi32>
+    CHECK:         arith.cmpi ne, %[[VA]], %[[VB]] : vector<32x128xi32>
+    CHECK:         arith.select %{{.*}}, %[[VA]], %[[VB]] : vector<32x128xi1>, vector<32x128xi32>
+    CHECK:         %[[ZERO:.*]] = arith.constant dense<0> : vector<32xi32>
+    CHECK:         vector.multi_reduction <maxui>, %[[VA]], %[[ZERO]] [1] : vector<32x128xi32> to vector<32xi32>
+    CHECK:         %[[C42:.*]] = arith.constant 42 : i32
+    CHECK:         %[[C2:.*]] = arith.constant 2 : i32
+    CHECK:         arith.divui %[[C42]], %[[C2]] : i32
+    CHECK:         %[[C5:.*]] = arith.constant 5 : i32
+    CHECK:         arith.remui %[[C42]], %[[C5]] : i32
+    CHECK:         %[[C1:.*]] = arith.constant 1 : i32
+    CHECK:         arith.shrui %[[C42]], %[[C1]] : i32
+    CHECK:         %[[C100:.*]] = arith.constant 100 : i32
+    CHECK:         arith.cmpi ult, %[[C42]], %[[C100]] : i32
+  )");
+}
+
+TEST_F(KilnTest, UnsignedAndSignedCasts) {
+  DType u32 = UInt32Type();
+  DType u8 = UInt8Type();
+  DType i8 = Int8Type();
+  DType i32 = Int32Type();
+  DType f32 = Float32Type();
+
+  absl::StatusOr<Kernel> kernel = CreateKernel(
+      GridSpec{.name = "unsigned_casts", .grid = {1}}, InSpec{{32, 128}, f32},
+      InSpec{{32, 128}, u8}, InSpec{{32, 128}, i8}, OutSpec{{32, 128}, f32},
+      [&](Ref in_f, Ref in_u8, Ref in_i8, Ref out) {
+        Tile f(in_f);
+        Tile u(in_u8);
+        Tile i(in_i8);
+
+        // Float to Unsigned vs Signed
+        Tile f_to_u32 = f.AsType(u32);
+        Tile f_to_i32 = f.AsType(i32);
+
+        // Unsigned vs Signed to Float
+        Tile u_to_f = u.AsType(f32);
+        Tile i_to_f = i.AsType(f32);
+
+        // Extension: extui vs extsi
+        Tile u8_to_u32 = u.AsType(u32);
+        Tile i8_to_i32 = i.AsType(i32);
+
+        // Bitcast between same-width int types (identity)
+        Tile u_bitcast_i = f_to_u32.Bitcast(i32);
+        EXPECT_EQ(u_bitcast_i.dtype(), i32);
+
+        out = f_to_u32.AsType(f32) + f_to_i32.AsType(f32) + u_to_f + i_to_f +
+              u8_to_u32.AsType(f32) + i8_to_i32.AsType(f32);
+      });
+  ASSERT_THAT(kernel, IsOk());
+  ExpectKernelMatches(std::move(*kernel), R"(
+    CHECK-LABEL: func.func @unsigned_casts(
+    CHECK:         %[[F:.*]] = vector.load %{{.*}} : memref<32x128xf32, #tpu.memory_space<vmem>>
+    CHECK:         %[[U8:.*]] = vector.load %{{.*}} : memref<32x128xi8, #tpu.memory_space<vmem>>
+    CHECK:         %[[I8:.*]] = vector.load %{{.*}} : memref<32x128xi8, #tpu.memory_space<vmem>>
+    CHECK:         arith.fptoui %[[F]] : vector<32x128xf32> to vector<32x128xi32>
+    CHECK:         arith.fptosi %[[F]] : vector<32x128xf32> to vector<32x128xi32>
+    CHECK:         arith.uitofp %[[U8]] : vector<32x128xi8> to vector<32x128xf32>
+    CHECK:         arith.sitofp %[[I8]] : vector<32x128xi8> to vector<32x128xf32>
+    CHECK:         arith.extui %[[U8]] : vector<32x128xi8> to vector<32x128xi32>
+    CHECK:         arith.extsi %[[I8]] : vector<32x128xi8> to vector<32x128xi32>
   )");
 }
 
