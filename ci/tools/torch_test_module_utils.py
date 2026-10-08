@@ -23,9 +23,7 @@ DISABLED_TEST_MODULES: Final[frozenset[str]] = frozenset({
     "complex_tensor/test_complex_tensor",
     "dynamo/test_dynamo_decompositions",
     "dynamo/test_dynamo_ops",
-    "dynamo/test_model_output",
     "export/test_hop",
-    "inductor/test_analysis",
     "inductor/test_compiled_autograd",
     "inductor/test_compiled_optimizers",
     "inductor/test_fp8",
@@ -46,9 +44,7 @@ DISABLED_TEST_MODULES: Final[frozenset[str]] = frozenset({
     "test_accelerator",
     "test_autograd",
     "test_binary_ufuncs",
-    "test_compile_benchmark_util",
     "test_complex",
-    "test_dataloader",
     "test_decomp",
     "test_dlpack",
     "test_expanded_weights",
@@ -89,7 +85,6 @@ DISABLED_TEST_MODULES: Final[frozenset[str]] = frozenset({
     "test_unary_ufuncs",
     "test_utils",
     "test_view_ops",
-    "test_xpu",
     # go/keep-sorted end
 })
 
@@ -155,6 +150,7 @@ _ACCELERATOR_SPECIFIC_TEST_MODULES: Final[frozenset[str]] = frozenset({
     "test_mps",
     "test_sparse_semi_structured",
     "test_varlen_attention",
+    "test_xpu",
     "xpu/test_conv",
     "xpu/test_fusion",
     "xpu/test_gemm",

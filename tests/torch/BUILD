@@ -107,7 +107,6 @@ torch_tpu_oss_torch_test(
 
 torch_tpu_oss_torch_test(
     name = "dynamo_model_output_test",
-    notap = "b/563402379",  # NOTAP_OK=torch tests
     torch_test_module = "dynamo/test_model_output",
 )
 
@@ -134,7 +133,6 @@ torch_tpu_oss_torch_test(
 
 torch_tpu_oss_torch_test(
     name = "inductor_analysis_test",
-    notap = "b/563402379",  # NOTAP_OK=torch tests
     torch_test_module = "inductor/test_analysis",
 )
 
@@ -289,7 +287,6 @@ torch_tpu_oss_torch_test(
 
 torch_tpu_oss_torch_test(
     name = "compile_benchmark_util_test",
-    notap = "b/563402379",  # NOTAP_OK=torch tests
     torch_test_module = "test_compile_benchmark_util",
 )
 
@@ -306,7 +303,6 @@ torch_tpu_oss_torch_test(
 
 torch_tpu_oss_torch_test(
     name = "dataloader_test",
-    notap = "b/563402379",  # NOTAP_OK=torch tests
     torch_test_module = "test_dataloader",
 )
 
@@ -591,12 +587,6 @@ torch_tpu_oss_torch_test(
     notap = "b/563402379",  # NOTAP_OK=torch tests
     shard_count = 4,
     torch_test_module = "test_view_ops",
-)
-
-torch_tpu_oss_torch_test(
-    name = "xpu_test",
-    notap = "b/563402379",  # NOTAP_OK=torch tests
-    torch_test_module = "test_xpu",
 )
 # GENERATED_TEST_TARGETS_END
 
