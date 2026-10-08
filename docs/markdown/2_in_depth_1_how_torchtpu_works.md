@@ -150,7 +150,7 @@ mode, TorchTPU will:
     appropriate for the synchronization point reached
 
 We discuss mode details on the various modes of execution in
-[execution modes](torch_tpu/docs/source/2_in_depth_4_torchtpu_execution_modes.py).
+[execution modes](torch_tpu/docs/source/2_in_depth_3_torchtpu_execution_modes.py).
 
 ## The TorchTPU compilation cache
 
@@ -195,11 +195,9 @@ stack that has developed alongside the TPU architecture.
 
 In the following documents we’ll go into more detail about the:
 
-*   [Limitations](./2_in_depth_2_known_limitations.md) of TorchTPU, in its
-    current version
-*   [Memory model](./2_in_depth_3_torchtpu_and_tpu_memory_model.md) supported by
+*   [Memory model](./2_in_depth_2_torchtpu_and_tpu_memory_model.md) supported by
     the TPU and what its implications are on PyTorch
-*   The [Execution Modes](./2_in_depth_4_torchtpu_execution_modes.md) TorchTPU
+*   The [Execution Modes](./2_in_depth_3_torchtpu_execution_modes.md) TorchTPU
     supports
-*   Support for [custom kernels](./2_in_depth_5_custom_kernels.md)
-*   [Distributed execution](./2_in_depth_6_distributed.md) on clusters of TPUs.
+*   Support for [custom kernels](./2_in_depth_4_custom_kernels.md)
+*   [Distributed execution](./2_in_depth_5_distributed.md) on clusters of TPUs.

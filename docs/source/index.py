@@ -46,10 +46,11 @@ def _(mo):
         Run distributed workloads on GKE.
 
     ## TorchTPU in depth
-    *   [How TorchTPU works](2_in_depth_1_how_torchtpu_works.py): The basic design top to bottom.
-    *   [Known limitations](2_in_depth_2_known_limitations.py): Known limitations and gaps in TorchTPU as of the current release.
-    *   [TorchTPU and the TPU memory model](2_in_depth_3_torchtpu_and_tpu_memory_model.py): Using views effectively on TPU.
-    *   [TorchTPU Execution modes](2_in_depth_4_torchtpu_execution_modes.py): In depth detail of the execution modes TorchTPU supports. 
+    *   [How TorchTPU works in depth](2_in_depth_1_how_torchtpu_works.py): The basic design top to bottom.
+    *   [TorchTPU and the TPU memory model](2_in_depth_2_torchtpu_and_tpu_memory_model.py): Using views effectively on TPU.
+    *   [Execution modes](2_in_depth_3_torchtpu_execution_modes.py): In depth detail of the execution modes TorchTPU supports. 
+    *   [Custom Kernels](2_in_depth_4_custom_kernels.py): How to write custom kernels for TorchTPU.
+    *   [Distributed](2_in_depth_5_distributed.py): In depth detail of distributed functionality for TorchTPU.
 
     ## Practical Examples
     *   [LLM inference end-to-end](3_practical_examples_1_llm_inference_end_to_end.py): Simple example of doing an LLM and getting some tokens back.

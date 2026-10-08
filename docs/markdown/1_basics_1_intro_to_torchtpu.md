@@ -50,7 +50,7 @@ print(f"Executed on device: {x.device}")
 print(f"Result shape on CPU: {result.shape}, sum: {result.sum():.4f}")
 ```
 
-## Key features
+## Key features of the current TorchTPU release
 
 *   **Comprehensive operator and model coverage:** Supports approximately 450
     core ATen operators (both forward and backward passes) and is continuously
@@ -101,6 +101,10 @@ print(f"Result shape on CPU: {result.shape}, sum: {result.sum():.4f}")
 *   **Ecosystem integrations:** Works with standard PyTorch tooling and
     serving/training frameworks, including `torch.profiler` (with TensorBoard
     and XProf), vLLM, SGLang, TorchTitan, Ray, and TorchRec.
+
+## Known limitations of the current TorchTPU release
+
+TBD
 
 ## This documentation
 

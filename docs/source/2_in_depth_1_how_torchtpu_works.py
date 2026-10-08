@@ -106,7 +106,7 @@ def _(mo):
      * If not asynchronously compile the object, add it to the cache and dispatch for execution
      * Potentially wait for the value to be ready and copy it back, if that was appropriate for the synchronization point reached
 
-    We discuss mode details on the various modes of execution in  [execution modes](torch_tpu/docs/source/2_in_depth_4_torchtpu_execution_modes.py).
+    We discuss mode details on the various modes of execution in  [execution modes](torch_tpu/docs/source/2_in_depth_3_torchtpu_execution_modes.py).
 
     ## The TorchTPU compilation cache
     To avoid unnecessary compilations, TorchTPU employs a multi-tiered compilation cache:
@@ -126,11 +126,10 @@ def _(mo):
 
     # More detail
     In the following documents we’ll go into more detail about the:
-    * [Limitations](./2_in_depth_2_known_limitations.py) of TorchTPU, in its current version
-    * [Memory model](./2_in_depth_3_torchtpu_and_tpu_memory_model.py) supported by the TPU and what its implications are on PyTorch
-    * The [Execution Modes](./2_in_depth_4_torchtpu_execution_modes.py) TorchTPU supports
-    * Support for [custom kernels](./2_in_depth_5_custom_kernels.py)
-    * [Distributed execution](./2_in_depth_6_distributed.py) on clusters of TPUs. 
+    * [Memory model](./2_in_depth_2_torchtpu_and_tpu_memory_model.py) supported by the TPU and what its implications are on PyTorch
+    * The [Execution Modes](./2_in_depth_3_torchtpu_execution_modes.py) TorchTPU supports
+    * Support for [custom kernels](./2_in_depth_4_custom_kernels.py)
+    * [Distributed execution](./2_in_depth_5_distributed.py) on clusters of TPUs. 
 
     """)
   return

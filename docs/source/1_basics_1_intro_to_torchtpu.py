@@ -64,7 +64,7 @@ def _():
 def _(mo):
   mo.md(r"""
 
-    ## Key features
+    ## Key features of the current TorchTPU release
 
     * **Comprehensive operator and model coverage:** Supports approximately 450 core ATen operators (both forward and backward passes) and is continuously validated across nearly 5,000 popular Hugging Face models spanning large language models (Llama, Qwen, Gemma, DeepSeek, Mistral), vision (ViT, ResNet, ConvNeXt, DINOv2), audio (Whisper, Wav2Vec2), and diffusion (FLUX, Stable Diffusion).
     * **Three eager execution modes:**
@@ -79,6 +79,10 @@ def _(mo):
     * **Native PyTorch distributed support:** Implements TPU collectives at the `torch.distributed` Process Group (`c10d::Backend`) level via `backend="tpu_dist"`, supporting `DistributedDataParallel` (DDP), `FullyShardedDataParallel` (FSDP2 and SimpleFSDP), and `DTensor`. You can also use `torch.tpu.topology_aware_mesh` to align parallelism dimensions with physical TPU interconnects.
     * **Custom TPU kernels:** Author custom kernels in [Pallas](https://docs.jax.dev/en/latest/pallas/index.html) (exposed to PyTorch via `torch.tpu.pallas.jax_op`, including direct inter-chip RDMA collectives), write tile-based kernels using the experimental [Helion](https://pytorch.org/blog/helion/) DSL, or import optimized TPU kernels from Tokamax.
     * **Ecosystem integrations:** Works with standard PyTorch tooling and serving/training frameworks, including `torch.profiler` (with TensorBoard and XProf), vLLM, SGLang, TorchTitan, Ray, and TorchRec.
+
+    ## Known limitations of the current TorchTPU release
+    TBD
+
 
     ## This documentation
     This documentation is split in 5 parts:
