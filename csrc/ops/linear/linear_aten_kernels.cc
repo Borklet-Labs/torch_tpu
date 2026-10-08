@@ -406,6 +406,16 @@ bool IsFunctorchActive() {
          include_set.has(c10::DispatchKey::FuncTorchDynamicLayerBackMode);
 }
 
+// Returns true if `tensor` is a Meta tensor or a `FakeTensor` (whose
+// underlying storage has `DeviceType::Meta`).
+bool IsMetaOrFakeTensor(const at::Tensor& tensor) {
+  return tensor.defined() &&
+         (tensor.is_meta() ||
+          (tensor.key_set().has(c10::DispatchKey::Python) &&
+           tensor.has_storage() &&
+           tensor.storage().device_type() == c10::DeviceType::Meta));
+}
+
 // Returns true if `tensor` is a Python wrapper tensor subclass (such as
 // `DTensor`) not backed by Meta storage. Distinguishes wrapper subclasses
 // (including storage-less subclasses) from `FakeTensor` (used by
@@ -434,23 +444,29 @@ auto MakeAutogradNode() {
 
 at::Tensor AtenLinearAutograd(const at::Tensor& input, const at::Tensor& weight,
                               const std::optional<at::Tensor>& bias) {
+  const bool any_requires_grad =
+      torch::autograd::compute_requires_grad(input, weight, bias);
   const bool is_non_standard_grad_bias =
-      bias.has_value() && bias->defined() &&
-      torch::autograd::compute_requires_grad(*bias) &&
+      any_requires_grad && bias.has_value() && bias->defined() &&
       ((weight.dim() == 2 &&
         (bias->dim() != 1 || bias->size(0) != weight.size(0))) ||
        (weight.dim() == 1 && bias->dim() != 0)) &&
+      torch::autograd::compute_requires_grad(*bias) &&
       ValidateLinearInputs(input, weight, bias).ok();
-  if (is_non_standard_grad_bias || IsPythonWrapperSubclass(input) ||
-      IsPythonWrapperSubclass(weight) ||
+  const bool is_meta_1d_weight =
+      weight.dim() == 1 &&
+      (IsMetaOrFakeTensor(input) || IsMetaOrFakeTensor(weight));
+  if (is_non_standard_grad_bias || is_meta_1d_weight ||
+      IsPythonWrapperSubclass(input) || IsPythonWrapperSubclass(weight) ||
       (bias.has_value() && IsPythonWrapperSubclass(*bias)) ||
       IsFunctorchActive() || torch::autograd::isFwGradDefined(input) ||
       torch::autograd::isFwGradDefined(weight) ||
       torch::autograd::isFwGradDefined(bias)) {
+    if (weight.dim() == 1 && bias.has_value() && bias->defined()) {
+      return at::native::linear(input, weight, std::nullopt) + *bias;
+    }
     return at::native::linear(input, weight, bias);
   }
-  const bool any_requires_grad =
-      torch::autograd::compute_requires_grad(input, weight, bias);
   using LinearBackwardNode = torch::autograd::generated::LinearBackward0;
   decltype(MakeAutogradNode<LinearBackwardNode>()) grad_fn;
   if (any_requires_grad) {
