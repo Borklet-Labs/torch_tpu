@@ -2,20 +2,18 @@
 torch_tpu_version: 0.1.1.dev20260922
 ---
 
-````python
-mo.md(r"""
 # **Performance Profiling with xProf**
 
 Understanding where time is spent is critical for training large models on TPU. This guide covers how to capture execution traces with the TPU Profiler and analyze them in TensorBoard.
 
-> [!WARNING]
-> **Prerequisite:** TensorBoard requires `setuptools<81`. The latest version removes `pkg_resources`, which TensorBoard depends on. Install it first:
+> [!WARNING] **Prerequisite:** TensorBoard requires `setuptools<81`. The latest
+> version removes `pkg_resources`, which TensorBoard depends on. Install it
+> first:
+>
 > ```shell
 > pip install "setuptools<81"
 > pip install xprof tensorboard
 > ```
-""")
-````
 
 ## **1. The TPU Profiler**
 
@@ -104,8 +102,8 @@ points:
 4.  **(Optional) Pass `experimental_config`** with `TpuProfilerConfig` to
     control tracer levels
 
-> **⚠️ Important:** The profiler adds overhead. Profile only a representative
-> subset of steps (e.g., 100–1000), not your entire training run.
+> [!NOTE] **Important:** The profiler adds overhead. Profile only a
+> representative subset of steps (e.g., 100–1000), not your entire training run.
 
 ```python
 # Build a small model and optimizer
@@ -174,8 +172,8 @@ xprof --logdir=profiler/demo --port=6006
 **Step 3:** Open `http://localhost:6006` in your browser and select the
 **"Profile"** tab.
 
-> [!IMPORTANT] You must run TensorBoard from the VS Code integrated terminal so
-> that port forwarding works automatically.
+> [!NOTE] You must run TensorBoard from the VS Code integrated terminal so that
+> port forwarding works automatically.
 
 | View               | What it shows                                          |
 | ------------------ | ------------------------------------------------------ |
@@ -276,5 +274,5 @@ Step        | Command / Code
 **Save**    | `torch.profiler.tensorboard_trace_handler("/tmp/profiler_output")`
 **View**    | `tensorboard --logdir=/tmp/profiler_output`
 
-> [!TIP] Profile only 100–1000 steps to keep trace files manageable. The
+> [!NOTE] Profile only 100–1000 steps to keep trace files manageable. The
 > profiler adds ~5–10% overhead per step.

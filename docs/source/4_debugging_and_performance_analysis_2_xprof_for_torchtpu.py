@@ -127,7 +127,8 @@ def _(mo):
     3. **Set `on_trace_ready`** to save traces to a directory using `torch.profiler.tensorboard_trace_handler`
     4. **(Optional) Pass `experimental_config`** with `TpuProfilerConfig` to control tracer levels
 
-    > **⚠️ Important:** The profiler adds overhead. Profile only a representative subset of steps (e.g., 100–1000), not your entire training run.
+    > [!NOTE]
+    > **Important:** The profiler adds overhead. Profile only a representative subset of steps (e.g., 100–1000), not your entire training run.
     """)
   return
 
@@ -200,7 +201,7 @@ def _(mo):
 
     **Step 3:** Open `http://localhost:6006` in your browser and select the **"Profile"** tab.
 
-    > [!IMPORTANT]
+    > [!NOTE]
     > You must run TensorBoard from the VS Code integrated terminal so that port forwarding works automatically.
 
     | View | What it shows |
@@ -310,7 +311,7 @@ def _(mo):
     | **Save** | `torch.profiler.tensorboard_trace_handler("/tmp/profiler_output")` |
     | **View** | `tensorboard --logdir=/tmp/profiler_output` |
 
-    > [!TIP]
+    > [!NOTE]
     > Profile only 100–1000 steps to keep trace files manageable. The profiler adds ~5–10% overhead per step.
     """)
   return
