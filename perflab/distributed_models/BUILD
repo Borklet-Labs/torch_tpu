@@ -80,6 +80,25 @@ torch_tpu_py_library(
     ],
 )
 
+# Depends on torchtitan's SimpleFSDP, so like `qwen3_8` it is a separate non-OSS
+# target that benchmark binaries add with `if_oss([], [...])`.
+internal_target(
+    torch_tpu_py_library,
+    name = "synthetic",
+    srcs = ["synthetic.py"],
+    deps = [
+        "//perflab:compile",
+        "//perflab:context",
+        "//perflab:registry",
+        "//perflab:step_lib",
+        "//perflab:target",
+        "//perflab:torch_device_ops",
+        "//shims/torch:pytorch",
+        "//shims/torchtitan/experiments/graph_trainer:simple_fsdp",
+        "//src/torch_tpu",
+    ],
+)
+
 torch_tpu_py_library(
     name = "distributed_models",
     srcs = ["__init__.py"],

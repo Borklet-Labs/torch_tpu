@@ -302,4 +302,27 @@ internal_target(
     ],
 )
 
+# torchtitan (SimpleFSDP) is not available in OSS.
+internal_target(
+    torch_tpu_py_test,
+    name = "distributed_synthetic_test",
+    srcs = ["distributed_synthetic_test.py"],
+    # Avoids TOO_MANY_INPUT_FILES from torchtitan's sources.
+    use_precompile = False,
+    deps = [
+        "//perflab:context",
+        "//perflab:registry",
+        "//perflab:target",
+        "//perflab/distributed_models:synthetic",
+        "//shims/absl_py/testing:absltest",
+        "//shims/absl_py/testing:parameterized",
+        "//shims/torch:pytorch",
+        "//src/torch_tpu",
+        "//src/torch_tpu/_internal/distributed:multiprocessing",
+        "//src/torch_tpu/_internal/utils:test_utils",
+        "//tests:seed_test_utils",
+        "//tests/distributed:distributed_utils",
+    ],
+)
+
 torch_tpu_package_end()
