@@ -45,6 +45,7 @@ from absl.testing import absltest
 import torch
 import torch_tpu  # pylint: disable=unused-import  # noqa: F401
 from torch.testing._internal import common_device_type  # pylint: disable=g-bad-import-order
+from torch_tpu._internal.utils import annotations
 
 _TORCH_TEST_DIR_ENV_VAR: Final = "TORCH_TPU_INTERNAL_PYTORCH_TEST_DIR"
 _TORCH_TEST_MODULE_ENV_VAR: Final = "TORCH_TPU_INTERNAL_TORCH_TEST_MODULE"
@@ -173,6 +174,10 @@ def main(argv: Sequence[str]) -> None:
   os.environ["PYTORCH_TESTING_DEVICE_ONLY_FOR"] = "tpu"
   _set_private_use1_test_configs()
   _filter_device_generic_tests()
+
+  # TODO(b/571605100): fix upstream tests to use public APIs only and then
+  # remove API warning suppression.
+  annotations._internal_apis_allowed_for_testing = True  # pylint: disable=protected-access
 
   # Execute the test module as a program via absltest. Each test module has its
   # own entry point invoking `run_tests()` from its own namespace.
