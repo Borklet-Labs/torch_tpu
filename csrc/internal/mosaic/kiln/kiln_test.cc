@@ -636,18 +636,14 @@ TEST_F(KilnTest, ScalarMismatchedTypesFail) {
       OutSpec{{32, 128}, Float32Type()}, [&](Ref f_in, Ref i_in, Ref out) {
         Scalar s_i = I32(1);
         Scalar s_f = F32(1.0);
-        EXPECT_DEATH(s_i + s_f,
-                     "Scalar arithmetic requires operands of the same type");
+        EXPECT_DEATH(s_i + s_f, "\\+ requires operands of the same dtype");
         EXPECT_DEATH(For(s_f, [&](Scalar) {}),
                      "IndexArg requires an integer scalar");
 
         Tile t_f(f_in);
         Tile t_i(i_in);
-        EXPECT_DEATH(
-            t_f + t_i,
-            "Tile binary operators require operands of the same dtype");
-        EXPECT_DEATH(t_f & t_f,
-                     "Bitwise tile operators require integer or mask operands");
+        EXPECT_DEATH(t_f + t_i, "\\+ requires operands of the same dtype");
+        EXPECT_DEATH(t_f & t_f, "& requires integer or bool operands");
 
         EXPECT_DEATH(f_in(0, 0, 0), "Too many slice indices");
         EXPECT_DEATH(f_in(0, Slice(0, 0)), "Slice size must be positive");

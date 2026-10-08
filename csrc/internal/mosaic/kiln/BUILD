@@ -28,6 +28,7 @@ torch_tpu_cc_library(
         "//csrc/internal/mosaic/kiln/core:cond",
         "//csrc/internal/mosaic/kiln/core:control_flow",
         "//csrc/internal/mosaic/kiln/core:dtype",
+        "//csrc/internal/mosaic/kiln/core:elementwise",
         "//csrc/internal/mosaic/kiln/core:index_arg",
         "//csrc/internal/mosaic/kiln/core:index_map",
         "//csrc/internal/mosaic/kiln/core:kernel",
