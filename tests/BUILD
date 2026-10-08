@@ -16,6 +16,7 @@ load(
     "//build_files:build_defs.bzl",
     "DEFAULT_TORCH_EXAMPLE_DEPS",
     "OSS_REQUIRES_V5_X4",
+    "TEST_COV_ENV",
     "if_oss",
     "torch_tpu_oss_torch_example",
     "torch_tpu_package_end",
@@ -1719,10 +1720,7 @@ torch_tpu_py_test(
     args = [
         "--test_mode=cov",
     ],
-    env = {
-        "TORCH_SHOW_CPP_STACKTRACES": "1",
-        "TORCH_TPU_ENABLE_DEBUG_CHECKS": "1",
-    },
+    env = TEST_COV_ENV,
     main = "errors_test.py",
     notap = "Run by error_coverage_test in the torch_tpu.error_coverage Guitar workflow.",
     shard_count = 4,
@@ -1753,10 +1751,7 @@ torch_tpu_py_test(
     args = [
         "--test_mode=cov",
     ],
-    env = {
-        "TORCH_SHOW_CPP_STACKTRACES": "1",
-        "TORCH_TPU_ENABLE_DEBUG_CHECKS": "1",
-    },
+    env = TEST_COV_ENV,
     main = "tpu_errors_test.py",
     notap = "Run by error_coverage_test in the torch_tpu.error_coverage Guitar workflow.",
     shard_count = 4,

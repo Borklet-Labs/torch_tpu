@@ -94,6 +94,15 @@ OSS_TPU_RUNNER_CHIPS = {
 #    source of truth.
 OSS_REQUIRES_V5_X4 = "requires-tpu-v5lite:4"
 
+# Environment variables for `*_test_cov` targets that collect error coverage.
+# Disables addr2line C++ stack trace symbolization to avoid symbolizer overhead
+# and multiprocess hangs while still capturing C++ source locations.
+TEST_COV_ENV = {
+    "TORCH_DISABLE_ADDR2LINE": "1",
+    "TORCH_SHOW_CPP_STACKTRACES": "1",
+    "TORCH_TPU_ENABLE_DEBUG_CHECKS": "1",
+}
+
 def _get_tpu_generation(tag):
     """Returns the TPU generation for a `requires-tpu-<version>[:<chips>]` tag."""
     return TPU_VERSION_TO_GENERATION.get(tag.split(":")[0])
@@ -1140,7 +1149,7 @@ def torch_tpu_py_test(
     if is_wheel_test:
         test_env = existing_env or {}
     else:
-        existing_env = existing_env or {}
+        existing_env = dict(existing_env) if existing_env else {}
         if "exclusive" in tags:
             existing_env["TORCH_TPU_EXCLUSIVE_TEST"] = "1"
 
