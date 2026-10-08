@@ -127,5 +127,28 @@ class GetKnownFailureReasonTest(seed_test_utils.RepeatableTest):
     )
 
 
+class InductorCpuCodegenKnownFailuresTest(seed_test_utils.RepeatableTest):
+
+  @parameterized.named_parameters(
+      ("blip", "blip_vqa_capfilt_large_forward_gen"),
+      ("deberta", "deberta_base_mnli_forward_gen"),
+  )
+  def test_only_cuda_compiled_is_skipped(self, benchmark):
+    for device_kind in target_lib.DeviceKind:
+      for run_mode in common.RunMode:
+        with self.subTest(device_kind=device_kind, run_mode=run_mode):
+          reason = known_failures.get_known_failure_reason(
+              benchmark,
+              framework=mode_lib.Framework.TORCH,
+              device_kind=device_kind,
+              run_mode=run_mode,
+          )
+          self.assertEqual(
+              reason is not None,
+              device_kind == target_lib.DeviceKind.CUDA
+              and run_mode == common.RunMode.COMPILED,
+          )
+
+
 if __name__ == "__main__":
   absltest.main()
