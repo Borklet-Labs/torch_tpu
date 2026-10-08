@@ -17,11 +17,12 @@
 #include "csrc/ops/cat/cat.h"
 
 #include <cstdint>
+#include <vector>
 
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "csrc/common/error_utils.h"
-#include "mlir/Support/LLVM.h"
+#include "csrc/ops/op_builder_utils.h"
 #include "stablehlo/integrations/cpp/builder/MlirBuilder.h"
 #include "stablehlo/integrations/cpp/builder/StablehloBuilder.h"
 
@@ -36,6 +37,21 @@ absl::StatusOr<mlir::MlirOp> BuildCatShlo(absl::Span<mlir::MlirOp> input_ops,
       << "expected a non-empty list of Tensors";
   return stablehlo::Concatenate(input_ops[0].getBuilder(), input_ops,
                                 dimension);
+}
+
+absl::StatusOr<mlir::MlirOp> BuildStackShlo(absl::Span<mlir::MlirOp> input_ops,
+                                            int64_t dimension) {
+  TT_RET_CHECK(  // ERROR_COV_INFEASIBLE=PyTorch catches this error first.
+      !input_ops.empty(), error::kInvalidArgument)
+      << "expected a non-empty list of Tensors";
+  std::vector<mlir::MlirOp> unsqueezed_ops;
+  unsqueezed_ops.reserve(input_ops.size());
+  for (mlir::MlirOp input_op : input_ops) {
+    TT_ASSIGN_OR_RETURN(mlir::MlirOp unsqueezed,
+                        Unsqueeze(input_op, dimension));
+    unsqueezed_ops.push_back(unsqueezed);
+  }
+  return BuildCatShlo(absl::MakeSpan(unsqueezed_ops), dimension);
 }
 
 }  // namespace torch_tpu

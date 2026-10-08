@@ -790,6 +790,8 @@ enum class OpName {
   kSparseResize_,
   kSplitWithSizesCopyOut,
   kSqrtOut,
+  kStack,
+  kStackOut,
   kStdCorrection,
   kStdCorrectionOut,
   kSub,
@@ -2420,6 +2422,10 @@ ToString(  // NOLINT(google-readability-function-size)
       return "split_with_sizes_copy.out";
     case OpName::kSqrtOut:
       return "sqrt.out";
+    case OpName::kStack:
+      return "stack";
+    case OpName::kStackOut:
+      return "stack.out";
     case OpName::kStdCorrection:
       return "std.correction";
     case OpName::kStdCorrectionOut:

@@ -1043,6 +1043,8 @@ TORCH_LIBRARY_IMPL(aten, PrivateUse1, m) {
   ImplStable<OpName::kSortValuesStable>(m, AtenSortValuesStable);
   ImplStable<OpName::kSplitWithSizesCopyOut>(m, AtenSplitWithSizesCopyOut);
   ImplStable<OpName::kSqrtOut>(m, AtenSqrtOut);
+  ImplStable<OpName::kStack>(m, AtenStack);
+  ImplStable<OpName::kStackOut>(m, AtenStackOut);
   ImplStable<OpName::kStdCorrection>(m, AtenStd);
   ImplStable<OpName::kStdCorrectionOut>(m, AtenStdOut);
   ImplStable<OpName::kSubOut>(m, AtenSubOut);

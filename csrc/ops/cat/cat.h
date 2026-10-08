@@ -28,6 +28,9 @@ namespace torch_tpu {
 absl::StatusOr<mlir::MlirOp> BuildCatShlo(absl::Span<mlir::MlirOp> input_ops,
                                           int64_t dimension);
 
+absl::StatusOr<mlir::MlirOp> BuildStackShlo(absl::Span<mlir::MlirOp> input_ops,
+                                            int64_t dimension);
+
 }  // namespace torch_tpu
 
 #endif  // TORCH_TPU_CSRC_OPS_CAT_CAT_H_

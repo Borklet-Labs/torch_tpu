@@ -25,6 +25,7 @@ torch_tpu_cc_library(
     hdrs = ["cat_aten_kernels.h"],
     deps = [
         ":cat",
+        "//csrc/common:aten_utils",
         "//csrc/common:cache_key",
         "//csrc/common:dimension_types",
         "//csrc/common:dtype",
@@ -58,9 +59,9 @@ torch_tpu_cc_library(
     hdrs = ["cat.h"],
     deps = [
         "//csrc/common:error_utils",
+        "//csrc/ops:op_builder_utils",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
-        "@llvm-project//mlir:Support",
         "@stablehlo//stablehlo/integrations/cpp/builder:mlir_builder",
         "@stablehlo//stablehlo/integrations/cpp/builder:stablehlo_builder",
     ],

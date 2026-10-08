@@ -5577,6 +5577,92 @@ Supported combinations for non-constant padding:
     ):
       torch.cat([t_f32], out=out_cpu)
 
+  def test_stack_errors(self):
+    """Tests error conditions for torch.stack and torch.stack(out=...)."""
+    out = torch.zeros(1, device=et.device(), dtype=torch.float32)
+
+    with self.subTest("empty_input"):
+      # Without `out=`, no TPU tensor is present so PyTorch dispatches to CPU.
+      with et.assert_raises_message(
+          RuntimeError,
+          tpu="""stack expects a non-empty TensorList""",
+          gpu="""stack expects a non-empty TensorList""",
+      ):
+        torch.stack([])
+      with et.assert_raises_message(
+          RuntimeError,
+          tpu="""stack(): expected a non-empty TensorList, got an empty list""",
+          gpu="""stack expects a non-empty TensorList""",
+      ):
+        torch.stack([], out=out)
+
+    with self.subTest("mismatched_sizes"):
+      t1 = torch.ones((2, 3), device=et.device(), dtype=torch.float32)
+      t2 = torch.ones((2, 4), device=et.device(), dtype=torch.float32)
+      for call in (
+          lambda: torch.stack([t1, t2]),
+          lambda: torch.stack([t1, t2], out=out),
+      ):
+        with et.assert_raises_message(
+            RuntimeError,
+            tpu="""stack(): expected each tensor to be equal size, got [2, 3] at entry 0 and [2, 4] at entry 1""",
+            gpu="""stack expects each tensor to be equal size, but got [2, 3] at entry 0 and [2, 4] at entry 1""",
+        ):
+          call()
+
+    with self.subTest("dim_out_of_range"):
+      t1 = torch.ones((2, 3), device=et.device(), dtype=torch.float32)
+      for call in (
+          lambda: torch.stack([t1, t1], dim=3),
+          lambda: torch.stack([t1, t1], dim=3, out=out),
+      ):
+        with et.assert_raises_message(
+            IndexError,
+            tpu="""stack(): expected dimension to be in range [-3, 2], got 3""",
+            gpu="""Dimension out of range (expected to be in range of [-3, 2], but got 3)""",
+        ):
+          call()
+
+    with self.subTest("out_invalid_cast"):
+      t_f32 = torch.tensor([1.0, 2.0], device=et.device(), dtype=torch.float32)
+      out_int32 = torch.zeros((1, 2), device=et.device(), dtype=torch.int32)
+      err_type = RuntimeError if et.is_on_tpu() else TypeError
+      with et.assert_raises_message(
+          err_type,
+          tpu="""stack(): result type float32 can't be cast to the desired output type int32""",
+          gpu="""torch.cat(): input types can't be cast to the desired output type Int""",
+      ):
+        torch.stack([t_f32], out=out_int32)
+
+    with self.subTest("out_cpu_tensor"):
+      t_f32 = torch.tensor([1.0, 2.0], device=et.device(), dtype=torch.float32)
+      out_cpu = torch.zeros((1, 2), device="cpu", dtype=torch.float32)
+      with et.assert_raises_message(
+          RuntimeError,
+          tpu="""stack(): expected tensor to be on tpu, got cpu""",
+          gpu="""Expected all tensors to be on the same device, but got tensors is on cuda:0, different from other tensors on cpu (when checking argument in method wrapper_CUDA_cat_out_out)""",
+      ):
+        torch.stack([t_f32], out=out_cpu)
+
+    with self.subTest("mixed_devices"):
+      t_dev = torch.tensor([1.0, 2.0], device=et.device(), dtype=torch.float32)
+      t_cpu = torch.tensor([3.0, 4.0], device="cpu", dtype=torch.float32)
+      t_dev_empty = torch.zeros(0, device=et.device(), dtype=torch.float32)
+      t_cpu_empty = torch.zeros(0, device="cpu", dtype=torch.float32)
+      for tensors in ([t_dev, t_cpu], [t_dev_empty, t_cpu_empty]):
+        with et.assert_raises_message(
+            RuntimeError,
+            tpu="""stack(): expected tensor to be on tpu, got cpu""",
+            gpu="""Expected all tensors to be on the same device, but got tensors is on cpu, different from other tensors on cuda:0 (when checking argument in method wrapper_CUDA_cat)""",
+        ):
+          torch.stack(tensors)
+        with et.assert_raises_message(
+            RuntimeError,
+            tpu="""stack(): expected tensor to be on tpu, got cpu""",
+            gpu="""Expected all tensors to be on the same device, but got tensors is on cpu, different from other tensors on cuda:0 (when checking argument in method wrapper_CUDA_cat_out_out)""",
+        ):
+          torch.stack(tensors, out=out)
+
   def test_sub_bool(self):
     lhs = torch.tensor([1.0, 1.0], device=et.device())
     rhs = torch.tensor([1.0, 1.0], device=et.device())

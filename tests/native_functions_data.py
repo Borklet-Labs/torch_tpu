@@ -545,6 +545,11 @@ REGISTRATION_OVERRIDES = frozenset([
     # split_with_sizes_copy.out is used by PyTorch's FSDP2 wrapper. The default
     # decomposition performs 2-d reshapes that are inefficient on TPU.
     'split_with_sizes_copy.out',
+    # stack and stack.out are registered to lower directly to StableHLO
+    # Reshape + Concatenate without decomposing into per-tensor unsqueeze view
+    # creation + cat.
+    'stack',
+    'stack.out',
     # zeros and zeros_like are registered directly to lower to a single
     # StableHLO constant instead of the composite empty + zero_ double dispatch.
     'zeros',

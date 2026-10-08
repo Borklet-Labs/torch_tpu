@@ -17,6 +17,7 @@
 #include "csrc/ops/cat/cat_aten_kernels.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <utility>
@@ -32,6 +33,7 @@
 #include "absl/strings/str_join.h"
 #include "absl/types/span.h"
 #include "c10/core/ScalarType.h"
+#include "csrc/common/aten_utils.h"
 #include "csrc/common/cache_key.h"
 #include "csrc/common/dimension_types.h"
 #include "csrc/common/dtype.h"
@@ -118,6 +120,59 @@ absl::StatusOr<CatShapeInfo> ValidateCatTensors(
   }
 
   return CatShapeInfo{max_num_dims, wrapped_dim, std::move(output_dims)};
+}
+
+struct StackDispatchParams {
+  int64_t wrapped_dim;
+  mlir::ElementType output_dtype;
+  Dimensions output_dims;
+};
+
+absl::StatusOr<StackDispatchParams> PrepareStackDispatch(
+    at::TensorList tensors, const int64_t dim,
+    const at::Tensor* out = nullptr) {
+  TT_RET_CHECK(!tensors.empty(), error::kInvalidArgument)
+      << "expected a non-empty TensorList, got an empty list";
+
+  const at::Tensor& first_tensor = tensors[0];
+  const int64_t output_rank = first_tensor.dim() + 1;
+  TT_ASSIGN_OR_RETURN(const int64_t wrapped_dim, SafeWrapDim(dim, output_rank));
+
+  for (size_t i = 1; i < tensors.size(); ++i) {
+    TT_RET_CHECK(tensors[i].sizes() == first_tensor.sizes(),
+                 error::kInvalidArgument)
+        << "expected each tensor to be equal size, got "
+        << ToString(first_tensor.sizes()) << " at entry 0 and "
+        << ToString(tensors[i].sizes()) << " at entry " << i;
+  }
+
+  Dimensions output_dims = CopyIntVector(first_tensor.sizes());
+  output_dims.insert(output_dims.begin() + wrapped_dim,
+                     static_cast<int64_t>(tensors.size()));
+
+  at::ScalarType target_dtype = first_tensor.scalar_type();
+  for (const at::Tensor& tensor : tensors) {
+    target_dtype = c10::promoteTypes(target_dtype, tensor.scalar_type());
+  }
+  if (out != nullptr) {
+    TT_RETURN_IF_ERROR(ValidateOutDtype(*out, target_dtype));
+    target_dtype = out->scalar_type();
+  }
+  TT_ASSIGN_OR_RETURN(const auto output_dtype,
+                      ConvertTo<mlir::ElementType>(target_dtype));
+
+  return StackDispatchParams{
+      .wrapped_dim = wrapped_dim,
+      .output_dtype = output_dtype,
+      .output_dims = std::move(output_dims),
+  };
+}
+
+auto MakeStackOpBuilder(const int64_t wrapped_dim) {
+  return [wrapped_dim](absl::Span<mlir::MlirOp> inputs,
+                       mlir::MlirBuilder& builder) {
+    return BuildStackShlo(inputs, wrapped_dim);
+  };
 }
 
 absl::StatusOr<CatComputationResult> CatHelper(
@@ -209,6 +264,38 @@ at::Tensor& AtenCatOut(const at::ITensorListRef& tensors, int64_t dim,
         AssignBufferToAtTensor(std::move(cat_result.result_buf), out));
     ABSL_VLOG(1) << "[C++ KERNEL tpu_aten_cat_out] out(final): "
                  << ToString(out, "out");
+    return out;
+  });
+}
+
+at::Tensor AtenStack(at::TensorList tensors, int64_t dim) {
+  TT_KERNEL(OpName::kStack, param_keys, (tensors, dim), {
+    TT_ASSIGN_OR_THROW(StackDispatchParams params,
+                       PrepareStackDispatch(tensors, dim));
+    TT_ASSIGN_OR_THROW(auto result_buf,
+                       DispatchOp<kDynamicSize>(
+                           MakeStackOpBuilder(params.wrapped_dim),
+                           tensors.vec(),  // VEC_OK
+                           {.out_dtype = params.output_dtype,
+                            .out_dims = params.output_dims,
+                            .computation_dtype = params.output_dtype,
+                            .op_param_cache_keys = std::move(param_keys)}));
+    return MakeTensor(std::move(result_buf));
+  });
+}
+
+at::Tensor& AtenStackOut(at::TensorList tensors, int64_t dim, at::Tensor& out) {
+  TT_KERNEL(OpName::kStackOut, param_keys, (tensors, dim, out), {
+    TT_ASSIGN_OR_THROW(StackDispatchParams params,
+                       PrepareStackDispatch(tensors, dim, &out));
+    TT_THROW_IF_ERROR(DispatchOpOut<kDynamicSize>(
+        MakeStackOpBuilder(params.wrapped_dim),
+        tensors.vec(),  // VEC_OK
+        out,
+        {.out_dtype = params.output_dtype,
+         .out_dims = params.output_dims,
+         .computation_dtype = params.output_dtype,
+         .op_param_cache_keys = std::move(param_keys)}));
     return out;
   });
 }

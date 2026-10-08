@@ -4442,6 +4442,96 @@ class OpsUnitTest(TorchTpuVsCpuTestBase):
 
     self.assert_close_tpu_vs_cpu(fn)
 
+  def test_stack(self):
+    def fn(device):
+      s1 = torch.tensor(1.0, dtype=torch.float32, device=device)
+      s2 = torch.tensor(2, dtype=torch.int32, device=device)
+      t1 = torch.tensor(
+          [[1.0, 2.0], [3.0, 4.0]], dtype=torch.float32, device=device
+      )
+      t2 = torch.tensor(
+          [[5.0, 6.0], [7.0, 8.0]], dtype=torch.bfloat16, device=device
+      )
+      t_empty = torch.empty(2, 0, 3, dtype=torch.float32, device=device)
+      out_empty = torch.zeros(1, dtype=torch.float32, device=device)
+      torch.stack([t_empty, t_empty], dim=1, out=out_empty)
+
+      out_scalars = torch.zeros(2, dtype=torch.float32, device=device)
+      torch.stack([s1, s2], dim=0, out=out_scalars)
+
+      out_single = torch.zeros((2, 1, 2), dtype=torch.float32, device=device)
+      torch.stack([t1], dim=1, out=out_single)
+
+      out_neg_dim = torch.zeros((2, 2, 2), dtype=torch.float32, device=device)
+      torch.stack([t1, t2], dim=-1, out=out_neg_dim)
+
+      out_matching = torch.zeros((2, 2, 2), dtype=torch.float32, device=device)
+      torch.stack([t1, t2], dim=0, out=out_matching)
+
+      t1_view = t1.t()
+      t2_view = t2.t()
+      out_view_base = torch.zeros((2, 4, 2), dtype=torch.float32, device=device)
+      out_view = out_view_base[:, ::2, :]
+      torch.stack([t1_view, t2_view], dim=1, out=out_view)
+
+      return (
+          torch.stack([s1]),
+          torch.stack([s1, s2], dim=0),
+          torch.stack([s1, s2], dim=-1),
+          torch.stack([t1], dim=1),
+          torch.stack([t1, t2], dim=0),
+          torch.stack([t1, t2], dim=1),
+          torch.stack([t1, t2], dim=2),
+          torch.stack([t1, t2], dim=-1),
+          torch.stack([t1_view, t2_view], dim=1),
+          torch.stack([t_empty, t_empty], dim=0),
+          out_empty,
+          out_scalars,
+          out_single,
+          out_neg_dim,
+          out_matching,
+          out_view_base,
+      )
+
+    self.assert_close_tpu_vs_cpu(fn)
+
+  def test_stack_single_dispatch(self):
+    tensors = [
+        torch.tensor(float(i), dtype=torch.float32, device="tpu")
+        for i in range(16)
+    ]
+    torch.accelerator.synchronize()
+    start_reqs = torch.tpu._get_cache_stats().num_cache_reqs
+    actual = torch.stack(tensors).cpu()
+    reqs = torch.tpu._get_cache_stats().num_cache_reqs - start_reqs
+    self.assertEqual(reqs, 1)
+    utils.assert_close(actual, torch.arange(16, dtype=torch.float32))
+
+  def test_stack_out_mismatched_dtypes(self):
+    t_f32 = torch.tensor([1.0, 2.0], dtype=torch.float32)
+    t_bf16 = torch.tensor([3.0, 4.0], dtype=torch.bfloat16)
+
+    def test_fn(device):
+      out_bf16 = torch.zeros((2, 2), dtype=torch.bfloat16, device=device)
+      torch.stack([t_f32.to(device), t_bf16.to(device)], out=out_bf16)
+
+      out_f32 = torch.zeros((2, 2), dtype=torch.float32, device=device)
+      torch.stack([t_f32.to(device), t_bf16.to(device)], out=out_f32)
+      return out_bf16, out_f32
+
+    self.assert_close_tpu_vs_cpu(test_fn)
+
+  def test_stack_out_resized(self):
+    t1 = torch.tensor([[1.0, 2.0], [3.0, 4.0]], dtype=torch.float32)
+    t2 = torch.tensor([[5.0, 6.0], [7.0, 8.0]], dtype=torch.float32)
+
+    def fn(device):
+      out = torch.zeros((1, 1), dtype=torch.float32, device=device)
+      torch.stack([t1.to(device), t2.to(device)], dim=1, out=out)
+      return out
+
+    self.assert_close_tpu_vs_cpu(fn)
+
   def test_cumprod_default_dtype(self):
     """Tests torch.cumprod with default dtype (None)."""
     x = torch.randn(2, 3, dtype=torch.float32)

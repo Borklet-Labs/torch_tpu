@@ -30,6 +30,10 @@ at::Tensor AtenCat(const at::ITensorListRef& tensors, int64_t dim);
 at::Tensor& AtenCatOut(const at::ITensorListRef& tensors, int64_t dim,
                        at::Tensor& out);
 
+at::Tensor AtenStack(at::TensorList tensors, int64_t dim);
+
+at::Tensor& AtenStackOut(at::TensorList tensors, int64_t dim, at::Tensor& out);
+
 }  // namespace torch_tpu
 
 #endif  // TORCH_TPU_CSRC_OPS_CAT_CAT_ATEN_KERNELS_H_
