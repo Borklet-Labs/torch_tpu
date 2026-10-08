@@ -81,6 +81,50 @@ class RecordingOps:
     return self._recompiles
 
 
+class _FailingXprofSession:
+  """Fake XprofSession whose start always fails with the given error."""
+
+  def __init__(self, error):
+    self._error = error
+
+  def start_session(self, **kwargs):
+    del kwargs
+    raise self._error
+
+  def end_session_and_get_xspace_and_url(self, *args, **kwargs):
+    raise AssertionError("A session that never started must not be ended.")
+
+  def end_session_and_get_session_id(self, *args, **kwargs):
+    raise AssertionError("A session that never started must not be ended.")
+
+
+class FailingXprofSessionFactory:
+  """Fake XprofSession class whose sessions never start.
+
+  By default, start fails because another profiling session is active.
+  """
+
+  def __init__(self, error=None):
+    self.created = 0
+    self._error = error or RuntimeError(
+        "UNAVAILABLE: Another profiling session active."
+    )
+
+  def __call__(self):
+    self.created += 1
+    return _FailingXprofSession(self._error)
+
+
+class RecordingSleep:
+  """Fake time.sleep that records the requested durations without sleeping."""
+
+  def __init__(self):
+    self.durations = []
+
+  def __call__(self, seconds):
+    self.durations.append(seconds)
+
+
 def _run_measure(
     step,
     ops,
@@ -535,28 +579,45 @@ class XprofContextTest(seed_test_utils.RepeatableTest):
       self.assertIs(ctx.xspace, sentinel_xspace)
 
   def test_start_session_raises_after_exhausting_retries(self):
+    session_factory = FailingXprofSessionFactory()
+    sleeper = RecordingSleep()
+
     with (
         mock.patch.object(
-            measure_lib.xprof_adapter, "XprofSession"
-        ) as mock_session_cls,
-        mock.patch.object(measure_lib.time, "sleep") as mock_sleep,
+            measure_lib.xprof_adapter, "XprofSession", new=session_factory
+        ),
+        mock.patch.object(measure_lib.time, "sleep", new=sleeper),
     ):
-      mock_session_cls.return_value.start_session.side_effect = RuntimeError(
-          "UNAVAILABLE: Another profiling session active."
-      )
-
       with self.assertRaisesRegex(  # ASSERT_RAISES_OK=benchmark
           RuntimeError, "Another profiling session active"
       ):
         with measure_lib.XprofContext(name="contended", enable_xprof=True):
           pass
 
-      self.assertEqual(
-          mock_session_cls.call_count, measure_lib._XPROF_START_MAX_ATTEMPTS
-      )
-      self.assertEqual(
-          mock_sleep.call_count, measure_lib._XPROF_START_MAX_ATTEMPTS - 1
-      )
+    self.assertEqual(
+        session_factory.created, measure_lib._XPROF_START_MAX_ATTEMPTS
+    )
+    self.assertEqual(
+        sleeper.durations, [measure_lib._XPROF_START_RETRY_DELAY_SECONDS]
+    )
+
+  def test_start_session_other_errors_still_raise(self):
+    session_factory = FailingXprofSessionFactory(
+        error=RuntimeError("INVALID_ARGUMENT: bad trace mode")
+    )
+    with (
+        mock.patch.object(
+            measure_lib.xprof_adapter, "XprofSession", new=session_factory
+        ),
+        mock.patch.object(measure_lib.time, "sleep", new=RecordingSleep()),
+    ):
+      with self.assertRaisesRegex(  # ASSERT_RAISES_OK=benchmark
+          RuntimeError, "bad trace mode"
+      ):
+        with measure_lib.XprofContext(name="bad", enable_xprof=True):
+          pass
+
+    self.assertEqual(session_factory.created, 1)
 
 
 class MeasureWarmupXprofTest(seed_test_utils.RepeatableTest):

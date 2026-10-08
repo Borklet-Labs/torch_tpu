@@ -99,8 +99,18 @@ def _new_xprof_session_id() -> int:
 # tsl::profiler::ProfilerLock. Retrying with a fresh XprofSession instance
 # allows the benchmark to wait out any transient lock contention and still
 # capture its own XSpace, device time, and XProf URL.
-_XPROF_START_MAX_ATTEMPTS = 15
-_XPROF_START_RETRY_DELAY_SECONDS = 1.0
+#
+# The retry is a single, late attempt rather than frequent polling: xprof's
+# start_session holds the GIL while it waits for the session manager's mutex,
+# and an external session holds that mutex while it stops the Python tracer,
+# which needs the GIL. A start that lands in that window deadlocks the process
+# permanently, and polling is likely to land in it as soon as the external
+# capture ends. Sleeping releases the GIL so the external session can finish.
+# A start can still deadlock if it happens to land in that window.
+# TODO(b/571245040): Poll again once start_session releases the GIL.
+_XPROF_START_MAX_ATTEMPTS = 2
+_XPROF_START_RETRY_DELAY_SECONDS = 30.0
+_ANOTHER_SESSION_ACTIVE_ERROR = "Another profiling session active"
 
 
 class XprofContext:
@@ -186,21 +196,20 @@ class XprofContext:
           break
         except Exception as e:  # pylint: disable=broad-except
           if (
-              "Another profiling session active" in str(e)
-              and attempt < _XPROF_START_MAX_ATTEMPTS
+              _ANOTHER_SESSION_ACTIVE_ERROR not in str(e)
+              or attempt == _XPROF_START_MAX_ATTEMPTS
           ):
-            logging.warning(
-                "xprof session for %s blocked by another active profiling"
-                " session (attempt %d/%d); retrying in %.1fs: %s",
-                self.name,
-                attempt,
-                _XPROF_START_MAX_ATTEMPTS,
-                _XPROF_START_RETRY_DELAY_SECONDS,
-                e,
-            )
-            time.sleep(_XPROF_START_RETRY_DELAY_SECONDS)
-          else:
             raise
+          logging.warning(
+              "xprof session for %s blocked by another active profiling"
+              " session (attempt %d/%d); retrying in %.1fs: %s",
+              self.name,
+              attempt,
+              _XPROF_START_MAX_ATTEMPTS,
+              _XPROF_START_RETRY_DELAY_SECONDS,
+              e,
+          )
+          time.sleep(_XPROF_START_RETRY_DELAY_SECONDS)
     return self
 
   def __exit__(self, exc_type, exc_val, exc_tb):
