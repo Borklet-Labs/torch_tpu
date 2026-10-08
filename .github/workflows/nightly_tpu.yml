@@ -85,9 +85,9 @@ jobs:
         uses: google-ml-infra/actions/ci_connection@08e5394bb8179c66a50ac783fb8b2501a034c06f
         with:
           halt-dispatch-input: ${{ inputs.halt-for-connection }}
-      # We don't need a separate step for bazel build as bazel test will also build the code before
-      # running the tests. This allows test building and test running to overlap and reduce total
-      # build time.
+      # Split `bazel build` and `bazel test` into two invocations so `build`
+      # compiles on RBE (tensorflow-testing) and `test` reads/writes cached
+      # TestRunner results in ml-oss-rbe-testing.
       - name: Run Bazel tests
         run: |
           # Tests tagged with `manual` are dropped. Only using config `ci_tpu_nightly` and flag
@@ -96,6 +96,8 @@ jobs:
           TEST_TARGETS=$(bazel query 'tests(//...) except attr("tags", "nonightly", tests(//...))' | tr '\n' ' ')
           # TEST_TARGETS is a space-separated target list that must word-split,
           # and this runs under `sh`, so a bash array is not an option.
+          # shellcheck disable=SC2086
+          bazel build --config=ci_tpu_nightly --run_under="$(pwd)/ci/tools/parallel_accelerator_execute.sh" ${TEST_TARGETS}
           # shellcheck disable=SC2086
           bazel test --config=ci_tpu_nightly --run_under="$(pwd)/ci/tools/parallel_accelerator_execute.sh" ${TEST_TARGETS}
 

@@ -126,4 +126,6 @@ jobs:
           path: pytorch_examples
 
       - name: Run Bazel Test
-        run: bazel test --config=${{ matrix.job_info.config }} ${{ matrix.job_info.extra_flags }} ${{ matrix.job_info.target }}
+        run: |
+          bazel build --config=${{ matrix.job_info.config }} ${{ matrix.job_info.extra_flags }} ${{ matrix.job_info.target }}
+          bazel test --config=${{ matrix.job_info.config }} ${{ matrix.job_info.extra_flags }} ${{ matrix.job_info.target }}

@@ -201,15 +201,60 @@ class RunBazelDiffTest(unittest.TestCase):
     with mock.patch("subprocess.run") as mock_run:
       mock_run.return_value.returncode = 0
       with self.subTest("with_config"):
-        run_bazel_diff._run_bazel_test("ci_cpu", "--keep_going", ["//..."])
-        mock_run.assert_called_with(
-            ["bash", "-c", "bazel test --config=ci_cpu --keep_going //..."],
-            check=False,
+        mock_run.reset_mock()
+        self.assertEqual(
+            run_bazel_diff._run_bazel_test("ci_cpu", "--keep_going", ["//..."]),
+            0,
+        )
+        self.assertEqual(
+            mock_run.call_args_list,
+            [
+                mock.call(
+                    [
+                        "bash",
+                        "-c",
+                        "bazel build --config=ci_cpu --keep_going //...",
+                    ],
+                    check=False,
+                ),
+                mock.call(
+                    [
+                        "bash",
+                        "-c",
+                        "bazel test --config=ci_cpu --keep_going //...",
+                    ],
+                    check=False,
+                ),
+            ],
         )
       with self.subTest("empty_config"):
-        run_bazel_diff._run_bazel_test("", "--keep_going", ["//..."])
-        mock_run.assert_called_with(
-            ["bash", "-c", "bazel test --keep_going //..."],
+        mock_run.reset_mock()
+        self.assertEqual(
+            run_bazel_diff._run_bazel_test("", "--keep_going", ["//..."]),
+            0,
+        )
+        self.assertEqual(
+            mock_run.call_args_list,
+            [
+                mock.call(
+                    ["bash", "-c", "bazel build --keep_going //..."],
+                    check=False,
+                ),
+                mock.call(
+                    ["bash", "-c", "bazel test --keep_going //..."],
+                    check=False,
+                ),
+            ],
+        )
+      with self.subTest("build_failure_short_circuits_test"):
+        mock_run.reset_mock()
+        mock_run.return_value.returncode = 1
+        self.assertEqual(
+            run_bazel_diff._run_bazel_test("ci_cpu", "--keep_going", ["//..."]),
+            1,
+        )
+        mock_run.assert_called_once_with(
+            ["bash", "-c", "bazel build --config=ci_cpu --keep_going //..."],
             check=False,
         )
 

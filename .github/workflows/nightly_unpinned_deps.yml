@@ -131,6 +131,12 @@ jobs:
           ALL_TESTS="//""..."
           TEST_TARGETS=$(bazel query "tests(${ALL_TESTS}) except attr(\"tags\", \"nonightly\", tests(${ALL_TESTS}))" | tr '\n' ' ')
           # shellcheck disable=SC2086
+          bazel build \
+            --config=${{ matrix.job_info.config }} \
+            --repo_env=HERMETIC_PYTHON_VERSION=${{ matrix.python_version }} \
+            --run_under="$(pwd)/ci/tools/parallel_accelerator_execute.sh" \
+            ${TEST_TARGETS}
+          # shellcheck disable=SC2086
           bazel test \
             --config=${{ matrix.job_info.config }} \
             --repo_env=HERMETIC_PYTHON_VERSION=${{ matrix.python_version }} \

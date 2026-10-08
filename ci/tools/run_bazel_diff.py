@@ -396,22 +396,35 @@ def _run_bazel_test(
     extra_bazel_flags: str,
     target_args: Sequence[str],
 ) -> int:
-  """Runs bazel test via bash so extra_bazel_flags shell expansions are preserved.
+  """Builds and runs Bazel tests via bash so extra_bazel_flags shell expansions are preserved.
+
+  Splitting `bazel build` and `bazel test` into two invocations allows TPU CI
+  configs (`ci_tpu_*`) to build on RBE (`tensorflow-testing`) during `build`
+  and then switch to the `ml-oss-rbe-testing` remote cache during `test` so
+  locally executed TPU `TestRunner` results can be cached and shared across
+  runners.
 
   Args:
     bazel_config: Bazel --config name to pass (or empty string for none).
-    extra_bazel_flags: Additional raw flags string passed to `bazel test`.
+    extra_bazel_flags: Additional raw flags string passed to Bazel.
     target_args: Target patterns or `--target_pattern_file` flags to test.
 
   Returns:
-    The exit code of the Bazel test command (0 if successful or if exit code 4
-    'no tests found' is returned).
+    The exit code of the Bazel build/test commands (0 if successful or if exit
+    code 4 'no tests found' is returned).
   """
   target_str = " ".join(shlex.quote(arg) for arg in target_args)
   config_flag = f"--config={shlex.quote(bazel_config)} " if bazel_config else ""
-  cmd = f"bazel test {config_flag}{extra_bazel_flags} {target_str}"
+  build_cmd = f"bazel build {config_flag}{extra_bazel_flags} {target_str}"
   sys.stdout.flush()
-  res = subprocess.run(["bash", "-c", cmd], check=False)
+  build_res = subprocess.run(["bash", "-c", build_cmd], check=False)
+  if build_res.returncode != 0:
+    print(f"Bazel build failed with exit code {build_res.returncode}.")
+    return build_res.returncode
+
+  test_cmd = f"bazel test {config_flag}{extra_bazel_flags} {target_str}"
+  sys.stdout.flush()
+  res = subprocess.run(["bash", "-c", test_cmd], check=False)
   if res.returncode == 4:
     print("Bazel returned Exit Code 4 (No tests found). Treating as success!")
     return 0

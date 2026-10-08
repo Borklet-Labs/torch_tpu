@@ -40,9 +40,6 @@ common --test_env=PYTHONUNBUFFERED=1
 common --repo_env=BAZEL_DO_NOT_DETECT_CPP_TOOLCHAIN=1
 common --incompatible_strict_action_env=true
 
-# Enable passing through TPU envvars by default for convenience.
-common --config=tpu_envvars
-
 # Needed for setting C++ standard to C++20.
 common --enable_platform_specific_config
 
@@ -222,6 +219,7 @@ common:tsan_py --repo_env=HERMETIC_PYTHON_PREFIX=cpython-3.12.x-tsan-shared-linu
 common:local --test_strategy=standalone
 common:local --spawn_strategy=standalone
 common:local --strategy=standalone
+common:local --config=tpu_envvars
 
 # Config for no_remote builds
 common:no_rbe --config=local
@@ -323,6 +321,7 @@ common:ci --curses=no
 
 # Setting specific to benchmarking runs.
 common:bench --config=ci
+common:bench --config=tpu_envvars
 common:bench --strategy=TestRunner=standalone,local
 
 # TODO: b/523216544 - Refactor all of this logic to avoid separate configs for
@@ -343,8 +342,31 @@ common:ci_cpu_nightly --test_tag_filters=-nobuild,-notest,-requires-gpu,-require
 
 # Settings specific to TPU CI runs.
 common:ci_tpu_base --config=ci
+common:ci_tpu_base --config=tpu_envvars
+# Point VBAR_CONTROL_SERVICE_URL at the static Unix domain socket path mounted
+# by the GKE TPU device plugin (/var/run/tpu-plugin/vbar.sock) instead of
+# inheriting a potentially host-specific value from the runner environment, so
+# different TPU runner VMs produce identical TestRunner cache keys.
+# NOTE: TestRunner currently runs unsandboxed (standalone,local). If it is ever
+# switched to a sandboxed strategy, add
+# --sandbox_add_mount_pair=/var/run/tpu-plugin so the socket remains accessible
+# inside the sandbox.
+common:ci_tpu_base --test_env=VBAR_CONTROL_SERVICE_URL=unix:///var/run/tpu-plugin/vbar.sock
 common:ci_tpu_base --build_tag_filters=-nobuild,requires-tpu-v5lite,requires-tpu-v5lite:4,requires-tpu-v5lite:8,requires-tpu-v5p,requires-tpu-v5p:4,requires-tpu-v6e,requires-tpu-v7x,requires-tpu-v7x:4,
 common:ci_tpu_base --strategy=TestRunner=standalone,local
+# TPU CI runs split `bazel build` and `bazel test` into two invocations:
+# 1. `bazel build` compiles and links on RBE (tensorflow-testing) without
+#    uploading local results, and downloads top-level test binaries + runfiles
+#    to the local disk / disk cache.
+# 2. `bazel test` runs TPU tests locally while reading and writing cached
+#    TestRunner results in ml-oss-rbe-testing (where the TPU runner service
+#    account has actionCacheWriter permissions).
+common:ci_tpu_base --remote_download_toplevel
+common:ci_tpu_base --remote_upload_local_results=false
+test:ci_tpu_base --remote_instance_name=projects/ml-oss-rbe-testing/instances/default_instance
+test:ci_tpu_base --remote_cache=grpcs://remotebuildexecution.googleapis.com
+test:ci_tpu_base --remote_executor=
+test:ci_tpu_base --remote_upload_local_results=true
 
 # Settings for nightly runs on TPU.
 common:ci_tpu_nightly --config=ci_tpu_base
@@ -524,33 +546,33 @@ build:local_torch --//shims/torch:local_torch=True
 common:cuda --//shims/torch:cuda_torch=True
 
 # Common config for testing the wheel
-test:wheel_common_test --config=wheel_base
+common:wheel_common_test --config=wheel_base
 test:wheel_common_test --test_output=errors
-test:wheel_common_test --test_wheel=true
-test:wheel_common_test --test_lang_filters=py  # Only run python tests
+build:wheel_common_test --test_wheel=true
+common:wheel_common_test --test_lang_filters=py  # Only run python tests
 
 # Config for CPU wheel test.
-test:wheel_test_cpu --config=ci_cpu
-test:wheel_test_cpu --config=wheel_common_test
-test:wheel_test_cpu --test_tag_filters=-nobuild,-notest,-nopresubmit,-requires-gpu,-requires-tpu,-wheel_test_excluded,-cuda-build-test
+common:wheel_test_cpu --config=ci_cpu
+common:wheel_test_cpu --config=wheel_common_test
+common:wheel_test_cpu --test_tag_filters=-nobuild,-notest,-nopresubmit,-requires-gpu,-requires-tpu,-wheel_test_excluded,-cuda-build-test
 
 # Split wheel test configurations for presubmits
-test:wheel_test_tpu_v5 --config=wheel_common_test
-test:wheel_test_tpu_v5 --config=ci_tpu_v5
+common:wheel_test_tpu_v5 --config=wheel_common_test
+common:wheel_test_tpu_v5 --config=ci_tpu_v5
 
-test:wheel_test_tpu_v6 --config=wheel_common_test
-test:wheel_test_tpu_v6 --config=ci_tpu_v6
+common:wheel_test_tpu_v6 --config=wheel_common_test
+common:wheel_test_tpu_v6 --config=ci_tpu_v6
 
-test:wheel_test_tpu_v7 --config=wheel_common_test
-test:wheel_test_tpu_v7 --config=ci_tpu_v7
+common:wheel_test_tpu_v7 --config=wheel_common_test
+common:wheel_test_tpu_v7 --config=ci_tpu_v7
 
 # Tag filters for split wheel test runs
 # Tests are assigned exactly one mutually exclusive presubmit-v{N} tag.
 # presubmit-v{N} must be the ONLY positive filter used here to prevent tests
 # from running on the wrong hardware.
-test:wheel_test_tpu_v5 --test_tag_filters=-notest,-nobuild,-nopresubmit,-wheel_test_excluded,-fails-on-tpu-v5,presubmit-v5
-test:wheel_test_tpu_v6 --test_tag_filters=-notest,-nobuild,-nopresubmit,-wheel_test_excluded,-fails-on-tpu-v6,presubmit-v6
-test:wheel_test_tpu_v7 --test_tag_filters=-notest,-nobuild,-nopresubmit,-wheel_test_excluded,-fails-on-tpu-v7,presubmit-v7
+common:wheel_test_tpu_v5 --test_tag_filters=-notest,-nobuild,-nopresubmit,-wheel_test_excluded,-fails-on-tpu-v5,presubmit-v5
+common:wheel_test_tpu_v6 --test_tag_filters=-notest,-nobuild,-nopresubmit,-wheel_test_excluded,-fails-on-tpu-v6,presubmit-v6
+common:wheel_test_tpu_v7 --test_tag_filters=-notest,-nobuild,-nopresubmit,-wheel_test_excluded,-fails-on-tpu-v7,presubmit-v7
 
 ###############################################################################
 # Allow per-user, project-specific bazelrc (gitignored).

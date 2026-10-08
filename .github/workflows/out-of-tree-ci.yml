@@ -137,6 +137,11 @@ jobs:
         run: |
           echo "Testing against PyTorch SHA: ${PYTORCH_SHA}"
 
+          bazel build //... \
+            --config=${{ matrix.job_info.config }} \
+            --override_repository="pytorch=$GITHUB_WORKSPACE/pytorch" \
+            ${{ matrix.job_info.extra_flags }}
+
           set +e
           bazel test //... \
             --config=${{ matrix.job_info.config }} \
