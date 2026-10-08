@@ -63,7 +63,7 @@ As kubectl consumes a manifest file off disk, we patch in the environment
 variables here for convenience, and then apply the manifest.
 
 ```bash
-sed -i "s|<DOCKER_IMAGE>|${DOCKER_IMAGE}|g" examples/tensor_parallel/torchtpu_singlehost_slice_job.yaml
+sed -i "s|<DOCKER_IMAGE>|${ARTIFACT_REGISTRY_URL}/${DOCKER_IMAGE}|g" examples/tensor_parallel/torchtpu_singlehost_slice_job.yaml
 sed -i "s|<NODEPOOL_NAME>|${NODEPOOL_NAME}|g" examples/tensor_parallel/torchtpu_singlehost_slice_job.yaml
 kubectl apply -f examples/tensor_parallel/torchtpu_singlehost_slice_job.yaml
 ```
@@ -81,7 +81,7 @@ Submit a multi-host Kubernetes JobSet by first updating the manifest with your
 docker image and node pool name and then launching the job using kubectl:
 
 ```bash
-sed -i "s|<DOCKER_IMAGE>|${DOCKER_IMAGE}|g" examples/tensor_parallel/torchtpu_multihost_slice_jobset.yaml
+sed -i "s|<DOCKER_IMAGE>|${ARTIFACT_REGISTRY_URL}/${DOCKER_IMAGE}|g" examples/tensor_parallel/torchtpu_multihost_slice_jobset.yaml
 sed -i "s|<NODEPOOL_NAME>|${NODEPOOL_NAME}|g" examples/tensor_parallel/torchtpu_multihost_slice_jobset.yaml
 kubectl apply -f examples/tensor_parallel/torchtpu_multihost_slice_jobset.yaml
 ```

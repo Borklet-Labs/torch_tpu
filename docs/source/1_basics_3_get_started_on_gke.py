@@ -86,7 +86,7 @@ def _(mo):
     At this point you may need to install kubectl and the gke plugin:
     ```bash
     gcloud components install kubectl
-    gcloud components install gke-gloud-auth-plugin
+    gcloud components install gke-gcloud-auth-plugin
     ```
 
     Follow instructions at
@@ -144,8 +144,8 @@ def _(mo):
     LocalQueues are applied. First we patch the node pool name into the manifest and then apply the kueue manifest:
 
     ```bash
-    sed -i "s|<NODEPOOL_NAME>|${NODEPOOL_NAME}|g" examples/tensor_parallel/torchtpu_kueue_cohort_setup.yaml
-    kubectl apply -f examples/tensor_parallel/torchtpu_kueue_cohort_setup.yaml
+    sed -i "s|<NODEPOOL_NAME>|${NODEPOOL_NAME}|g" examples/simple_pytorch/torchtpu_kueue_cohort_setup.yaml
+    kubectl apply -f examples/simple_pytorch/torchtpu_kueue_cohort_setup.yaml
     ```
     
     #### Universal Queue `lq` and Automatic Topology Routing
@@ -238,9 +238,9 @@ def _(mo):
     variables here for convenience, and then apply the manifest.
 
     ```bash
-    sed -i "s|<DOCKER_IMAGE>|${ARTIFACT_REGISTRY_URL}/${DOCKER_IMAGE}|g" examples/tensor_parallel/torchtpu_singlehost_slice_job.yaml
-    sed -i "s|<NODEPOOL_NAME>|${NODEPOOL_NAME}|g" examples/tensor_parallel/torchtpu_singlehost_slice_job.yaml
-    kubectl apply -f examples/tensor_parallel/torchtpu_singledevice_slice_job.yaml
+    sed -i "s|<DOCKER_IMAGE>|${ARTIFACT_REGISTRY_URL}/${DOCKER_IMAGE}|g" examples/simple_pytorch/torchtpu_singledevice_slice_job.yaml
+    sed -i "s|<NODEPOOL_NAME>|${NODEPOOL_NAME}|g" examples/simple_pytorch/torchtpu_singledevice_slice_job.yaml
+    kubectl apply -f examples/simple_pytorch/torchtpu_singledevice_slice_job.yaml
     ```
 
     Check workload and pod status:
