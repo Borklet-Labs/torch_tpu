@@ -510,7 +510,6 @@ build --flag_alias=test_wheel=//:test_wheel
 build:wheel_base --//:wheel_build=True
 
 # Common config for all wheel.
-build:wheel_common --config=remote_caching_readonly
 build:wheel_common --config=remote_execution_readonly
 build:wheel_common --config=wheel_base
 
