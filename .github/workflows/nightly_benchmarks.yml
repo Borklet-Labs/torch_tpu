@@ -19,11 +19,11 @@ on:
   workflow_dispatch:
 
   schedule:
-    - cron: "0 0 * * *"  # Runs at 00:00 UTC every day
+    - cron: "0 0 * * *"           # Daily 00:00 UTC: full TPU + GPU baseline
+    - cron: "0 4,8,12,16,20 * * *" # Every 4h (except 00:00 UTC): fast compiled TPU lane
 
 permissions:
   contents: read
-  pull-requests: write
 
 jobs:
   build_wheel:
@@ -47,13 +47,18 @@ jobs:
         uses: ./.github/actions/build-wheel
         with:
           python_version: 3.12
-  run_benchmarks:
-    name: Run TorchTPU benchmarks
+
+  run_tpu_benchmarks:
+    name: Run TorchTPU TPU benchmarks
     needs: [build_wheel]
+    permissions:
+      contents: read
+      pull-requests: write
     uses: google-ml-infra/bap/.github/workflows/run-benchmarks.yaml@ff212b97420bf479bd492d64e4b549534c22cd91 # main
     with:
       registry_file: "perflab/benchmark_registry.pbtxt"
       bap_ref: "ff212b97420bf479bd492d64e4b549534c22cd91"
+      environment_filter: "tpu-v7"
       publish_metrics: true
       pub_sub_gcp_project_id: "ml-oss-benchmarking-production"
       pub_sub_gcp_topic_id: "private-torch-tpu-prod"
@@ -61,3 +66,26 @@ jobs:
       custom_env_vars: |
         TORCH_TPU_WHEEL=${{ needs.build_wheel.outputs.gcs_wheel_path }}
         TORCH_TPU_PYTHON_VERSION=3.12
+        TORCH_TPU_BENCHMARK_ORDER_SEED=${{ github.sha }}
+        TEST_RANDOMIZE_ORDERING_SEED=${{ github.sha }}
+        TESTBRIDGE_TEST_ONLY=${{ (github.event_name == 'schedule' && github.event.schedule != '0 0 * * *') && '*_compiled' || '' }}
+
+  run_gpu_benchmarks:
+    name: Run GPU baseline benchmarks
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 0 * * *'
+    permissions:
+      contents: read
+      pull-requests: write
+    uses: google-ml-infra/bap/.github/workflows/run-benchmarks.yaml@ff212b97420bf479bd492d64e4b549534c22cd91 # main
+    with:
+      registry_file: "perflab/benchmark_registry.pbtxt"
+      bap_ref: "ff212b97420bf479bd492d64e4b549534c22cd91"
+      environment_filter: "gpu-b200"
+      publish_metrics: true
+      pub_sub_gcp_project_id: "ml-oss-benchmarking-production"
+      pub_sub_gcp_topic_id: "private-torch-tpu-prod"
+      runner: "linux-x86-n4-16"
+      custom_env_vars: |
+        TORCH_TPU_PYTHON_VERSION=3.12
+        TORCH_TPU_BENCHMARK_ORDER_SEED=${{ github.sha }}
+        TEST_RANDOMIZE_ORDERING_SEED=${{ github.sha }}
