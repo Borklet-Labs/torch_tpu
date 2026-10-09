@@ -130,7 +130,11 @@ class MappedCacheEntry {
   // Creates a MappedCacheEntry for the given key.
   // Returns an error if the cache file cannot be opened or mapped.
   //
-  // The caller must hold the lock for the given key.
+  // The caller does not need to hold the lock for the key: cache files are
+  // published atomically by AtomicWriteToCacheFile() (write to a temp file,
+  // then rename()) and are never modified in place. Opening the path therefore
+  // yields either ENOENT or a complete file, and a later replacement or unlink
+  // does not affect an existing mapping.
   static absl::StatusOr<MappedCacheEntry> Make(const CompilationCacheKey& key) {
     // Try to open the cache file for reading.
     const std::string path = GetTier2CacheEntryPath(key);
