@@ -37,6 +37,9 @@ def real_loss(model, input_args, input_kwargs) -> torch.Tensor:
   elif isinstance(out, dict) and "loss" in out:
     loss_method = "out['loss']"
     loss = out["loss"]
+  elif hasattr(out, "sample") and out.sample is not None:
+    loss_method = "out.sample"
+    loss = out.sample
   elif isinstance(out, (tuple, list)) and out and torch.is_tensor(out[0]):
     loss_method = "out[0]"
     loss = out[0]

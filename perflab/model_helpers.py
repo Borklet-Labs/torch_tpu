@@ -25,6 +25,22 @@ if typing.TYPE_CHECKING:
   from tests import module_registry
 
 
+def init_small_random_weights(module: torch.nn.Module) -> None:
+  """Re-initializes a module to N(0, 0.01) weights and zero biases.
+
+  Randomly initialized Diffusers and vision transformers overflow in bfloat16
+  with their default initialization; use with `model.apply(...)`.
+  """
+  with torch.no_grad():
+    if (
+        isinstance(getattr(module, "weight", None), torch.Tensor)
+        and module.weight.is_floating_point()
+    ):
+      module.weight.normal_(std=0.01)
+    if isinstance(getattr(module, "bias", None), torch.Tensor):
+      module.bias.zero_()
+
+
 def get_vocab_size(config: Any, default: int = 128256) -> int:
   """Gets the vocab size from a config, with a fallback default."""
   direct_vocab_size = getattr(config, "vocab_size", None)

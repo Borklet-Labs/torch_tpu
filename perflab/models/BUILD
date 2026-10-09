@@ -28,12 +28,18 @@ torch_tpu_py_library(
     name = "models",
     srcs = [
         "__init__.py",
+        "conformer.py",
         "gemma.py",
         "gen_benchmarks.py",
         "gpt.py",
         "llama.py",
+        "nemotron.py",
         "qwen.py",
         "synthetic.py",
+        "timm_models.py",
+        "vjepa.py",
+        "wan.py",
+        "whisper.py",
     ],
     allow_multiple_srcs = True,
     deps = [

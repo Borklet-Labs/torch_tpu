@@ -119,6 +119,11 @@ KNOWN_FAILURES: tuple[KnownFailure, ...] = (
         reason="aten::_grouped_mm has no lowering",
     ),
     KnownFailure(
+        benchmark="nemotron_3_nano_30b_6_layers_forward",
+        framework=mode_lib.Framework.TORCHAX,
+        reason="aten::_grouped_mm has no lowering",
+    ),
+    KnownFailure(
         benchmark="qwen3_coder_30b_moe_forward",
         framework=mode_lib.Framework.TORCHAX,
         reason="aten::_grouped_mm has no lowering",
@@ -181,6 +186,15 @@ KNOWN_FAILURES: tuple[KnownFailure, ...] = (
         framework=mode_lib.Framework.TORCHAX,
         reason=(
             "torch.arange() with a traced height in modeling_sam3_lite_text.py"
+        ),
+    ),
+    KnownFailure(
+        benchmark="vjepa2_vitg_forward",
+        framework=mode_lib.Framework.TORCHAX,
+        reason=(
+            "the skip_predictor=True input becomes a traced bool under jax.jit,"
+            " and `if not skip_predictor:` in modeling_vjepa2.py needs a"
+            " concrete value"
         ),
     ),
     KnownFailure(

@@ -14,6 +14,8 @@
 
 """Tests for loss."""
 
+import collections
+
 from absl.testing import absltest
 import torch
 import torch.nn as nn
@@ -81,6 +83,41 @@ class LossTest(seed_test_utils.RepeatableTest):
     self.assertEqual(
         loss_lib.real_loss(M(), (torch.ones(2, 2),), {}).item(), 4.0
     )
+
+  def test_real_loss_diffusers_sample_output(self):
+    class _SampleOutput(collections.OrderedDict):
+      """Mirrors diffusers BaseOutput: an ordered dict with attribute access."""
+
+      def __init__(self, sample):
+        super().__init__(sample=sample)
+        self.sample = sample
+
+    class M(nn.Module):
+
+      def forward(self, x):
+        return _SampleOutput(sample=x)
+
+    self.assertAlmostEqual(
+        loss_lib.real_loss(M(), (torch.tensor([1.0, 3.0]),), {}).item(), 2.0
+    )
+
+  def test_real_loss_rejects_diffusers_output_without_sample(self):
+    class _SampleOutput(collections.OrderedDict):
+
+      def __init__(self):
+        super().__init__()
+        self.sample = None
+
+    class M(nn.Module):
+
+      def forward(self, x):
+        del x
+        return _SampleOutput()
+
+    with self.assertRaisesRegex(
+        TypeError, r"real_loss found no loss in _SampleOutput"
+    ):
+      loss_lib.real_loss(M(), (torch.ones(2),), {})
 
   def test_real_loss_per_token_loss_is_meaned(self):
     class M(nn.Module):
