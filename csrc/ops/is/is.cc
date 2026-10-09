@@ -29,13 +29,6 @@ namespace torch_tpu {
 
 namespace {
 
-// Returns a Boolean tensor with the same shape as input_type and each
-// element being the given value.
-mlir::MlirOp MakeBoolLike(mlir::MlirOp input_op, mlir::MlirBuilder& builder,
-                          bool value) {
-  return MakeConstantLike(input_op, value, mlir::ElementType::PRED);
-}
-
 mlir::MlirOp IsNanImpl(mlir::MlirOp input_op) {
   // Neither StableHLO nor CHLO has an IsNan op, but we can compose
   // IsFinite and IsInf to check for NaN as !(is_finite || is_inf)
@@ -49,15 +42,16 @@ mlir::MlirOp IsNanImpl(mlir::MlirOp input_op) {
 // Defines a function named FctName that calls FctCall on the input if it is a
 // float type, or returns a Boolean tensor with the same shape as the input
 // and each element being the given value.
-#define TT_FLOAT_IS_OP_BUILDER_(FctName, FctCall, result)                      \
-  absl::StatusOr<mlir::MlirOp> FctName(mlir::MlirOp input_op) {                \
-    const mlir::RankedTensorType input_type =                                  \
-        ::torch_tpu::GetTensorTypeOrDie(input_op);                             \
-    if (::torch_tpu::IsFloatType(input_type)) {                                \
-      return FctCall(input_op);                                                \
-    }                                                                          \
-    return ::torch_tpu::MakeBoolLike(input_op, input_op.getBuilder(), result); \
-  }                                                                            \
+#define TT_FLOAT_IS_OP_BUILDER_(FctName, FctCall, result)          \
+  absl::StatusOr<mlir::MlirOp> FctName(mlir::MlirOp input_op) {    \
+    const mlir::RankedTensorType input_type =                      \
+        ::torch_tpu::GetTensorTypeOrDie(input_op);                 \
+    if (::torch_tpu::IsFloatType(input_type)) {                    \
+      return FctCall(input_op);                                    \
+    }                                                              \
+    return ::torch_tpu::MakeConstantLike(input_op, result,         \
+                                         mlir::ElementType::PRED); \
+  }                                                                \
   TT_REQUIRE_SEMICOLON_
 
 // go/keep-sorted start

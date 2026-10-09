@@ -123,7 +123,7 @@ at::Tensor& AtenThresholdBackwardGradInput(const at::Tensor& grad_output,
             DispatchOpOut<3>(std::move(op_builder),
                              {grad_output, self, threshold_tensor}, grad_input,
                              {.out_dtype = output_dtype,
-                              .out_dims = self.sizes(),
+                              .out_dims = grad_output.sizes(),
                               .op_param_cache_keys = std::move(param_keys)}));
         return grad_input;
       });

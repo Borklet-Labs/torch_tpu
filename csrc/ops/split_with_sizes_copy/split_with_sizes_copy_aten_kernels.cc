@@ -64,7 +64,7 @@ void AtenSplitWithSizesCopyOut(const at::Tensor& self,
         // slices and concatenations in the 2-d case. The performance
         // benefits might generalize to other dimensionalities, but for
         // simplicity we choose for now to only target the known use case.
-        if (dim == 1 && self.dim() == 2) {
+        if (normalized_dim == 1 && self.dim() == 2) {
           const int64_t num_rows = self.size(0);
           const at::Tensor flat_self = self.view(-1);
 
@@ -94,7 +94,7 @@ void AtenSplitWithSizesCopyOut(const at::Tensor& self,
           int64_t start = 0;
           for (int64_t i = 0; i < out.size(); ++i) {
             int64_t size = split_sizes[i];
-            out[i].copy_(self.narrow(dim, start, size));
+            out[i].copy_(self.narrow(normalized_dim, start, size));
             start += size;
           }
         }

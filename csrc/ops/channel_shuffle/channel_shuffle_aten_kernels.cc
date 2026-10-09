@@ -118,12 +118,8 @@ at::Tensor AtenChannelShuffle(const at::Tensor& self, int64_t groups) {
                        {.out_dtype = element_type,
                         .out_dims = CopyIntVector(self.sizes()),
                         .op_param_cache_keys = std::move(param_keys)})));
-    TT_ASSIGN_OR_THROW(
-        at::Tensor out,
-        MakeEmptyTensor(self.sizes(), self.scalar_type(), self.device()));
-    TT_THROW_IF_ERROR(AssignBufferToAtTensor(std::move(out_buf), out));
-    return out;
+    return MakeTensor(std::move(out_buf));
   });
 }
 
-}  // namespace  torch_tpu
+}  // namespace torch_tpu

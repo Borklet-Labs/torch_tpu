@@ -114,23 +114,15 @@ absl::StatusOr<MlirOpResults<2>> BuildPreluKernelBackwardShlo(
     }
   }
 
-  mlir::MlirOp grad_weight;
+  mlir::MlirOp grad_weight = grad_weight_elem;
   if (!reduce_dims.empty()) {
     TT_ASSIGN_OR_RETURN(grad_weight, BuildSumShlo(grad_weight_elem, reduce_dims,
                                                   ReductionMode::kKeepDims));
-    if (GetTensorTypeOrDie(grad_weight).getShape() != weight_shape) {
-      const auto target_type = mlir::RankedTensorType::get(
-          weight_shape, GetTensorTypeOrDie(grad_weight).getElementType());
-      grad_weight = mlir::stablehlo::Reshape(target_type, grad_weight);
-    }
-  } else {
-    if (GetTensorTypeOrDie(grad_weight_elem).getShape() != weight_shape) {
-      const auto target_type = mlir::RankedTensorType::get(
-          weight_shape, GetTensorTypeOrDie(grad_weight_elem).getElementType());
-      grad_weight = mlir::stablehlo::Reshape(target_type, grad_weight_elem);
-    } else {
-      grad_weight = grad_weight_elem;
-    }
+  }
+  if (GetTensorTypeOrDie(grad_weight).getShape() != weight_shape) {
+    const auto target_type = mlir::RankedTensorType::get(
+        weight_shape, GetTensorTypeOrDie(grad_weight).getElementType());
+    grad_weight = mlir::stablehlo::Reshape(target_type, grad_weight);
   }
 
   return MlirOpResults<2>{grad_self, grad_weight};
@@ -205,8 +197,6 @@ std::tuple<at::Tensor, at::Tensor> AtenPreluKernelBackward(
 
     TT_ASSIGN_OR_THROW(const mlir::ElementType self_dtype,
                        ConvertTo<mlir::ElementType>(self.scalar_type()));
-    TT_ASSIGN_OR_THROW(const mlir::ElementType weight_dtype,
-                       ConvertTo<mlir::ElementType>(weight.scalar_type()));
 
     const auto self_shape = CopyIntVector(self.sizes());
     const auto weight_shape = CopyIntVector(weight.sizes());
@@ -220,7 +210,7 @@ std::tuple<at::Tensor, at::Tensor> AtenPreluKernelBackward(
     };
 
     const std::array<mlir::ElementType, 2> out_dtypes = {self_dtype,
-                                                         weight_dtype};
+                                                         self_dtype};
     const std::array<absl::Span<const int64_t>, 2> out_dims_list = {
         self_shape, weight_shape};
 
