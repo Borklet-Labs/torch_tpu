@@ -669,4 +669,21 @@ torch_tpu_py_test(
     ],
 )
 
+torch_tpu_py_test(
+    name = "compile_teardown_test",
+    srcs = ["compile_teardown_test.py"],
+    tags = [
+        "requires-net:external",
+        "requires-tpu-v5lite",
+    ],
+    deps = [
+        "//shims/absl_py:app",
+        "//shims/absl_py/testing:absltest",
+        "//shims/torch:pytorch",
+        "//src/torch_tpu",
+        "//src/torch_tpu:_loader",
+        "//tests:seed_test_utils",
+    ],
+)
+
 torch_tpu_package_end()
