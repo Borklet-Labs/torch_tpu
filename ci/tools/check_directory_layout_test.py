@@ -14,10 +14,12 @@
 
 """Unit tests for check_directory_layout.py."""
 
+import io
 import pathlib
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 _CI_TOOLS_DIR = pathlib.Path(__file__).resolve().parent
 _REPO_ROOT = _CI_TOOLS_DIR.parents[1]
@@ -35,6 +37,12 @@ class CheckDirectoryLayoutTest(
     super().setUp()
     self.temp_dir = tempfile.TemporaryDirectory()
     self.repo_root = pathlib.Path(self.temp_dir.name)
+    self.mock_stdout = self.enterContext(
+        mock.patch("sys.stdout", new_callable=io.StringIO)
+    )
+    self.mock_stderr = self.enterContext(
+        mock.patch("sys.stderr", new_callable=io.StringIO)
+    )
 
   def tearDown(self):
     self.temp_dir.cleanup()
@@ -82,12 +90,20 @@ class CheckDirectoryLayoutTest(
     self.assertFalse(
         check_directory_layout.validate_directory_layout(self.repo_root)
     )
+    self.assertIn(
+        "::error::Unexpected directories found in repository root",
+        self.mock_stderr.getvalue(),
+    )
 
   def test_unexpected_root_directory_fails(self):
     self._create_valid_layout()
     (self.repo_root / "unexpected_root_dir").mkdir()
     self.assertFalse(
         check_directory_layout.validate_directory_layout(self.repo_root)
+    )
+    self.assertIn(
+        "::error::Unexpected directories found in repository root",
+        self.mock_stderr.getvalue(),
     )
 
   def test_missing_src_directory_fails(self):
@@ -96,12 +112,20 @@ class CheckDirectoryLayoutTest(
     self.assertFalse(
         check_directory_layout.validate_directory_layout(self.repo_root)
     )
+    self.assertIn(
+        "::error::Unexpected directories found in src/torch_tpu/",
+        self.mock_stderr.getvalue(),
+    )
 
   def test_unexpected_src_directory_fails(self):
     self._create_valid_layout()
     (self.repo_root / "src" / "torch_tpu" / "unexpected_src_dir").mkdir()
     self.assertFalse(
         check_directory_layout.validate_directory_layout(self.repo_root)
+    )
+    self.assertIn(
+        "::error::Unexpected directories found in src/torch_tpu/",
+        self.mock_stderr.getvalue(),
     )
 
   def test_missing_src_torch_tpu_fails(self):
@@ -110,6 +134,10 @@ class CheckDirectoryLayoutTest(
         (self.repo_root / d).mkdir(parents=True, exist_ok=True)
     self.assertFalse(
         check_directory_layout.validate_directory_layout(self.repo_root)
+    )
+    self.assertIn(
+        "::error::Expected directory",
+        self.mock_stderr.getvalue(),
     )
 
   def test_main_cli_success(self):
@@ -123,6 +151,10 @@ class CheckDirectoryLayoutTest(
     self.assertEqual(
         check_directory_layout.main(["--repo-root", str(self.repo_root)]),
         1,
+    )
+    self.assertIn(
+        "::error::Unexpected directories found in repository root",
+        self.mock_stderr.getvalue(),
     )
 
 

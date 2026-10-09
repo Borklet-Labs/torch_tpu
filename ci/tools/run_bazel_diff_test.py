@@ -27,6 +27,10 @@ from ci.tools import run_bazel_diff
 class RunBazelDiffTest(unittest.TestCase):
   """Tests argument parsing, file classification, and ops-test filtering."""
 
+  def setUp(self):
+    super().setUp()
+    self.enterContext(mock.patch("sys.stdout"))
+
   def test_parse_args_named_flags(self):
     opts = run_bazel_diff.parse_args([
         "--workspace-dir=/workspace/repo",

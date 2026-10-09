@@ -345,11 +345,23 @@ class ResolveBaseShaTest(  #
       # 1. PR event should detect docs-only and emit should_build=false
       env["EVENT_NAME"] = "pull_request"
       env["FORCE_BUILD"] = "false"
-      subprocess.run(
+      res = subprocess.run(
           ["bash", os.path.join(td, "ci", "check_wheel_diff.sh")],
           cwd=td,
           env=env,
-          check=True,
+          capture_output=True,
+          text=True,
+          check=False,
+      )
+      self.assertEqual(
+          res.returncode,
+          0,
+          f"stdout:\n{res.stdout}\nstderr:\n{res.stderr}",
+      )
+      self.assertIn(
+          "All modified files are documentation or repo metadata. Skipping"
+          " wheel build.",
+          res.stdout,
       )
       with open(gh_output) as f:
         out = f.read()
@@ -358,11 +370,22 @@ class ResolveBaseShaTest(  #
       # 2. Push event should emit should_build=true
       pathlib.Path(gh_output).unlink()
       env["EVENT_NAME"] = "push"
-      subprocess.run(
+      res = subprocess.run(
           ["bash", os.path.join(td, "ci", "check_wheel_diff.sh")],
           cwd=td,
           env=env,
-          check=True,
+          capture_output=True,
+          text=True,
+          check=False,
+      )
+      self.assertEqual(
+          res.returncode,
+          0,
+          f"stdout:\n{res.stdout}\nstderr:\n{res.stderr}",
+      )
+      self.assertIn(
+          "Non-PR event or force-build label detected. Triggering full build.",
+          res.stdout,
       )
       with open(gh_output) as f:
         out = f.read()
@@ -372,11 +395,22 @@ class ResolveBaseShaTest(  #
       pathlib.Path(gh_output).unlink()
       env["EVENT_NAME"] = "pull_request"
       env["FORCE_BUILD"] = "true"
-      subprocess.run(
+      res = subprocess.run(
           ["bash", os.path.join(td, "ci", "check_wheel_diff.sh")],
           cwd=td,
           env=env,
-          check=True,
+          capture_output=True,
+          text=True,
+          check=False,
+      )
+      self.assertEqual(
+          res.returncode,
+          0,
+          f"stdout:\n{res.stdout}\nstderr:\n{res.stderr}",
+      )
+      self.assertIn(
+          "Non-PR event or force-build label detected. Triggering full build.",
+          res.stdout,
       )
       with open(gh_output) as f:
         out = f.read()
