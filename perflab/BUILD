@@ -264,12 +264,18 @@ torch_tpu_py_library(
     ],
 )
 
+# v5e benchmark smoke test: runs every presubmit-scope case once. The
+# benchmark-smoke tag wires it into presubmit, where it blocks CL submission.
 torch_tpu_py_test(
     name = "torch_benchmark_test",
     timeout = "long",
     srcs = ["torch_benchmark_test.py"],
     args = [
         "--run_scope=presubmit",
+        # Deliberate, although it is the default: each case must keep running
+        # in its own process to guard multi-process setup (b/552911303).
+        "--run_in_subprocess",
+        "--noenable_xprof",
         "--min_warmup_steps=1",
         "--max_warmup_steps=1",
         "--post_warmup_steps=0",
@@ -284,8 +290,9 @@ torch_tpu_py_test(
     nolocal = "user requested to run this manually",
     nopresubmit = "Benchmark.",
     notest_oss = True,  # requires huggingface configs from internal infra  # NOTEST_OSS_OK=benchmarks run nightly
-    shard_count = 50,
+    shard_count = 10,
     tags = [
+        "benchmark-smoke",
         "nofastbuild",  # Benchmark.
         "nosan",  # *san tests provide no benefit for benchmarks.
         "requires-net:external",
