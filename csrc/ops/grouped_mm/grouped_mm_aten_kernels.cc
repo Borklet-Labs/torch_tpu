@@ -60,6 +60,85 @@ bool IsScalar(const at::Tensor& t) {
   return t.dim() == 0 || (t.dim() == 1 && t.size(0) == 1);
 }
 
+bool UnwrapTransposed3dMat2(mlir::MlirOp& mat2_op) {
+  if (GetTensorTypeOrDie(mat2_op).getRank() != 3) {
+    return false;
+  }
+  auto transpose_op =
+      mat2_op.getValue().getDefiningOp<mlir::stablehlo::TransposeOp>();
+  if (!transpose_op) {
+    return false;
+  }
+  const absl::Span<const int64_t> perm(transpose_op.getPermutation().data(),
+                                       transpose_op.getPermutation().size());
+  if (perm.size() == 3 && perm[0] == 0 && perm[1] == 2 && perm[2] == 1) {
+    mat2_op = mlir::MlirOp(mat2_op.getBuilder(), transpose_op.getOperand());
+    return true;
+  }
+  return false;
+}
+
+mlir::MlirOp ComputeGroupSizesFromOffsets(mlir::MlirOp offs_op) {
+  mlir::MlirBuilder& builder = offs_op.getBuilder();
+  if (!GetTensorTypeOrDie(offs_op).getElementType().isInteger(32)) {
+    offs_op = mlir::stablehlo::ConvertElementType(
+        offs_op, builder.getOpBuilder().getI32Type());
+  }
+  const mlir::RankedTensorType offs_type = GetTensorTypeOrDie(offs_op);
+  const int64_t num_groups = offs_type.getShape()[0];
+  mlir::MlirOp zero_op =
+      MakeConstant(builder, 0, offs_type.getElementType(), {1});
+  const Strides strides(1, 1);
+  const Indices start_indices(1, 0);
+  const Indices limit_indices(1, std::max<int64_t>(0, num_groups - 1));
+  mlir::MlirOp offs_slice =
+      mlir::stablehlo::Slice(offs_op, start_indices, limit_indices, strides);
+  mlir::MlirOp concat_op =
+      mlir::stablehlo::Concatenate(builder, {zero_op, offs_slice}, 0);
+  return mlir::stablehlo::Subtract(offs_op, concat_op);
+}
+
+mlir::MlirOp BuildRaggedDot2d3d(mlir::MlirOp self_op, mlir::MlirOp mat2_op,
+                                mlir::MlirOp offs_op, bool transpose_mat2,
+                                mlir::ElementType comp_dtype,
+                                mlir::ArrayAttr precision_config) {
+  const mlir::RankedTensorType self_type = GetTensorTypeOrDie(self_op);
+  const mlir::RankedTensorType mat2_type = GetTensorTypeOrDie(mat2_op);
+  mlir::MlirOp group_sizes = ComputeGroupSizesFromOffsets(offs_op);
+  const int64_t rhs_contracting_dim = transpose_mat2 ? 2 : 1;
+  const int64_t rhs_out_dim = transpose_mat2 ? 1 : 2;
+  const mlir::chlo::RaggedDotDimensionNumbersAttr dimension_numbers =
+      mlir::chlo::RaggedDotDimensionNumbersAttr::get(
+          &self_op.getContext(), /*lhsBatchingDimensions=*/{},
+          /*rhsBatchingDimensions=*/{},
+          /*lhsContractingDimensions=*/{1},
+          /*rhsContractingDimensions=*/{rhs_contracting_dim},
+          /*lhsRaggedDimensions=*/{0},
+          /*rhsGroupDimensions=*/{0});
+  const mlir::Type out_type = mlir::makeTensorType(
+      self_op.getContext(),
+      {self_type.getShape()[0], mat2_type.getShape()[rhs_out_dim]}, comp_dtype);
+  return mlir::chlo::RaggedDot(out_type, self_op, mat2_op, group_sizes,
+                               dimension_numbers, precision_config);
+}
+
+mlir::MlirOp BuildBatchedDot3d3d(mlir::MlirOp self_op, mlir::MlirOp mat2_op,
+                                 bool transpose_mat2,
+                                 mlir::stablehlo::Precision precision) {
+  auto precision_config = mlir::stablehlo::PrecisionConfigAttr::get(
+      &self_op.getContext(), {precision, precision});
+  const int64_t rhs_contracting_dim = transpose_mat2 ? 2 : 1;
+  const mlir::stablehlo::DotDimensionNumbersAttr dot_dimension_numbers =
+      mlir::stablehlo::DotDimensionNumbersAttr::get(
+          &self_op.getContext(),
+          /*lhs_batch_dimensions=*/{0},
+          /*rhs_batch_dimensions=*/{0},
+          /*lhs_contracting_dimensions=*/{2},
+          /*rhs_contracting_dimensions=*/{rhs_contracting_dim});
+  return mlir::stablehlo::DotGeneral(self_op, mat2_op, dot_dimension_numbers,
+                                     precision_config);
+}
+
 // Lowers grouped matmul to MLIR StableHLO/CHLO.
 //
 // Dimension Notation (mirrors CHLO_RaggedDotOp):
@@ -101,8 +180,8 @@ absl::StatusOr<mlir::MlirOp> BuildGroupedMmShlo(
     mlir::MlirOp self_op, mlir::MlirOp mat2_op,
     std::optional<mlir::MlirOp> offs_op, mlir::ElementType out_dtype,
     mlir::stablehlo::Precision precision) {
-  mlir::MlirBuilder& builder = self_op.getBuilder();
   const mlir::RankedTensorType self_type = GetTensorTypeOrDie(self_op);
+  const bool transpose_mat2 = UnwrapTransposed3dMat2(mat2_op);
   const mlir::RankedTensorType mat2_type = GetTensorTypeOrDie(mat2_op);
 
   // Upcast input tensors to the computation precision (e.g., F32 or BF16)
@@ -114,14 +193,6 @@ absl::StatusOr<mlir::MlirOp> BuildGroupedMmShlo(
                                            : out_dtype;
   self_op = mlir::stablehlo::ConvertElementType(self_op, comp_dtype);
   mat2_op = mlir::stablehlo::ConvertElementType(mat2_op, comp_dtype);
-
-  if (offs_op.has_value()) {
-    const mlir::RankedTensorType offs_type = GetTensorTypeOrDie(*offs_op);
-    if (!offs_type.getElementType().isInteger(32)) {
-      *offs_op = mlir::stablehlo::ConvertElementType(
-          *offs_op, builder.getOpBuilder().getI32Type());
-    }
-  }
 
   const bool a_is_2d = self_type.getRank() == 2;
   const bool b_is_2d = mat2_type.getRank() == 2;
@@ -137,50 +208,12 @@ absl::StatusOr<mlir::MlirOp> BuildGroupedMmShlo(
   if (a_is_2d && !b_is_2d) {
     // Case 1 (2D x 3D with offs): lhs first dimension is ragged (Mode 1).
     ABSL_CHECK(offs_op.has_value());  // CRASH_OK
-    const mlir::RankedTensorType offs_type = GetTensorTypeOrDie(*offs_op);
-    const int64_t num_groups = offs_type.getShape()[0];
-
-    mlir::MlirOp zero_op =
-        MakeConstant(builder, 0, offs_type.getElementType(), {1});
-    const Strides strides(1, 1);
-    const Indices start_indices(1, 0);
-    const Indices limit_indices(1, std::max<int64_t>(0, num_groups - 1));
-    mlir::MlirOp offs_slice =
-        mlir::stablehlo::Slice(*offs_op, start_indices, limit_indices, strides);
-    mlir::MlirOp concat_op =
-        mlir::stablehlo::Concatenate(builder, {zero_op, offs_slice}, 0);
-    mlir::MlirOp group_sizes = mlir::stablehlo::Subtract(*offs_op, concat_op);
-
-    const mlir::chlo::RaggedDotDimensionNumbersAttr dimension_numbers =
-        mlir::chlo::RaggedDotDimensionNumbersAttr::get(
-            &self_op.getContext(), /*lhsBatchingDimensions=*/{},
-            /*rhsBatchingDimensions=*/{},
-            /*lhsContractingDimensions=*/{1},
-            /*rhsContractingDimensions=*/{1},
-            /*lhsRaggedDimensions=*/{0},
-            /*rhsGroupDimensions=*/{0});
-
-    const mlir::Type out_type = mlir::makeTensorType(
-        self_op.getContext(),
-        {self_type.getShape()[0], mat2_type.getShape()[2]}, comp_dtype);
-    result = mlir::chlo::RaggedDot(out_type, self_op, mat2_op, group_sizes,
-                                   dimension_numbers, precision_config);
+    result = BuildRaggedDot2d3d(self_op, mat2_op, *offs_op, transpose_mat2,
+                                comp_dtype, precision_config);
   } else if (!a_is_2d && b_is_2d) {
     // Case 2 (3D x 2D with offs): rhs tailing dimension is ragged (Mode 1).
     ABSL_CHECK(offs_op.has_value());  // CRASH_OK
-    const mlir::RankedTensorType offs_type = GetTensorTypeOrDie(*offs_op);
-    const int64_t num_groups = offs_type.getShape()[0];
-
-    mlir::MlirOp zero_op =
-        MakeConstant(builder, 0, offs_type.getElementType(), {1});
-    const Strides strides(1, 1);
-    const Indices start_indices(1, 0);
-    const Indices limit_indices(1, std::max<int64_t>(0, num_groups - 1));
-    mlir::MlirOp offs_slice =
-        mlir::stablehlo::Slice(*offs_op, start_indices, limit_indices, strides);
-    mlir::MlirOp concat_op =
-        mlir::stablehlo::Concatenate(builder, {zero_op, offs_slice}, 0);
-    mlir::MlirOp group_sizes = mlir::stablehlo::Subtract(*offs_op, concat_op);
+    mlir::MlirOp group_sizes = ComputeGroupSizesFromOffsets(*offs_op);
 
     mlir::MlirOp mat2_transposed = mlir::stablehlo::Transpose(mat2_op, {1, 0});
     mlir::MlirOp self_transposed =
@@ -207,19 +240,8 @@ absl::StatusOr<mlir::MlirOp> BuildGroupedMmShlo(
     // The trailing dimension of lhs and the leading dimension of rhs are
     // partitioned according to the same offs tensor.
     ABSL_CHECK(offs_op.has_value());  // CRASH_OK
-    const mlir::RankedTensorType offs_type = GetTensorTypeOrDie(*offs_op);
-    const int64_t num_groups = offs_type.getShape()[0];
-
-    mlir::MlirOp zero_op =
-        MakeConstant(builder, 0, offs_type.getElementType(), {1});
-    const Strides strides(1, 1);
-    const Indices start_indices(1, 0);
-    const Indices limit_indices(1, std::max<int64_t>(0, num_groups - 1));
-    mlir::MlirOp offs_slice =
-        mlir::stablehlo::Slice(*offs_op, start_indices, limit_indices, strides);
-    mlir::MlirOp concat_op =
-        mlir::stablehlo::Concatenate(builder, {zero_op, offs_slice}, 0);
-    mlir::MlirOp group_sizes = mlir::stablehlo::Subtract(*offs_op, concat_op);
+    const int64_t num_groups = GetTensorTypeOrDie(*offs_op).getShape()[0];
+    mlir::MlirOp group_sizes = ComputeGroupSizesFromOffsets(*offs_op);
 
     const mlir::chlo::RaggedDotDimensionNumbersAttr dimension_numbers =
         mlir::chlo::RaggedDotDimensionNumbersAttr::get(
@@ -239,17 +261,7 @@ absl::StatusOr<mlir::MlirOp> BuildGroupedMmShlo(
   } else {
     // Case 4 (3D x 3D without offs): fallback to standard batched matrix
     // multiplication (DotGeneral).
-    auto precision_config = mlir::stablehlo::PrecisionConfigAttr::get(
-        &self_op.getContext(), {precision, precision});
-    const mlir::stablehlo::DotDimensionNumbersAttr dot_dimension_numbers =
-        mlir::stablehlo::DotDimensionNumbersAttr::get(
-            &self_op.getContext(),
-            /*lhs_batch_dimensions=*/{0},
-            /*rhs_batch_dimensions=*/{0},
-            /*lhs_contracting_dimensions=*/{2},
-            /*rhs_contracting_dimensions=*/{1});
-    result = mlir::stablehlo::DotGeneral(
-        self_op, mat2_op, dot_dimension_numbers, precision_config);
+    result = BuildBatchedDot3d3d(self_op, mat2_op, transpose_mat2, precision);
   }
   if (comp_dtype != out_dtype) {
     result = mlir::stablehlo::ConvertElementType(result, out_dtype);

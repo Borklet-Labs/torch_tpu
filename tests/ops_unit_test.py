@@ -13428,6 +13428,36 @@ module {{
         out_i64_compiled.cpu(), out_i32.cpu(), rtol=1e-3, atol=1e-3
     )
 
+  def test_aten_grouped_mm_transposed_3d_rhs_eager_and_compiled(self):
+    """Tests transposed [g, k, n] view over contiguous [g, n, k] expert weights."""
+    device = torch.device("tpu")
+    lhs_cpu = torch.randn(256, 128, dtype=torch.bfloat16)
+    rhs_storage_cpu = torch.randn(4, 256, 128, dtype=torch.bfloat16)
+    rhs_contig_cpu = rhs_storage_cpu.transpose(1, 2).contiguous()
+    offs_cpu = torch.tensor([64, 128, 192, 256], dtype=torch.int32)
+
+    expected = torch.ops.aten._grouped_mm(
+        lhs_cpu.to(device), rhs_contig_cpu.to(device), offs_cpu.to(device)
+    )
+    actual_eager = torch.ops.aten._grouped_mm(
+        lhs_cpu.to(device),
+        rhs_storage_cpu.to(device).transpose(1, 2),
+        offs_cpu.to(device),
+    )
+    utils.assert_close(actual_eager.cpu(), expected.cpu(), rtol=1e-2, atol=1e-2)
+
+    compiled_fn = torch.compile(
+        lambda x, w, o: torch.ops.aten._grouped_mm(x, w.transpose(1, 2), o),
+        backend="tpu",
+        fullgraph=True,
+    )
+    actual_compiled = compiled_fn(
+        lhs_cpu.to(device), rhs_storage_cpu.to(device), offs_cpu.to(device)
+    )
+    utils.assert_close(
+        actual_compiled.cpu(), expected.cpu(), rtol=1e-2, atol=1e-2
+    )
+
   def test_aten_grouped_mm_meta_symbolic_shapes(self):
     """Tests the TPU meta preserves SymInt shapes without guarding."""
     shape_env = symbolic_shapes.ShapeEnv()
