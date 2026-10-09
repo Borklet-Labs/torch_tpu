@@ -19,7 +19,6 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
-#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -1191,7 +1190,7 @@ xla::Future<std::shared_ptr<EventSnapshot>> EventSnapshot::Record(
 }
 
 absl::Status EventSnapshot::Synchronize() const {
-  const absl::Status status = future_.Await().status();
+  const absl::Status status = future_.Await();
   // Surface the warnings rerouted from background threads.
   SurfaceReroutedWarnings();
   return status;
@@ -1199,25 +1198,9 @@ absl::Status EventSnapshot::Synchronize() const {
 
 absl::StatusOr<bool> EventSnapshot::Query() const { return future_.IsReady(); }
 
-absl::StatusOr<double> EventSnapshot::ElapsedTime(
-    const EventSnapshot& end) const {
-  TT_RET_CHECK(  // ERROR_COV_INFEASIBLE=c10::Event::elapsedTime() raises its
-                 // own error unless both events have completed.
-      future_.IsReady() && end.future_.IsReady(), error::kFailedPrecondition)
-      << "both events must be completed before calculating elapsed time";
-  TT_ASSIGN_OR_RETURN(std::chrono::steady_clock::time_point start_time,
-                      future_.Await());
-  TT_ASSIGN_OR_RETURN(std::chrono::steady_clock::time_point end_time,
-                      end.future_.Await());
-  return std::chrono::duration<double, std::milli>(end_time - start_time)
-      .count();
-}
-
 void EventSnapshot::OkCallback(xla::Promise<void>&& chain_promise) {
   future_.OnReady(
-      [chain_promise = std::move(chain_promise)](
-          const absl::StatusOr<std::chrono::steady_clock::time_point>&
-              completion_time) mutable {
+      [chain_promise = std::move(chain_promise)](absl::Status status) mutable {
         chain_promise.Set(absl::OkStatus());
       });
 }
