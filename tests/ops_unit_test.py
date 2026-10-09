@@ -14294,7 +14294,7 @@ class OpsGradUnitTest(TorchTpuVsCpuTestBase):
                   ],
                   [
                       [-0.2153, 0.8840, -0.7584, -0.3689],
-                      [-0.3424, -1.4020, 0.3206, -1.0219],
+                      [-1.3424, -1.4020, 0.3206, -1.0219],
                   ],
               ],
               [
@@ -14309,12 +14309,23 @@ class OpsGradUnitTest(TorchTpuVsCpuTestBase):
               ],
           ],
           device=device,
+          requires_grad=True,
       )
-      g = torch.ones_like(x)
+      num_el = x.numel()
+      g = (
+          torch.arange(
+              1, num_el + 1, dtype=torch.float32, device=device
+          ).reshape_as(x)
+          / num_el
+      )
       layer_norm = torch.nn.LayerNorm([c, h, w], device=device)
+      with torch.no_grad():
+        layer_norm.weight.copy_(
+            torch.linspace(0.5, 2.0, c * h * w, device=device).reshape(c, h, w)
+        )
       out = layer_norm(x)
       out.backward(g)
-      return out.grad, layer_norm.weight.grad, layer_norm.bias.grad
+      return x.grad, layer_norm.weight.grad, layer_norm.bias.grad
 
     assert_with_tol = functools.partial(
         self.assert_close_tpu_vs_cpu, rtol=1e-5, atol=1e-5
@@ -14335,7 +14346,12 @@ class OpsGradUnitTest(TorchTpuVsCpuTestBase):
           .reshape(n, c, h, w)
           .requires_grad_()
       )
-      g = torch.ones_like(x)
+      g = (
+          torch.arange(
+              1, num_elements + 1, dtype=torch.float32, device=device
+          ).reshape(n, c, h, w)
+          * 0.1
+      )
 
       layer_norm = torch.nn.LayerNorm(
           [c, h, w], elementwise_affine=False, device=device
@@ -14346,6 +14362,93 @@ class OpsGradUnitTest(TorchTpuVsCpuTestBase):
       return x.grad
 
     self.assert_close_tpu_vs_cpu(fn, rtol=1e-5, atol=1e-5)
+
+  def test_layer_norm_backward_comprehensive(self):
+    """Tests layer_norm backward across dtypes, ranks, affine modes, and compile."""
+    torch.manual_seed(42)
+    configs = [
+        ((8,), (8,), True, torch.float32, 1e-5, 1e-5),
+        ((4, 16), (16,), True, torch.float32, 1e-5, 1e-5),
+        ((2, 3, 12), (3, 12), False, torch.float32, 1e-5, 1e-5),
+        ((2, 4, 32), (32,), True, torch.bfloat16, 2e-2, 2e-2),
+        ((2, 4, 32), (32,), True, torch.float16, 5e-3, 5e-3),
+        ((2, 0), (0,), False, torch.float32, 1e-5, 1e-5),
+    ]
+    for shape, norm_shape, affine, dtype, rtol, atol in configs:
+      x_cpu = torch.randn(shape, dtype=dtype, requires_grad=True)
+      dy_cpu = torch.randn(shape, dtype=dtype)
+      w_cpu = (
+          torch.randn(norm_shape, dtype=dtype, requires_grad=True)
+          if affine
+          else None
+      )
+      b_cpu = (
+          torch.randn(norm_shape, dtype=dtype, requires_grad=True)
+          if affine
+          else None
+      )
+
+      def run_step(x_in, dy_in, w_in, b_in, ns=norm_shape):
+        y = torch.nn.functional.layer_norm(x_in, ns, w_in, b_in, eps=1e-5)
+        y.backward(dy_in)
+        grads = [x_in.grad]
+        if w_in is not None:
+          grads.append(w_in.grad)
+        if b_in is not None:
+          grads.append(b_in.grad)
+        return grads
+
+      expected_grads = run_step(x_cpu, dy_cpu, w_cpu, b_cpu)
+
+      x_tpu = x_cpu.detach().to("tpu").requires_grad_(True)
+      dy_tpu = dy_cpu.to("tpu")
+      w_tpu = (
+          w_cpu.detach().to("tpu").requires_grad_(True)
+          if w_cpu is not None
+          else None
+      )
+      b_tpu = (
+          b_cpu.detach().to("tpu").requires_grad_(True)
+          if b_cpu is not None
+          else None
+      )
+      actual_grads = run_step(x_tpu, dy_tpu, w_tpu, b_tpu)
+      for actual, expected in zip(actual_grads, expected_grads):
+        utils.assert_close(
+            actual=actual.cpu(), expected=expected, rtol=rtol, atol=atol
+        )
+
+    # Also verify under torch.compile(backend="tpu")
+    @torch.compile(backend="tpu")
+    def compiled_ln_bwd(x_in, dy_in, w_in, b_in):
+      y = torch.nn.functional.layer_norm(x_in, (16,), w_in, b_in, eps=1e-5)
+      return torch.autograd.grad(
+          y, (x_in, w_in, b_in), dy_in, create_graph=False
+      )
+
+    x_c = torch.randn((4, 16), dtype=torch.float32, requires_grad=True)
+    dy_c = torch.randn((4, 16), dtype=torch.float32)
+    w_c = torch.randn((16,), dtype=torch.float32, requires_grad=True)
+    b_c = torch.randn((16,), dtype=torch.float32, requires_grad=True)
+    y_ref = torch.nn.functional.layer_norm(x_c, (16,), w_c, b_c, eps=1e-5)
+    ref_dx, ref_dw, ref_db = torch.autograd.grad(
+        y_ref, (x_c, w_c, b_c), dy_c, create_graph=False
+    )
+    tpu_dx, tpu_dw, tpu_db = compiled_ln_bwd(
+        x_c.detach().to("tpu").requires_grad_(True),
+        dy_c.to("tpu"),
+        w_c.detach().to("tpu").requires_grad_(True),
+        b_c.detach().to("tpu").requires_grad_(True),
+    )
+    utils.assert_close(
+        actual=tpu_dx.cpu(), expected=ref_dx, rtol=1e-5, atol=1e-5
+    )
+    utils.assert_close(
+        actual=tpu_dw.cpu(), expected=ref_dw, rtol=1e-5, atol=1e-5
+    )
+    utils.assert_close(
+        actual=tpu_db.cpu(), expected=ref_db, rtol=1e-5, atol=1e-5
+    )
 
   def test_layer_norm_zero_variance(self):
     """Verifies that constant inputs (zero variance) do not produce NaN."""
