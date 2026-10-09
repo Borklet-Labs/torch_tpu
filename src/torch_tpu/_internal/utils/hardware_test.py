@@ -146,6 +146,28 @@ class DeviceCapabilityTest(seed_test_utils.RepeatableTest):
     self.assertEqual(hardware.get_hbm_bytes_per_chip(), 192 * 1024**3)
     self.assertEqual(hardware.get_hbm_bytes_per_device(), 192 * 1024**3 // 2)
 
+  @parameterized.parameters(
+      (hardware.TpuVersion.V7, 2),
+      (hardware.TpuVersion.V6E, 2),
+      (hardware.TpuVersion.V5P, 4),
+      (hardware.TpuVersion.V5E, 0),
+      (hardware.TpuVersion.V4, 0),
+  )
+  def test_get_num_sparse_cores_per_device(self, version, expected_count):
+    with mock.patch.object(hardware, "get_tpu_version", return_value=version):
+      self.assertEqual(
+          hardware.get_num_sparse_cores_per_device(), expected_count
+      )
+
+  def test_get_num_sparse_cores_per_device_unknown(self):
+    with mock.patch.object(
+        hardware, "get_tpu_version", return_value=hardware.TpuVersion.UNKNOWN
+    ):
+      with self.assertRaisesRegex(
+          ValueError, "Unknown or unsupported TPU version"
+      ):
+        hardware.get_num_sparse_cores_per_device()
+
 
 if __name__ == "__main__":
   absltest.main()

@@ -277,6 +277,26 @@ def get_bf16_flops_per_device() -> int | None:
   return per_chip // _DEVICES_PER_CHIP.get(version, 1)
 
 
+def get_num_sparse_cores_per_device() -> int:
+  """Returns the number of SparseCores per exposed TPU device.
+
+  Returns:
+    The number of SparseCores per device (0 for TPU generations without
+    SparseCores).
+
+  Raises:
+    ValueError: If the attached TPU generation is unknown or unrecognized.
+  """
+  tpu_version = get_tpu_version()
+  if tpu_version in (TpuVersion.V7, TpuVersion.V6E):
+    return 2
+  if tpu_version == TpuVersion.V5P:
+    return 4
+  if tpu_version in (TpuVersion.V4, TpuVersion.V5E):
+    return 0
+  raise ValueError(f"Unknown or unsupported TPU version: {tpu_version}")
+
+
 def _scan_pci_tpus() -> tuple[int, Mapping[int, str] | None]:
   """Scans PCI bus for TPU devices.
 
