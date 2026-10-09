@@ -286,9 +286,9 @@ def _(mo):
     | :--- | :--- |
     | `torch.tpu.optimizers.SingleTraceTrainer(model, optimizer=None, ...)` | Manages functional parameters (`params`), optimizer state (`param_group`), and compiles the full training step via `make_compiled_train_step(...)`. |
     | `torch.tpu.optimizers.Optimizer(lr=..., weight_decay=...)` | Base class for stateless functional optimizers (exposes `defaults`, `init_param_group`, and `step`). |
-    | `torch.tpu.optimizers.TorchAdamW(...)` | Traceable functional AdamW optimizer (`TorchAdamW.ParamGroup`). |
-    | `torch.tpu.optimizers.TorchMuon(...)` | Traceable functional Muon optimizer (`TorchMuon.ParamGroup`). |
-    | `torch.tpu.optimizers.TorchSgd(...)` | Traceable functional SGD optimizer (`TorchSgd.ParamGroup`). |
+    | `torch.tpu.optimizers.AdamW(...)` | Traceable functional AdamW optimizer (`AdamW.ParamGroup`). |
+    | `torch.tpu.optimizers.Muon(...)` | Traceable functional Muon optimizer (`Muon.ParamGroup`). |
+    | `torch.tpu.optimizers.Sgd(...)` | Traceable functional SGD optimizer (`Sgd.ParamGroup`). |
     """)
   return
 

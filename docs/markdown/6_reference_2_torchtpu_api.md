@@ -423,15 +423,12 @@ and functional optimizer step into a single compiled TPU graph.
 : weight_decay=...)`                              : functional optimizers (exposes   :
 :                                                 : `defaults`, `init_param_group`,  :
 :                                                 : and `step`).                     :
-| `torch.tpu.optimizers.TorchAdamW(...)`          | Traceable functional AdamW       |
-:                                                 : optimizer                        :
-:                                                 : (`TorchAdamW.ParamGroup`).       :
-| `torch.tpu.optimizers.TorchMuon(...)`           | Traceable functional Muon        |
-:                                                 : optimizer                        :
-:                                                 : (`TorchMuon.ParamGroup`).        :
-| `torch.tpu.optimizers.TorchSgd(...)`            | Traceable functional SGD         |
-:                                                 : optimizer                        :
-:                                                 : (`TorchSgd.ParamGroup`).         :
+| `torch.tpu.optimizers.AdamW(...)`               | Traceable functional AdamW       |
+:                                                 : optimizer (`AdamW.ParamGroup`).  :
+| `torch.tpu.optimizers.Muon(...)`                | Traceable functional Muon        |
+:                                                 : optimizer (`Muon.ParamGroup`).   :
+| `torch.tpu.optimizers.Sgd(...)`                 | Traceable functional SGD         |
+:                                                 : optimizer (`Sgd.ParamGroup`).    :
 
 ### **Profiling (`torch.tpu.profiler`)**
 
