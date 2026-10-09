@@ -90,8 +90,8 @@ print(f"Result shape on CPU: {result.shape}, sum: {result.sum():.4f}")
     `torch.distributed` Process Group (`c10d::Backend`) level via
     `backend="tpu_dist"`, supporting `DistributedDataParallel` (DDP),
     `FullyShardedDataParallel` (FSDP2 and SimpleFSDP), and `DTensor`. You can
-    also use `torch.tpu.topology_aware_mesh` to align parallelism dimensions
-    with physical TPU interconnects.
+    also use `torch.tpu.distributed.topology_aware_mesh` to align parallelism
+    dimensions with physical TPU interconnects.
 *   **Custom TPU kernels:** Author custom kernels in
     [Pallas](https://docs.jax.dev/en/latest/pallas/index.html) (exposed to
     PyTorch via `torch.tpu.pallas.jax_op`, including direct inter-chip RDMA
