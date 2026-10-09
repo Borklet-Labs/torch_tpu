@@ -76,6 +76,7 @@ import einops
 import torch
 from torch import Tensor, nn
 import torch.nn.functional as F
+from examples.tutorials.FLUX_optimization.kernels.splash_attention import splash_sdpa
 
 rearrange = einops.rearrange
 
@@ -414,13 +415,14 @@ class OptimizationConfig:
       TPU.
     use_fused_rope: If True, uses 2D algebraic RoPE (`apply_rope`) instead of 5D
       matrix contractions (`apply_rope_ref`).
-    use_fused_sdpa: If True, uses unified SDPA attention kernels.
+    use_splash_attention: If True, uses custom Pallas SplashAttention kernel.
     compile: If True, lowers the block into a whole-graph XLA executable via
       `torch.compile(backend="tpu")`.
   """
 
   use_zero_copy_view: bool = False
   use_fused_rope: bool = False
+  use_splash_attention: bool = False
   compile: bool = False
 
 
@@ -574,9 +576,12 @@ class DoubleStreamBlockBaseline(nn.Module):
     q_sdpa = q.transpose(1, 2)
     k_sdpa = k.transpose(1, 2)
     v_sdpa = v.transpose(1, 2)
-    attn = F.scaled_dot_product_attention(
-        q_sdpa, k_sdpa, v_sdpa, is_causal=False
-    )
+    if self.config.use_splash_attention:
+      attn = splash_sdpa(q_sdpa, k_sdpa, v_sdpa, is_causal=False)
+    else:
+      attn = F.scaled_dot_product_attention(
+          q_sdpa, k_sdpa, v_sdpa, is_causal=False
+      )
 
     if self.config.use_zero_copy_view:
       # AFTER (Optimized): Native transpose + contiguous reshape

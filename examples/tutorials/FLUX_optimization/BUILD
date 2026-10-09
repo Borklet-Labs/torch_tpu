@@ -23,6 +23,7 @@ torch_tpu_py_library(
     name = "flux",
     srcs = ["flux.py"],
     deps = [
+        "//examples/tutorials/FLUX_optimization/kernels:splash_attention",
         "//shims/torch:pytorch",
         "@pypi//einops",
     ],

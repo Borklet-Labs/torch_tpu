@@ -134,6 +134,12 @@ _USE_FUSED_ROPE = flags.DEFINE_bool(
     "Whether to enable the fused algebraic 2D RoPE optimization.",
 )
 
+_USE_SPLASH_ATTENTION = flags.DEFINE_bool(
+    "use_splash_attention",
+    False,
+    "Whether to enable the custom Pallas SplashAttention kernel.",
+)
+
 _COMPILE = flags.DEFINE_bool(
     "compile",
     False,
@@ -417,6 +423,7 @@ class FluxBaselineTest(absltest.TestCase):
     opt_config = flux.OptimizationConfig(
         use_zero_copy_view=_USE_ZERO_COPY_VIEW.value,
         use_fused_rope=_USE_FUSED_ROPE.value,
+        use_splash_attention=_USE_SPLASH_ATTENTION.value,
         compile=_COMPILE.value,
     )
     block = flux.build_double_stream_block(
@@ -453,6 +460,8 @@ class FluxBaselineTest(absltest.TestCase):
     )
     if _USE_FUSED_ROPE.value:
       modes.append("Fused 2D RoPE")
+    if _USE_SPLASH_ATTENTION.value:
+      modes.append("SplashAttention")
     if _COMPILE.value:
       modes.append("torch.compile (TPU)")
     mode_str = " + ".join(modes)
