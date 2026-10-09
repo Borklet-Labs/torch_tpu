@@ -236,6 +236,52 @@ def _test_py_test_multi_tpu_targets_existing_fails_on(name):
         },
     )
 
+def _test_py_test_auto_nopresubmit_build_test_impl(env, targets):
+    """Verifies that an auto-nopresubmit target gets a build_test even if a sibling runs in presubmit."""
+    env.expect.that_collection(targets.target_v6[_TagsInfo].tags).contains("nopresubmit")
+    env.expect.that_collection(env.ctx.attr.build_tests).contains_exactly(
+        env.ctx.attr.expected_build_tests,
+    )
+
+def _test_py_test_auto_nopresubmit_build_test(name):
+    torch_tpu_py_test(
+        name = name + "_subject",
+        srcs = ["build_defs_test.py"],
+        main = "build_defs_test.py",
+        is_wheel_test = True,
+        tags = [
+            "nofastbuild",
+            "noopt",
+        ],
+        run_on_accelerators = [
+            "requires-tpu-v5lite",
+            "requires-tpu-v6e",
+        ],
+        nobuild_oss = True,  # NOBUILD_OSS_OK=Analysis test subject.
+        nolocal = "Analysis test subject",
+    )
+    target_v6 = name + "_subject_" + get_tpu_version_for_testing("requires-tpu-v6e")
+    analysis_test(
+        name = name,
+        impl = _test_py_test_auto_nopresubmit_build_test_impl,
+        targets = {
+            "target_v6": target_v6,
+        },
+        attrs = {
+            "build_tests": attr.string_list(),
+            "expected_build_tests": attr.string_list(),
+            "target_v6": {"aspects": [tags_aspect]},
+        },
+        attr_values = {
+            "build_tests": [
+                rule_name
+                for rule_name in native.existing_rules()
+                if rule_name.startswith(name + "_subject") and rule_name.endswith("_build_test")
+            ],
+            "expected_build_tests": [] if is_oss() else [target_v6 + "_build_test"],
+        },
+    )
+
 def _test_py_test_single_tpu_target_impl(env, targets):
     """Verifies that torch_tpu_py_test with a single TPU tag creates target with original name."""
     tags = targets.subject[_TagsInfo].tags
@@ -460,6 +506,48 @@ def _test_nopresubmit(env):
     )
 
     env.expect.that_collection(tags).contains_exactly(["manual", "nopresubmit"])
+
+    # The build_test must not inherit `manual` or `nopresubmit`, so that the
+    # test is at least built in presubmit.
+    env.expect.that_bool(result.create_build_test).equals(True)
+    env.expect.that_collection(result.build_test_tags).contains_exactly([])
+
+def _test_oss_nopresubmit(env):
+    """Tests that the nopresubmit parameter does not generate a build_test in OSS."""
+    tags = []
+    result = check_and_adjust_test_tags_for_testing(
+        is_oss = True,
+        nopresubmit = "reason",
+        tags = tags,
+    )
+
+    env.expect.that_collection(tags).contains_exactly(["manual", "nopresubmit"])
+    env.expect.that_bool(result.create_build_test).equals(False)
+
+def _test_nopresubmit_nolocal_build_test_tags(env):
+    """Tests that a nopresubmit + nolocal build_test is not manual and keeps tags like nofastbuild."""
+    tags = ["custom_tag", "cpu:8", "nofastbuild", "requires-tpu", "requires-tpu-v5lite"]
+    result = check_and_adjust_test_tags_for_testing(
+        is_oss = False,
+        nopresubmit = "reason",
+        nolocal = "reason",
+        tags = tags,
+    )
+
+    env.expect.that_bool(result.create_build_test).equals(True)
+    env.expect.that_collection(result.build_test_tags).contains_exactly(["custom_tag", "nofastbuild"])
+
+def _test_internal_nopresubmit_nobuild(env):
+    """Tests using both nopresubmit and nobuild in internal builds."""
+    tags = []
+    result = check_and_adjust_test_tags_for_testing(
+        is_oss = False,
+        nopresubmit = "reason",
+        nobuild = "reason",
+        tags = tags,
+    )
+
+    env.expect.that_collection(tags).contains_exactly(["manual", "nobuild", "nopresubmit"])
     env.expect.that_bool(result.create_build_test).equals(False)
 
 def _test_nolocal(env):
@@ -589,7 +677,8 @@ def _test_cuda_nopresubmit(env):
 
     expected_tags = ["manual", "nopresubmit", "requires-gpu", "requires-gpu-sm90"] if is_oss() else ["manual", "nopresubmit", "requires-gpu-sm90"]
     env.expect.that_collection(tags).contains_exactly(expected_tags)
-    env.expect.that_bool(result.create_build_test).equals(False)
+    env.expect.that_bool(result.create_build_test).equals(True)
+    env.expect.that_collection(result.build_test_tags).contains_exactly(["cuda-build-test"])
 
 def _test_internal_notap_nobuild(env):
     """Tests using both notap and nobuild in internal builds."""
@@ -1077,6 +1166,7 @@ def build_defs_test_suite(name):
         tests = [
             # go/keep-sorted start
             _test_macro_tags,
+            _test_py_test_auto_nopresubmit_build_test,
             _test_py_test_multi_tpu_targets,
             _test_py_test_multi_tpu_targets_existing_fails_on,
             _test_py_test_non_tpu_requires_tags,
@@ -1099,6 +1189,7 @@ def build_defs_test_suite(name):
             _test_internal_manual_nopresubmit_oss_tag,
             _test_internal_nobuild_oss,
             _test_internal_nonightly_oss,
+            _test_internal_nopresubmit_nobuild,
             _test_internal_nopresubmit_oss,
             _test_internal_notap_nobuild,
             _test_internal_notest_oss,
@@ -1106,12 +1197,14 @@ def build_defs_test_suite(name):
             _test_nobuild,
             _test_nolocal,
             _test_nopresubmit,
+            _test_nopresubmit_nolocal_build_test_tags,
             _test_notap,
             _test_ops_test_build_test,
             _test_oss_manual_nonightly_oss_tag,
             _test_oss_manual_nopresubmit_oss_tag,
             _test_oss_nobuild_oss,
             _test_oss_nonightly_oss,
+            _test_oss_nopresubmit,
             _test_oss_nopresubmit_oss,
             _test_oss_notap_notest_oss,
             _test_oss_notest_oss,

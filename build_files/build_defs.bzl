@@ -436,7 +436,8 @@ def _check_and_adjust_test_tags(
             as the reason, and a build_test named `<name>_build_test` will be added for the test
             to ensure it is buildable. This implies notest_oss.
         nopresubmit: If given as a string, the test will be excluded from presubmit, and the
-            string will be used as the reason.
+            string will be used as the reason. In internal builds, a build_test named
+            `<name>_build_test` will be added for the test to ensure it is buildable in presubmit.
         nolocal: By default, we tag a test as "manual" if either notap or nopresubmit is
             set, so that it is excluded from local `blaze test //src/torch_tpu/...`
             runs. This behavior can be overridden by setting nolocal to a non-empty
@@ -558,16 +559,38 @@ def _check_and_adjust_test_tags(
         shard_count = shard_count,
     )
 
-    # Add a build_test for notap and notest_oss test unless nobuild is set.
+    # Adjust tags for nopresubmit.
+    # The build_test does not inherit the "nopresubmit" tag since it is in
+    # _BUILD_TEST_EXCLUDED_TAGS.
+    if nopresubmit != None:
+        # Enforce that nopresubmit is a non-empty string.
+        if type(nopresubmit) != "string" or not nopresubmit:
+            fail("nopresubmit must be a non-empty string documenting why the test " +
+                 "should be skipped in presubmit.")
+
+        if "nopresubmit" not in tags:
+            # This tag causes the test to be skipped in presubmit.
+            tags.append("nopresubmit")
+
+            # Skip in local runs as it's unreasonable to ask people to keep a
+            # nopresubmit test green.
+            skip_local = True
+
+    # Add a companion _build_test, unless nobuild is set, for tests that would otherwise not be
+    # built: notap and nopresubmit tests internally, and notest/nonightly/nopresubmit/ops-test
+    # tests in OSS. Internally, this makes sure that e.g. strict deps, visibility and build-action
+    # input-limit breakages in skipped tests are caught in presubmit.
     # Targets with notest_oss cannot be built in OSS because flag `--build_tests_only` is active.
     # Instead of removing `--build_tests_only` to include all unused binaries/libraries in OSS
     # builds, we generate a companion _build_test target for notest_oss tests.
     create_build_test = False
     build_test_tags = []
     if is_oss:
-        create_build_test = ("notest" in tags or "nonightly" in tags or "nopresubmit" in tags or "ops-test" in tags) and "nobuild" not in tags
+        # Only nopresubmit_oss (not nopresubmit) generates a build_test in OSS.
+        create_build_test = ("notest" in tags or "nonightly" in tags or nopresubmit_oss != None or "ops-test" in tags) and "nobuild" not in tags
     else:
-        create_build_test = "notap" in tags and "nobuild" not in tags  # NOTAP_OK=for implementing notap logic
+        skip_presubmit = "notap" in tags or "nopresubmit" in tags  # NOTAP_OK=for implementing notap logic
+        create_build_test = skip_presubmit and "nobuild" not in tags
     if create_build_test:
         # build_test targets only verify compilation and do not execute test logic.
         # 1. Exclude skip tags and CPU reservation tags (cpu:*) to avoid inflating
@@ -595,22 +618,9 @@ def _check_and_adjust_test_tags(
             build_test_tags.append("cuda-build-test")
         _sort_inplace(build_test_tags)
 
-    # Adjust tags for nopresubmit.
-    if nopresubmit != None:
-        # Enforce that nopresubmit is a non-empty string.
-        if type(nopresubmit) != "string" or not nopresubmit:
-            fail("nopresubmit must be a non-empty string documenting why the test " +
-                 "should be skipped in presubmit.")
-
-        if "nopresubmit" not in tags:
-            # This tag causes the test to be skipped in presubmit.
-            tags.append("nopresubmit")
-
-            # Skip in local runs as it's unreasonable to ask people to keep a
-            # nopresubmit test green.
-            skip_local = True
-
     # Adjust tags for nolocal.
+    # Adding "manual" below must come after build_test_tags is computed, so that the build_test
+    # does not inherit it and is still built in presubmit.
     if "manual" in tags:
         fail("Do not use the 'manual' tag to exclude the test from matching pattern " +
              "wildcards like //src/torch_tpu/... - notap or nopresubmit already " +
@@ -752,7 +762,8 @@ def torch_tpu_cc_test(
             as the reason, and a build_test named `<name>_build_test` will be added for the test
             to ensure it is buildable. This implies notest_oss.
         nopresubmit: If given as a string, the test will be excluded from presubmit, and the
-            string will be used as the reason.
+            string will be used as the reason. In internal builds, a build_test named
+            `<name>_build_test` will be added for the test to ensure it is buildable in presubmit.
         nolocal: By default, we tag a test as "manual" if either notap or nopresubmit is
             set, so that it is excluded from local `blaze test //src/torch_tpu/...`
             runs. This behavior can be overridden by setting nolocal to a non-empty
@@ -1070,7 +1081,8 @@ def torch_tpu_py_test(
             as the reason, and a build_test named `<name>_build_test` will be added for the test
             to ensure it is buildable. This implies notest_oss.
         nopresubmit: If given as a string, the test will be excluded from presubmit, and the
-            string will be used as the reason.
+            string will be used as the reason. In internal builds, a build_test named
+            `<name>_build_test` will be added for the test to ensure it is buildable in presubmit.
         nolocal: By default, we tag a test as "manual" if either notap or nopresubmit is
             set, so that it is excluded from local `blaze test //src/torch_tpu/...`
             runs. This behavior can be overridden by setting nolocal to a non-empty
