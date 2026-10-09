@@ -72,11 +72,20 @@ class RemoteCacheTest : public testing::Test {
     if (!test_file_.empty()) {
       env_->DeleteFile(test_file_).IgnoreError();
     }
+    // Clean up the test directory tree if one was created.
+    if (!test_dir_to_delete_.empty()) {
+      int64_t undeleted_files = 0;
+      int64_t undeleted_dirs = 0;
+      env_->DeleteRecursively(test_dir_to_delete_, &undeleted_files,
+                              &undeleted_dirs)
+          .IgnoreError();
+    }
   }
 
   tsl::Env* const env_ = tsl::Env::Default();
   std::string test_dir_;
   std::string test_file_;
+  std::string test_dir_to_delete_;
 };
 
 // Tests that AtomicWriteToCacheFile correctly writes a new file.
@@ -138,11 +147,13 @@ TEST_F(RemoteCacheTest, CreatesCacheDirectory) {
   // Make test_dir_ unique in case the test is run with --runs_per_test=N.
   test_dir_ = absl::StrCat(test_dir_, "/test_dir");
   ASSERT_TRUE(env_->CreateUniqueFileName(&test_dir_, /*suffix=*/""));
+  test_dir_to_delete_ = test_dir_;
   // Add two more levels of directories to test recursive creation.
   const std::string test_subdir = absl::StrCat(test_dir_, "/level1/level2");
 
   // Clean up test_dir_ if it exists.
-  int64_t undeleted_files, undeleted_dirs;
+  int64_t undeleted_files = 0;
+  int64_t undeleted_dirs = 0;
   env_->DeleteRecursively(test_dir_, &undeleted_files, &undeleted_dirs)
       .IgnoreError();
 
@@ -162,6 +173,7 @@ TEST_F(RemoteCacheTest, GetFromTier3Cache) {
 
   // Write a cache entry file.
   const std::string cache_entry_path = GetTier3CacheEntryPath(key);
+  test_file_ = cache_entry_path;
   ABSL_LOG(INFO) << "Writing to " << cache_entry_path;
   const std::string content = "test_data_content";
   absl::Status status = AtomicWriteToCacheFile(cache_entry_path, content);

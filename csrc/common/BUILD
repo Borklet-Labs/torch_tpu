@@ -1570,19 +1570,20 @@ torch_tpu_cc_test(
     name = "compilation_cache_remote_filesystem_test",
     srcs = ["compilation_cache_remote_filesystem_test.cc"],
     env = {
-        "TORCH_TPU_TIER3_COMPILATION_CACHE_ROOT":
-        # Alternatively, set it to a GCS directory.
-        # "$DATA_ROOT/$TMP_SUBDIR/ttl=1d/compilation_cache_remote_filesystem_test"
-        "",
+        "TORCH_TPU_TIER3_COMPILATION_CACHE_ROOT": "gs://torchtpu-shared/compilation_cache_remote_filesystem_test",
     },
     exec_properties = {
         "cpp_link.mem": "16g",  # Needed for asan.
     },
-    notest_oss = True,  # Need to set up a GCS bucket for OSS tests to write to.
     tags = [
         "requires-net:external",  # Requires remote file access.
         "requires-tpu-v5lite",
-    ],
+    ] + if_oss(
+        # TODO: b/567928058 - RBE workers lack write access to the
+        # gs://torchtpu-shared cache root used by this test.
+        ["no-remote-exec"],
+        [],
+    ),
     deps = [
         ":cache_key",
         ":compilation",

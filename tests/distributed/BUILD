@@ -211,16 +211,17 @@ torch_tpu_py_test(
     timeout = "long",
     srcs = ["collective_ops_test.py"],
     env = {
-        "TORCH_TPU_TIER3_COMPILATION_CACHE_ROOT":
-        # Alternatively, set it to a GCS directory.
-        # "$DATA_ROOT/$TMP_SUBDIR/ttl=1d/collective_ops_remote_cache_test"
-        "",
+        "TORCH_TPU_TIER3_COMPILATION_CACHE_ROOT": "gs://torchtpu-shared/collective_ops_remote_cache_test",
     },
     main = "collective_ops_test.py",
-    notest_oss = True,  # fix hang in OSS (TODO)
     shard_count = 12,
     tags = if_oss(
-        ["exclusive"],
+        [
+            "exclusive",
+            # TODO: b/567928058 - RBE workers lack write access to the
+            # gs://torchtpu-shared cache root used by this test.
+            "no-remote-exec",
+        ],
         [],
     ) + [
         "noasan",  # TODO(b/497035517): fix the test in asan mode.
