@@ -288,7 +288,6 @@ torch_tpu_py_test(
         "BENCHMARK_PLATFORM": "v5e_1x1",
     },
     nolocal = "user requested to run this manually",
-    nopresubmit = "Benchmark.",
     notest_oss = True,  # requires huggingface configs from internal infra  # NOTEST_OSS_OK=benchmarks run nightly
     shard_count = 10,
     tags = [
