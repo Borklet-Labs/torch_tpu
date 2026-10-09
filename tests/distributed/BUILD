@@ -249,13 +249,14 @@ torch_tpu_py_test(
 torch_tpu_py_test(
     name = "collective_ops_device_order_test",
     srcs = ["collective_ops_device_order_test.py"],
-    notest_oss = True,  # NOTEST_OSS_OK=Disabled in OSS due to multi-process v7x runner hang.
+    oss_presubmit_tpu_generation = tpu_gen(
+        "v7",
+        reason = "Only multi-core-per-chip TPU v7x has a non-identity rank-to-device mapping",
+    ),
     tags = if_oss(
         ["exclusive"],
         [],
     ) + [
-        "fails-on-tpu-v5",
-        "fails-on-tpu-v6",
         "noasan",  # TODO(b/497035517): fix the test in asan mode.
         "nomsan",  # TODO(b/497035517): fix the test in msan mode.
         "notsan",  # TODO(b/497035517): fix the test in tsan mode.
@@ -609,8 +610,12 @@ torch_tpu_py_test(
 
 torch_tpu_py_test(
     name = "subgroup_collectives_test",
+    timeout = "long",
     srcs = ["subgroup_collectives_test.py"],
-    notest_oss = True,  # NOTEST_OSS_OK=Disabled in OSS due to multi-process v7x runner hang.
+    oss_presubmit_tpu_generation = tpu_gen(
+        "v7",
+        reason = "Only multi-core-per-chip TPU v7x has a non-identity rank-to-device mapping",
+    ),
     shard_count = 4,
     tags = if_oss(
         ["exclusive"],
@@ -621,10 +626,6 @@ torch_tpu_py_test(
         "notsan",  # TODO(b/497035517): fix the test in tsan mode.
         "ok-to-wait-for-v7x-in-presubmit",
         "requires-tpu-v7x:4",
-        # Skip this test on TPU v5 and v6. It was written targeting TPU v7. Running it on v5 and v6
-        # will cause issues due to their different topology.
-        "fails-on-tpu-v5",
-        "fails-on-tpu-v6",
     ],
     deps = [
         ":distributed_utils",

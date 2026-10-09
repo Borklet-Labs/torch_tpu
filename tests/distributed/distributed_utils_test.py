@@ -228,6 +228,59 @@ class DistributedUtilsTest(seed_test_utils.MultiProcessRepeatableTest):
 
     self.assertEqual(seen_addresses, [pinned, pinned])
 
+  def test_dist_run_rederives_topology_for_new_nproc_per_node(self) -> None:
+    """Verifies the topology follows `nproc_per_node` across calls."""
+    seen = []
+
+    def mock_spawn(fn, args=(), nprocs=1, join=True):
+      del fn, args, join  # Unused.
+      seen.append((
+          nprocs,
+          len(os.environ["TORCH_TPU_SLICEBUILDER_ADDRESSES"].split(",")),
+          os.environ["TORCH_TPU_TOPOLOGY"],
+      ))
+
+    # Pretend an 8-device single host so that `dist_run` bootstraps the TPU
+    # launch environment without a real TPU.
+    with (
+        mock.patch.dict(os.environ),
+        mock.patch.object(
+            distributed_utils.hardware, "get_tpu_device_count", return_value=8
+        ),
+        mock.patch.object(
+            distributed_utils.hardware,
+            "get_tpu_topology",
+            side_effect=lambda n=None: f"topology_for_{n}",
+        ),
+        mock.patch.object(mp, "spawn", side_effect=mock_spawn),
+    ):
+      os.environ.pop("TORCH_TPU_SLICEBUILDER_ADDRESSES", None)
+      os.environ.pop("TORCH_TPU_TOPOLOGY", None)
+      distributed_utils.dist_run(8, lambda: None)
+      distributed_utils.dist_run(4, lambda: None)
+
+    self.assertEqual(seen, [(8, 8, "topology_for_8"), (4, 4, "topology_for_4")])
+
+  def test_dist_run_keeps_pinned_topology(self) -> None:
+    """Verifies a caller-pinned topology is not replaced."""
+    seen_topologies = []
+
+    def mock_spawn(fn, args=(), nprocs=1, join=True):
+      del fn, args, nprocs, join  # Unused.
+      seen_topologies.append(os.environ["TORCH_TPU_TOPOLOGY"])
+
+    with (
+        mock.patch.dict(os.environ, {"TORCH_TPU_TOPOLOGY": "1,2,1"}),
+        mock.patch.object(
+            distributed_utils.hardware, "get_tpu_device_count", return_value=2
+        ),
+        mock.patch.object(mp, "spawn", side_effect=mock_spawn),
+    ):
+      os.environ.pop("TORCH_TPU_SLICEBUILDER_ADDRESSES", None)
+      distributed_utils.dist_run(2, lambda: None)
+
+    self.assertEqual(seen_topologies, ["1,2,1"])
+
   def test_dist_run_retries_and_succeeds_with_real_socket_collision(
       self,
   ) -> None:

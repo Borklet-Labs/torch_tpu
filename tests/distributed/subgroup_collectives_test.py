@@ -21,6 +21,7 @@ in PyTorch, which is still used in practice (e.g. Meta's fairscale library).
 can run independently "along rows/columns" of the device mesh.
 """
 
+import inspect
 import os
 
 from absl import logging
@@ -236,15 +237,17 @@ def run_unsorted_subgroups() -> None:
 
 
 def run_unaligned_subgroups() -> None:
-  """Test unaligned subgroup partitioning across 4 devices."""
+  """Test unaligned subgroup partitioning across devices."""
   dist.init_process_group("tpu")
   rank = dist.get_rank()
   world_size = dist.get_world_size()
   half = world_size // 2
 
-  unaligned_a = dist.new_group(ranks=[1, 2])
-  unaligned_b = dist.new_group(ranks=[3, 0])
-  unaligned_group = unaligned_a if rank in (1, 2) else unaligned_b
+  unaligned_a_ranks = list(range(1, half + 1))
+  unaligned_b_ranks = list(range(half + 1, world_size)) + [0]
+  unaligned_a = dist.new_group(ranks=unaligned_a_ranks)
+  unaligned_b = dist.new_group(ranks=unaligned_b_ranks)
+  unaligned_group = unaligned_a if rank in unaligned_a_ranks else unaligned_b
 
   @torch.compile(backend="tpu", fullgraph=True)
   @torch.tpu.distributed.spmd_safe
@@ -260,36 +263,62 @@ def run_unaligned_subgroups() -> None:
   utils.assert_close(res, expected)
 
 
+def _run_with_cleanup(test_fn) -> None:
+  """Runs `test_fn` and cleanly tears down the default process group on exit.
+
+  On normal completion, synchronizes all workers via `dist.barrier()` before
+  destroying the process group so no worker exits while peers are still
+  executing collectives. On exception, destroys the process group without a
+  barrier to avoid deadlocking when only a subset of workers fail.
+  """
+  try:
+    test_fn()
+  except BaseException:
+    if dist.is_initialized():
+      dist.destroy_process_group()
+    raise
+  if dist.is_initialized():
+    dist.barrier()
+    dist.destroy_process_group()
+
+
 class SubgroupCollectivesTest(seed_test_utils.MultiProcessRepeatableTest):
 
   def test_manual_2d_mesh(self):
     distributed_utils.dist_run(
         nproc_per_node=8,
-        fn=run_manual_2d_mesh,
+        fn=_run_with_cleanup,
+        test_fn=run_manual_2d_mesh,
     )
 
   def test_manual_1d_as_2d_mesh(self):
     distributed_utils.dist_run(
         nproc_per_node=8,
-        fn=run_manual_1d_as_2d_mesh,
+        fn=_run_with_cleanup,
+        test_fn=run_manual_1d_as_2d_mesh,
     )
 
   def test_manual_2d_all_gather_reduce_scatter(self):
     distributed_utils.dist_run(
         nproc_per_node=8,
-        fn=run_manual_2d_all_gather_reduce_scatter,
+        fn=_run_with_cleanup,
+        test_fn=run_manual_2d_all_gather_reduce_scatter,
     )
 
   def test_unsorted_subgroups(self):
+    if "sort_ranks" not in inspect.signature(dist.new_group).parameters:
+      self.skipTest("dist.new_group() does not support sort_ranks")
     distributed_utils.dist_run(
         nproc_per_node=8,
-        fn=run_unsorted_subgroups,
+        fn=_run_with_cleanup,
+        test_fn=run_unsorted_subgroups,
     )
 
   def test_unaligned_subgroups(self):
     distributed_utils.dist_run(
-        nproc_per_node=4,
-        fn=run_unaligned_subgroups,
+        nproc_per_node=8,
+        fn=_run_with_cleanup,
+        test_fn=run_unaligned_subgroups,
     )
 
 

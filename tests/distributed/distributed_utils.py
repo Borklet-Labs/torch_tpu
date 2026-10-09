@@ -28,6 +28,7 @@ from torch_tpu._internal.distributed import multiprocessing
 from tests import seed_test_utils
 
 _SLICEBUILDER_ADDRESSES_ENV = "TORCH_TPU_SLICEBUILDER_ADDRESSES"
+_TOPOLOGY_ENV = "TORCH_TPU_TOPOLOGY"
 
 # Matches the error libtpu emits when the local TPU agent socket (GKE
 # `vbar-control-agent`) does not accept the connection within its timeout, e.g.
@@ -44,6 +45,11 @@ _TPU_AGENT_CONNECT_FAILURE_RE = re.compile(
 # this process, used to tell our own leftover value apart from one pinned by the
 # caller or a launcher (e.g. after a test restores an earlier `os.environ`).
 _picked_slicebuilder_addresses: set[str] = set()
+
+# Every `TORCH_TPU_TOPOLOGY` value set by `dist_run` itself in this process. The
+# topology must match the number of SliceBuilder addresses, so it is re-derived
+# together with them unless the caller or a launcher pinned it.
+_picked_topologies: set[str] = set()
 
 
 def _worker_fn(
@@ -155,6 +161,7 @@ def dist_run(
     ) and _is_single_host()
     if repick_slicebuilder_ports:
       _set_fresh_slicebuilder_addresses(nproc_per_node)
+      _set_topology_unless_pinned(nproc_per_node)
 
     distributed.set_tpu_launch_env(nproc_per_node=nproc_per_node)
 
@@ -216,6 +223,28 @@ def _set_fresh_slicebuilder_addresses(nproc_per_node: int) -> None:
   )
   env_utils.set_str_env(_SLICEBUILDER_ADDRESSES_ENV, addresses)
   _picked_slicebuilder_addresses.add(addresses)
+
+
+def _set_topology_unless_pinned(nproc_per_node: int) -> None:
+  """Points `TORCH_TPU_TOPOLOGY` at the topology of `nproc_per_node` devices.
+
+  A topology picked by an earlier `dist_run` call with a different
+  `nproc_per_node` would no longer match the number of SliceBuilder addresses,
+  so it is replaced. A value set by someone else counts as pinned and is kept.
+
+  Args:
+    nproc_per_node: The number of processes, i.e. devices, on this host.
+  """
+  # Read through `os.environ` rather than `env.get_str_env_once()`, which would
+  # memoize the variable before it is set below.
+  current = os.environ.get(_TOPOLOGY_ENV)  # PY_ENVIRON_OK=must not memoize.
+  if current is not None and current not in _picked_topologies:
+    return
+  topology = hardware.get_tpu_topology(nproc_per_node)
+  if topology is None:
+    return
+  env_utils.set_str_env(_TOPOLOGY_ENV, topology)
+  _picked_topologies.add(topology)
 
 
 def _retryable_failure_reason(
