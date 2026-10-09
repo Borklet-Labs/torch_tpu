@@ -724,6 +724,16 @@ class TpuBackend:
     if debug_callback is not None and not callable(debug_callback):
       raise TypeError("'debug_callback' must be callable")
     debug = TpuCompileDebug() if debug_callback else None
+
+    # Swallow the "mode" kwarg. This is a common kwarg that is generally ignored
+    # and warned about instead of raising if it is not meaningful to the
+    # backend. While other backends warn about all unknown kwargs, we check
+    # "mode" specifically so we can continue to catch other unexpected kwargs.
+    # See google-pytorch/torch_tpu#4298.
+    mode = kwargs.pop("mode", None)
+    if mode is not None and mode != "default":
+      logging.warning('TPU backend ignores `mode` kwarg, got mode="%s".', mode)
+
     if kwargs:
       raise TypeError("Unexpected keyword arguments: {}".format(kwargs))
 

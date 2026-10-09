@@ -15,6 +15,7 @@
 """Directly test the PyBind11 API for compiled mode, without using Dynamo."""
 
 import functools
+import itertools
 import re
 import textwrap
 import threading
@@ -622,6 +623,51 @@ class CompileApiTest(seed_test_utils.RepeatableTest):
     for _ in range(10):
       torch.compile(f)(torch.randn(1, 5, device=torch.device('tpu')))
     self.assertEqual(num_calls, 1)
+
+  @parameterized.named_parameters(
+      (f'{backend}_{mode}', backend, mode, expect_warning)
+      for backend, (mode, expect_warning) in itertools.product(
+          (None, 'tpu'),  # backend
+          (  # (mode, expect_warning)
+              (None, False),
+              ('default', False),
+              ('reduce-overhead', True),
+              ('max-autotune', True),
+              ('max-autotune-no-cudagraphs', True),
+              ('foo-bar', True),
+          ),
+      )
+  )
+  def test_compile_mode(self, backend, mode, expect_warning):
+    """Verify that we can gracefully handle different modes.
+
+    Regression test for google-pytorch/torch_tpu#4298.
+    """
+    # The parameterized cases compile the same lambda, whose shared code
+    # object would otherwise hit Dynamo's recompile limit (8).
+    torch._dynamo.reset()
+
+    kwargs = {'mode': mode}
+    if backend is not None:
+      kwargs['backend'] = backend
+    x = torch.ones(10, device=torch.device('tpu'))
+
+    log_context = (
+        self.assertLogs(level='WARNING')
+        if expect_warning
+        else self.assertNoLogs(level='WARNING')
+    )
+    with log_context as cm:
+      torch.compile(lambda arg: arg + 1, **kwargs)(x)
+
+    if expect_warning:
+      self.assertIsNotNone(cm)
+      self.assertTrue(
+          any(
+              f'TPU backend ignores `mode` kwarg, got mode="{mode}".' in msg
+              for msg in cm.output
+          )
+      )
 
   def test_execute_with_output_shapes(self):
     with eager_mode_compile_fx_graph():
