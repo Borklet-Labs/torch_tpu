@@ -67,6 +67,10 @@ class SeededTest(parameterized.TestCase):  # ABSLTEST_OK=base seed class
     if self.seed_in_setup:
       # Set the random seed for Python and Torch.
       seed_rngs(self.test_random_seed)
+    # Disable Dynamo's recompilation limit (default 8) so tests that call
+    # torch.compile across many inputs/dtypes/subtests do not hit the cache
+    # limit and silently fall back to eager execution.
+    self.enterContext(torch._dynamo.utils.disable_cache_limit())  # pylint: disable=protected-access
 
   def tearDown(self) -> None:
     if (

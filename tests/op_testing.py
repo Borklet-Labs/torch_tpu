@@ -384,6 +384,15 @@ _OUT_DTYPE_CAST_KNOWN_FAILURES: Final[set[str]] = {
     # go/keep-sorted end
 }
 
+# TODO(b/568080282): Dynamo FakeTensor rejects complex64 -> float64 out-variant
+# dtype casts for these ops even though GPU golden succeeded.
+_COMPILED_OUT_DTYPE_CAST_KNOWN_FAILURES: Final[set[str]] = {
+    # go/keep-sorted start
+    "abs",
+    "mean",
+    # go/keep-sorted end
+}
+
 
 def _sample_inputs_thnn_fused_rnn_cell(
     op_info: OpInfo,
@@ -4141,6 +4150,10 @@ def _compiled_supports_op(
       "randn",
       "resize_",
       "uniform",
+      # TODO(b/568080282): Fix list index out of range and 0D shape mismatch in
+      # compiled .out variant with dim.
+      "max.out",
+      "min.out",
   ]
 
   key = op.name
@@ -5544,7 +5557,13 @@ class OpInfoTestBase(
             for d in dtypes_to_test
             if not _should_skip_dtype(d, exclude_dtypes=op_exclude_dtypes)
         ])
-        test_out_casting = op.name not in _OUT_DTYPE_CAST_KNOWN_FAILURES
+        test_out_casting = (
+            op.name not in _OUT_DTYPE_CAST_KNOWN_FAILURES
+            and not (
+                use_compiled
+                and op.name in _COMPILED_OUT_DTYPE_CAST_KNOWN_FAILURES
+            )
+        )
 
         def _should_test_out_casting(
             cast_pair: tuple[torch.dtype, torch.dtype] | None,

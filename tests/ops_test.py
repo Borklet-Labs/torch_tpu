@@ -639,6 +639,12 @@ ACCURACY_OVERRIDES_VS_GPU_COMPILED = {
     "acosh": {
         torch.complex64: {"rtol": 2.9e-5},
     },
+    "addcmul": {
+        torch.float16: {
+            "rtol": 8.6e-3,  # TOLERANCE_OVERRIDE_OK
+            "atol": 1.0e-3,  # TOLERANCE_OVERRIDE_OK
+        },
+    },
     "asin": {
         torch.complex64: {"rtol": 7.9e-5, "atol": 1e-4},
     },
@@ -1273,7 +1279,11 @@ class TestOps(op_testing.OpInfoTestBase):
     self.do_test_op("addcdiv")
 
   def test_addcmul(self):
-    self.do_test_op("addcmul")
+    self.do_test_op(
+        "addcmul",
+        # TODO(b/568080282): Fix addcmul_ succeeding on bool in compiled mode.
+        exclude_inplace_dtypes=_if_tpu_vs_gpu_compiled((torch.bool,), ()),
+    )
 
   def test_addmm(self):
     self.do_test_op(
@@ -1688,7 +1698,11 @@ class TestOps(op_testing.OpInfoTestBase):
   #   self.do_test_op("cummax")
 
   def test_cumsum(self):
-    self.do_test_op("cumsum")
+    self.do_test_op(
+        "cumsum",
+        # TODO(b/568080282): Fix cumsum_ succeeding on bool in compiled mode.
+        exclude_inplace_dtypes=_if_tpu_vs_gpu_compiled((torch.bool,), ()),
+    )
 
   # TODO(bawilson): Scan HLO lowering failing on GitHub
   # def test_cummin(self):
@@ -3384,7 +3398,15 @@ class TestOps(op_testing.OpInfoTestBase):
     )
 
   def test_polygamma(self):
-    self.do_test_op("polygamma")
+    self.do_test_op(
+        "polygamma",
+        # TODO(b/568080282): Fix aten::polygamma_ alias annotation error in
+        # torch.compile functionalization.
+        skip_if=lambda _1, variant, _2: (
+            op_testing.is_compiled_mode()
+            and variant == op_testing.OpVariant.INPLACE
+        ),
+    )
 
   def test_prod(self):
     self.do_test_op("prod")
@@ -3874,6 +3896,9 @@ class TestOps(op_testing.OpInfoTestBase):
                     torch.int8,
                     torch.int16,
                 )
+                # TODO(b/568080282): Fix upsample ops succeeding on integral
+                # dtypes in compiled mode when GPU fails.
+                + _if_tpu_vs_gpu_compiled(INTEGRAL_DTYPES, ())
             ),
         },
     )
@@ -3891,6 +3916,9 @@ class TestOps(op_testing.OpInfoTestBase):
                     torch.int8,
                     torch.int16,
                 )
+                # TODO(b/568080282): Fix upsample ops succeeding on integral
+                # dtypes in compiled mode when GPU fails.
+                + _if_tpu_vs_gpu_compiled(INTEGRAL_DTYPES, ())
             ),
         },
     )
@@ -3916,6 +3944,9 @@ class TestOps(op_testing.OpInfoTestBase):
                     torch.int8,
                     torch.int16,
                 )
+                # TODO(b/568080282): Fix upsample ops succeeding on integral
+                # dtypes in compiled mode when GPU fails.
+                + _if_tpu_vs_gpu_compiled(INTEGRAL_DTYPES, ())
             ),
         },
         # TODO: STRICT fails for some types. Look into narrowing this down.
@@ -3935,6 +3966,9 @@ class TestOps(op_testing.OpInfoTestBase):
                     torch.int8,
                     torch.int16,
                 )
+                # TODO(b/568080282): Fix upsample ops succeeding on integral
+                # dtypes in compiled mode when GPU fails.
+                + _if_tpu_vs_gpu_compiled(INTEGRAL_DTYPES, ())
             ),
         },
     )

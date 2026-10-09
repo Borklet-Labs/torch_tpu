@@ -37,6 +37,12 @@ from tests import test_utils as tests_test_utils
 
 op_db = common_methods_invocations.op_db
 
+# Capture Dynamo's default recompile_limit at import time before SeededTest.setUp
+# overrides it via disable_cache_limit().
+_DEFAULT_DYNAMO_RECOMPILE_LIMIT = (
+    torch._dynamo.config.recompile_limit  # pylint: disable=protected-access
+)
+
 
 class FakeSample:
   """A fake test sample for an op."""
@@ -561,6 +567,21 @@ class OpTestingTest(op_testing.OpInfoTestBase):
           " hold",
       ):
         self._load_goldens_from(directory)
+
+  @torch._dynamo.config.patch(fail_on_recompile_limit_hit=True)  # pylint: disable=protected-access
+  def test_dynamo_cache_limit_disabled_across_subtests(self):
+    cnt = torch._dynamo.testing.CompileCounter()  # pylint: disable=protected-access
+    compiled_fn = torch.compile(lambda x: x + 1, backend=cnt, dynamic=False)
+
+    num_subtests = _DEFAULT_DYNAMO_RECOMPILE_LIMIT + 4
+    # With fail_on_recompile_limit_hit=True, we are checking that calling
+    # compiled_fn across more subtests than the default recompile limit does
+    # not raise an exception.
+    for i in range(1, num_subtests + 1):
+      with self.subTest(i=i):
+        compiled_fn(torch.ones(i))
+
+    self.assertEqual(cnt.frame_count, num_subtests)
 
 
 if __name__ == "__main__":
