@@ -76,7 +76,7 @@ import einops
 import torch
 from torch import Tensor, nn
 import torch.nn.functional as F
-from examples.tutorials.FLUX_optimization.kernels.splash_attention import splash_sdpa
+from examples.FLUX_optimization.kernels.splash_attention import splash_sdpa
 
 rearrange = einops.rearrange
 

@@ -343,7 +343,7 @@ attn = F.scaled_dot_product_attention(
 
 ```python
 # Custom Pallas SplashAttention kernel via torch_tpu Pallas bridge
-from examples.tutorials.FLUX_optimization.kernels.splash_attention import splash_sdpa
+from examples.FLUX_optimization.kernels.splash_attention import splash_sdpa
 
 attn = splash_sdpa(q_sdpa, k_sdpa, v_sdpa, is_causal=False)
 ```
@@ -397,15 +397,15 @@ essential:
 ```bash
 # Run RoPE mathematical and module-level parity tests:
 bazel test \
-  //examples/tutorials/FLUX_optimization:flux_rope_parity_test
+  //examples/FLUX_optimization:flux_rope_parity_test
 
 # Run custom Pallas SplashAttention kernel parity tests:
 bazel test \
-  //examples/tutorials/FLUX_optimization/kernels:splash_attention_test
+  //examples/FLUX_optimization/kernels:splash_attention_test
 
 # Run layout parity, compilation parity, and baseline speed test:
 bazel test \
-  //examples/tutorials/FLUX_optimization:flux_test
+  //examples/FLUX_optimization:flux_test
 ```
 
 ### 2. Run Interactive Benchmarks Across Optimization Milestones
@@ -417,34 +417,34 @@ matrix:
 ```bash
 # Configuration 1: Unoptimized Baseline (Eager)
 bazel run \
-  //examples/tutorials/FLUX_optimization:flux_test -- \
+  //examples/FLUX_optimization:flux_test -- \
   --batch_size=2 --img_seq_len=512 --txt_seq_len=128 --hidden_size=1024 \
   --use_zero_copy_view=false --use_fused_rope=false --compile=false \
   --num_warmup_steps=2 --num_benchmark_steps=10
 
 # Configuration 2: Zero-Copy Views Only (Eager)
 bazel run \
-  //examples/tutorials/FLUX_optimization:flux_test -- \
+  //examples/FLUX_optimization:flux_test -- \
   --batch_size=2 --img_seq_len=512 --txt_seq_len=128 --hidden_size=1024 \
   --use_zero_copy_view=true --use_fused_rope=false --compile=false \
   --num_warmup_steps=2 --num_benchmark_steps=10
 
 # Configuration 5: Full Optimization (Zero-Copy Views + Fused 2D RoPE + XLA Compile)
 bazel run \
-  //examples/tutorials/FLUX_optimization:flux_test -- \
+  //examples/FLUX_optimization:flux_test -- \
   --batch_size=2 --img_seq_len=512 --txt_seq_len=128 --hidden_size=1024 \
   --use_zero_copy_view=true --use_fused_rope=true --compile=true \
   --num_warmup_steps=2 --num_benchmark_steps=10
 
 # Configuration 6: Pallas SplashAttention (Eager)
 bazel run \
-  //examples/tutorials/FLUX_optimization:flux_test -- \
+  //examples/FLUX_optimization:flux_test -- \
   --use_splash_attention=true --compile=false \
   --num_warmup_steps=2 --num_benchmark_steps=10
 
 # Configuration 7: Zero-Copy Views + Fused 2D RoPE + Pallas SplashAttention + Compile
 bazel run \
-  //examples/tutorials/FLUX_optimization:flux_test -- \
+  //examples/FLUX_optimization:flux_test -- \
   --use_zero_copy_view=true --use_fused_rope=true --use_splash_attention=true --compile=true \
   --num_warmup_steps=2 --num_benchmark_steps=10
 ```

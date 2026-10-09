@@ -49,11 +49,11 @@ HOW TO RUN
 ================================================================================
 Run test suite via Bazel:
   bazel test \\
-    //examples/tutorials/FLUX_optimization:flux_test
+    //examples/FLUX_optimization:flux_test
 
 Run interactive benchmark with custom flags:
   bazel run \\
-    //examples/tutorials/FLUX_optimization:flux_test -- \\
+    //examples/FLUX_optimization:flux_test -- \\
     --batch_size=2 --img_seq_len=512 --txt_seq_len=128 --hidden_size=1024 \\
     --use_zero_copy_view=true --use_fused_rope=true --compile=true \\
     --num_warmup_steps=2 --num_benchmark_steps=10
@@ -69,7 +69,7 @@ import torch
 import torch.nn.functional as F
 import torch.profiler
 import torch_tpu
-from examples.tutorials.FLUX_optimization import flux
+from examples.FLUX_optimization import flux
 
 _NUM_WARMUP_STEPS = flags.DEFINE_integer(
     "num_warmup_steps",

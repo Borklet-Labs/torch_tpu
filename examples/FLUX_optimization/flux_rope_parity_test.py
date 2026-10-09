@@ -41,14 +41,14 @@ HOW TO RUN
 ================================================================================
 Via Bazel:
   bazel test \\
-    //examples/tutorials/FLUX_optimization:flux_rope_parity_test
+    //examples/FLUX_optimization:flux_rope_parity_test
 """
 
 import logging
 from absl.testing import absltest
 import torch
 import torch_tpu  # Required to initialize TPU distributed device runtime
-from examples.tutorials.FLUX_optimization import flux
+from examples.FLUX_optimization import flux
 
 # ==============================================================================
 # STEP 1: BIT-EXACT MATHEMATICAL & MODULE-LEVEL PARITY VERIFICATION
