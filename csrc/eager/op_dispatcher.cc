@@ -18,6 +18,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <optional>
 #include <string>
 #include <utility>
@@ -47,11 +48,11 @@
 #include "csrc/eager/device_buffer.h"
 #include "csrc/eager/eager_mode.h"
 #include "csrc/eager/tensor_to_buffer.h"
-#include "csrc/ops/copy_from/cpu_to_tpu.h"
 #include "csrc/ops/macros/kernel.h"
 #include "csrc/ops/op_builder_utils.h"
 #include "csrc/ops/op_names.h"
 #include "csrc/ops/resize/resize_aten_kernels.h"
+#include "csrc/pjrt/pjrt_transfer.h"
 #include "stablehlo/integrations/cpp/builder/AttrTypeBuilderUtil.h"
 #include "stablehlo/integrations/cpp/builder/MlirBuilder.h"
 #include "torch/headeronly/core/DeviceType.h"
@@ -118,10 +119,20 @@ absl::StatusOr<DeviceBufferRef> MakeBuffer(
       scalar_tensor = scalar_tensor.to(scalar_type);
     }
 
-    // Then copy it to device as a materialized DeviceBufferRef.
+    // Copy from the tensor to a bytes vector to enable async transfer.
+    std::vector<uint8_t> scalar_bytes(scalar_tensor.storage().nbytes());
+    std::memcpy(scalar_bytes.data(), scalar_tensor.data_ptr(),
+                scalar_tensor.storage().nbytes());
+    const void* scalar_data = scalar_bytes.data();
+
+    // Then asynchronously copy it to device as a materialized DeviceBufferRef.
+    TT_ASSIGN_OR_RETURN(mlir::ElementType element_type,
+                        ConvertTo<mlir::ElementType>(scalar_type));
     TT_ASSIGN_OR_RETURN(
         DeviceBufferRef buf_ref,
-        CopyCpuToTpuBuffer(scalar_tensor, /*non_blocking=*/true));
+        TpuMallocAndMemcpyHtoD(scalar_data, element_type, /*dimensions=*/{},
+                               /*backing_tensor=*/std::nullopt,
+                               std::move(scalar_bytes)));
     scalar_map.insert({hashable_scalar, buf_ref});
     return buf_ref;
   }
