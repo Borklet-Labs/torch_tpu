@@ -33,51 +33,49 @@ def _(mo):
     Explore tutorials, how-to guides, reference specifications, and performance
     optimization guides for TorchTPU on Google Cloud TPUs.
 
-    ## The Basics
+    ## Get started with TorchTPU
     *   [Introduction to TorchTPU](1_basics_1_intro_to_torchtpu.py): Why TorchTPU
         was created, what it provides, and how it can help you.
     *   [Get started with TorchTPU on a VM](1_basics_2_get_started_on_vm.py):
-        Setup TorchTPU on a TPU VM..
+        Setup TorchTPU on a TPU VM.
     *   [Get started with TorchTPU on GKE](1_basics_3_get_started_on_gke.py):
         Use TorchTPU through GKE.
-    *   [Run upstream PyTorch examples and tests](1_basics_4_run_upstream_pytorch_examples.py): 
+    *   [Run PyTorch examples and tests](1_basics_4_run_upstream_pytorch_examples.py): 
         TorchTPU is native PyTorch: how to run upstream PyTorch examples and tests with TorchTPU.
     *   [Running distributed workloads on GKE](1_basics_5_distributed_on_gke.py):
         Run distributed workloads on GKE.
-
-    ## TorchTPU in depth
-    *   [How TorchTPU works in depth](2_in_depth_1_how_torchtpu_works.py): The basic design top to bottom.
-    *   [TorchTPU and the TPU memory model](2_in_depth_2_torchtpu_and_tpu_memory_model.py): Using views effectively on TPU.
-    *   [Execution modes](2_in_depth_3_torchtpu_execution_modes.py): In depth detail of the execution modes TorchTPU supports. 
-    *   [Custom Kernels](2_in_depth_4_custom_kernels.py): How to write custom kernels for TorchTPU.
-    *   [Distributed](2_in_depth_5_distributed.py): In depth detail of distributed functionality for TorchTPU.
-
-    ## Practical Examples
-    *   [LLM inference end-to-end](3_practical_examples_1_llm_inference_end_to_end.py): Simple example of doing an LLM and getting some tokens back.
-    *   [LLM training end-to-end](3_practical_examples_2_llm_training_end_to_end.py): Simple example of training an LLM.
-    *   [FSDP best practices](3_practical_examples_3_fsdp_best_practices.py): Description of recommended approach to FSDP for TorchTPU.
-    *   [Adding custom kernels using Pallas](3_practical_examples_4_adding_custom_kernels_using_pallas.py): Integration of a pallas kernel.
-    *   [Distributed Pallas kernels](3_practical_examples_5_distributed_pallas_kernels.py): As above, but adding distributed functionality and showing how to map between Pytorch and Pallas.
-    *   [Bounded dynamism](3_practical_examples_6_bounded_dynamism.py): Basics of bounded dynamism and the limits of the current implementation.
-
-    ## Debugging and Performance Analysis
-    *   [Numerical precision](4_debugging_and_performance_analysis_1_numerical_precision.py):
-        Controlling precision in TorchTPU.
-    *   [XProf for TorchTPU](4_debugging_and_performance_analysis_2_xprof_for_torchtpu.py):
-        How to use XProf as a TorchTPU profiler.
-    *   [Getting better error information](4_debugging_and_performance_analysis_3_getting_better_error_information.py):
-        How to get better error information.
-    *   [Viewing compilation artifacts](4_debugging_and_performance_analysis_4_viewing_compilation_artifacts.py):
-        How to dump, view and understand compilation artifacts.
-
-    ## Case Studies
-    *   [FLUX Optimization](5_case_studies_1_flux_optimization.py): Example demonstrating how to identify and apply multiple optimizations on FLUX.
-    
-    ## Reference
+    *   [How TorchTPU works](2_in_depth_1_how_torchtpu_works.py): The basic design top to bottom.
+    *   [The TorchTPU memory model](2_in_depth_2_torchtpu_and_tpu_memory_model.py): Using views effectively on TPU.
+    *   [The TorchTPU execution model](2_in_depth_3_torchtpu_execution_modes.py): In depth detail of the execution modes TorchTPU supports. 
+    *   [Custom kernel support](2_in_depth_4_custom_kernels.py): How to write custom kernels for TorchTPU.
+    *   [Distributed support](2_in_depth_5_distributed.py): In depth detail of distributed functionality for TorchTPU.
     *   [Supported feature set](6_reference_1_supported_feature_set.py):
         Supported feature set table.
     *   [torch.tpu API](6_reference_2_torchtpu_api.py):
         In-depth API and environment variable reference.
+
+    ## Practical Examples
+    *   [LLM inference end-to-end](3_practical_examples_1_llm_inference_end_to_end.py): Simple example of doing an LLM and getting some tokens back.
+    *   [LLM training end-to-end](3_practical_examples_2_llm_training_end_to_end.py): Simple example of training an LLM.
+    *   [Using FSDP](3_practical_examples_3_fsdp_best_practices.py): Description of recommended approach to FSDP for TorchTPU.
+    *   [Write custom kernels with Pallas](3_practical_examples_4_adding_custom_kernels_using_pallas.py): Integration of a pallas kernel.
+    *   [Write custom communicating kernels with Pallas](3_practical_examples_5_distributed_pallas_kernels.py): As above, but adding distributed functionality and showing how to map between Pytorch and Pallas.
+    *   [Reduce recompilation from dynamic shapes](3_practical_examples_6_bounded_dynamism.py): Basics of bounded dynamism and the limits of the current implementation.
+    *   [Case study: FLUX Optimization](5_case_studies_1_flux_optimization.py): Example demonstrating how to identify and apply multiple optimizations on FLUX.
+    *   Case study: Muse Glimmer Optimization: Example demonstrating how to identify and apply multiple optimizations on Muse Glimmer.
+
+    ## Troubleshoot your workload
+    *   [Troubleshoot error messages](4_debugging_and_performance_analysis_3_getting_better_error_information.py):
+        How to get better error information.
+    *   [View compilation artifacts](4_debugging_and_performance_analysis_4_viewing_compilation_artifacts.py):
+        How to dump, view and understand compilation artifacts.
+    
+    
+    ## Analyze performance
+    *   [Numerical precision and parity](4_debugging_and_performance_analysis_1_numerical_precision.py):
+        Controlling precision in TorchTPU.
+    *   [Profile performance with XProf](4_debugging_and_performance_analysis_2_xprof_for_torchtpu.py):
+        How to use XProf as a TorchTPU profiler.
     """)
   return
 
