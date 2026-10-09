@@ -355,7 +355,10 @@ torch_tpu_py_test(
     use_precompile = False,
     deps = if_oss(
         [],
-        ["//perflab/models:qwen3_8"],
+        [
+            "//perflab/models:muse_glimmer",
+            "//perflab/models:qwen3_8",
+        ],
     ) + [
         ":base_test",
         ":cases",
@@ -455,7 +458,10 @@ torch_tpu_py_test(
     use_tcmalloc = True,
     deps = if_oss(
         [],
-        ["//perflab/models:qwen3_8"],
+        [
+            "//perflab/models:muse_glimmer",
+            "//perflab/models:qwen3_8",
+        ],
     ) + [
         ":base_test",
         ":cases",
@@ -510,7 +516,10 @@ torch_tpu_py_test(
     use_precompile = False,
     deps = if_oss(
         [],
-        ["//perflab/models:qwen3_8"],
+        [
+            "//perflab/models:muse_glimmer",
+            "//perflab/models:qwen3_8",
+        ],
     ) + [
         ":base_test",
         ":cases",
@@ -549,6 +558,7 @@ _DISTRIBUTED_RUNNER_MODEL_DEPS = if_oss(
     [],
     [
         "//perflab/distributed_models:qwen3_8",
+        "//perflab/distributed_models:muse_glimmer",
         "//perflab/distributed_models:synthetic",
     ],
 )

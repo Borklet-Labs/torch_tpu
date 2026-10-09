@@ -66,4 +66,19 @@ internal_target(
     ],
 )
 
+internal_target(
+    torch_tpu_py_library,
+    name = "muse_glimmer",
+    srcs = ["muse_glimmer.py"],
+    deps = [
+        "//perflab:compile",
+        "//perflab:context",
+        "//perflab:registry",
+        "//perflab:step_lib",
+        "//perflab:torch_device_ops",
+        "//perflab/model_utils:torchtitan_muse_glimmer",
+        "//shims/torch:pytorch",
+    ],
+)
+
 torch_tpu_package_end()

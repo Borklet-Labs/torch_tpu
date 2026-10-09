@@ -84,4 +84,29 @@ internal_target(
     ],
 )
 
+internal_target(
+    torch_tpu_py_library,
+    name = "torchtitan_muse_glimmer",
+    srcs = ["torchtitan_muse_glimmer.py"],
+    deps = [
+        "//shims/torch:pytorch",
+        "//shims/torchtitan/experiments/tpu:utils",  # buildcleaner: keep
+        "//shims/torchtitan/models",
+    ],
+)
+
+internal_target(
+    torch_tpu_py_test,
+    name = "torchtitan_muse_glimmer_test",
+    srcs = ["torchtitan_muse_glimmer_test.py"],
+    deps = [
+        ":torchtitan_muse_glimmer",
+        "//shims/absl_py/testing:absltest",
+        "//shims/torch:pytorch",
+        "//src/torch_tpu",
+        "//src/torch_tpu/_internal/utils:test_utils",
+        "//tests:seed_test_utils",
+    ],
+)
+
 torch_tpu_package_end()
