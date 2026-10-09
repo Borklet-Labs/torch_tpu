@@ -356,6 +356,30 @@ absl::Status VerifyMustMaterialize(
   return first_missing_node_error;
 }
 
+// Appends ready futures for an ExecutionTask's outputs to `futures`.
+//
+// All device-resident outputs of a single PjRtLoadedExecutable::Execute call
+// share the same underlying TPU execution completion event, while pinned-host
+// outputs additionally wait on their individual D2H transfer events.
+// Registering GetReadyFuture() on every output of a 400+ output compiled step
+// allocates 400+ promises, runs 400+ OnReady callbacks on execute_thread_, and
+// registers 400+ PJRT_Event_OnReady callbacks on the same TPU completion event.
+// Instead, await all pinned-host outputs plus the last non-pinned-host output.
+void AppendExecutionTaskReadyFutures(const ExecutionTask& execution_task,
+                                     std::vector<xla::Future<void>>& futures) {
+  const DeviceBufferRef* representative_device_output = nullptr;
+  for (const DeviceBufferRef& output : execution_task.outputs()) {
+    if (output.is_pinned_host()) {
+      futures.push_back(output.GetReadyFuture());
+    } else {
+      representative_device_output = &output;
+    }
+  }
+  if (representative_device_output != nullptr) {
+    futures.push_back(representative_device_output->GetReadyFuture());
+  }
+}
+
 // Processes a MaterializationTask, converting it into a sequence of
 // ExecutionTasks.
 std::vector<ExecutionTask> ProcessMaterializationTask(
@@ -380,15 +404,12 @@ std::vector<ExecutionTask> ProcessMaterializationTask(
       snapshot_to_materialize.snapshot_promise.Set(stages.first_error);
     } else {
       for (const auto& execution_task : stages.execution_tasks) {
-        for (const auto& output : execution_task.outputs()) {
-          snapshot_to_materialize.futures.push_back(output.GetReadyFuture());
-        }
+        AppendExecutionTaskReadyFutures(execution_task,
+                                        snapshot_to_materialize.futures);
       }
       if (snapshot_to_materialize.execution_task.has_value()) {
-        for (const auto& output :
-             snapshot_to_materialize.execution_task->outputs()) {
-          snapshot_to_materialize.futures.push_back(output.GetReadyFuture());
-        }
+        AppendExecutionTaskReadyFutures(*snapshot_to_materialize.execution_task,
+                                        snapshot_to_materialize.futures);
         stages.execution_tasks.push_back(
             std::move(*snapshot_to_materialize.execution_task));
       }
