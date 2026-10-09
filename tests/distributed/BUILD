@@ -796,20 +796,17 @@ torch_tpu_py_test(
 
 torch_tpu_py_test(
     name = "ragged_all_to_all_test",
+    timeout = "long",
     srcs = ["ragged_all_to_all_test.py"],
-    nonightly_oss = "This test requires TPU v7. Exclude this test from workflow nightly_tpu.yml running on TPU v6.",
-    nopresubmit = "Requires 4 tpu v7x chips.",
     shard_count = 3,
-    tags = [
+    tags = if_oss(
+        ["exclusive"],
+        [],
+    ) + [
         "noasan",  # TODO(b/497035517): fix the test in asan mode.
         "nomsan",  # TODO(b/497035517): fix the test in msan mode.
         "notsan",  # TODO(b/497035517): fix the test in tsan mode.
-        "nozapfhahn",  # Requires 4 TPU v7x chips and nopresubmit; excluded from Zapfhahn coverage.
-        "requires-tpu-v7x:4",
-        # Skip this test on TPU v5 and v6. It was written targeting TPU v7. Running it on v5 and v6
-        # will cause issues due to their different topology.
-        "fails-on-tpu-v5",
-        "fails-on-tpu-v6",
+        "requires-tpu-v5lite:8",
     ],
     deps = [
         ":distributed_utils",
