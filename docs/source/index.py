@@ -77,11 +77,7 @@ def _(mo):
     *   [Supported feature set](6_reference_1_supported_feature_set.py):
         Supported feature set table.
     *   [torch.tpu API](6_reference_2_torchtpu_api.py):
-        In-depth API reference.
-    *   [XProf for TorchTPU reference](6_reference_3_xprof_for_torchtpu_reference.py):
-        Reference doc for XProf features useful for TorchTPU, and summarising basic functionality.
-    *   [Environment variables](6_reference_4_environment_variables.py):
-        Reference doc for system-level environment variables.
+        In-depth API and environment variable reference.
     """)
   return
 

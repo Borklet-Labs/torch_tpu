@@ -69,9 +69,5 @@ optimization guides for TorchTPU on Google Cloud TPUs.
 
 *   [Supported feature set](./6_reference_1_supported_feature_set.md): Supported
     feature set table.
-*   [torch.tpu API](./6_reference_2_torchtpu_api.md): In-depth API reference.
-*   [XProf for TorchTPU reference](./6_reference_3_xprof_for_torchtpu_reference.md):
-    Reference doc for XProf features useful for TorchTPU, and summarising basic
-    functionality.
-*   [Environment variables](./6_reference_4_environment_variables.md): Reference
-    doc for system-level environment variables.
+*   [torch.tpu API](./6_reference_2_torchtpu_api.md): In-depth API and
+    environment variable reference.
