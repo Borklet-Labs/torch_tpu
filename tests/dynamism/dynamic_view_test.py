@@ -57,7 +57,7 @@ class DynamicViewTest(seed_test_utils.RepeatableTest):
 
     model_cpu = SlidingWindowCacheUpdate(sliding_window=128)
     model_tpu = SlidingWindowCacheUpdate(sliding_window=128)
-    compiled_model = torch.compile(model_tpu, backend="tpu")
+    compiled_model = torch.compile(model_tpu, backend="tpu", dynamic=None)
 
     with torch.no_grad():
       # Prefill (seq_len = 256 >= sliding_window 128):
