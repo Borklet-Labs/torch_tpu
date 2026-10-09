@@ -106,6 +106,44 @@ bool IsSupportedFlashAttentionShape(
   return has_batch && valid_head_dim;
 }
 
+bool ShouldPreferOverrideableSdp(const at::Tensor& query, const at::Tensor& key,
+                                 const at::Tensor& value,
+                                 const std::optional<at::Tensor>& attn_mask,
+                                 bool is_causal, bool overrideable_enabled,
+                                 bool has_dropout) {
+  if (!overrideable_enabled || has_dropout || query.ndimension() < 4 ||
+      key.ndimension() < 4 || value.ndimension() < 4 ||
+      HasDynamicShape(query) || HasDynamicShape(key) ||
+      HasDynamicShape(value) ||
+      (attn_mask.has_value() && HasDynamicShape(*attn_mask))) {
+    return false;
+  }
+  const int64_t num_head_q = query.size(query.ndimension() - 3);
+  const int64_t q_seq_len = query.size(query.ndimension() - 2);
+  const int64_t kv_seq_len = key.size(key.ndimension() - 2);
+  const int64_t v_seq_len = value.size(value.ndimension() - 2);
+  const int64_t head_dim = query.size(query.ndimension() - 1);
+  if (q_seq_len <= 0 || kv_seq_len <= 0 || v_seq_len <= 0) {
+    return false;
+  }
+  const bool requires_grad =
+      c10::GradMode::is_enabled() &&
+      (query.requires_grad() || key.requires_grad() || value.requires_grad());
+  const bool is_power_of_two_head_dim =
+      head_dim > 0 && (head_dim & (head_dim - 1)) == 0;
+  const bool has_2d_or_causal_mask =
+      is_causal || (attn_mask.has_value() && attn_mask->defined() &&
+                    attn_mask->ndimension() >= 2 &&
+                    attn_mask->size(attn_mask->ndimension() - 2) == q_seq_len &&
+                    attn_mask->size(attn_mask->ndimension() - 1) == kv_seq_len);
+  return (q_seq_len <= 128 && kv_seq_len <= 8192) ||
+         (is_power_of_two_head_dim && !requires_grad && q_seq_len <= 256 &&
+          kv_seq_len <= 256) ||
+         (has_2d_or_causal_mask && is_power_of_two_head_dim && !requires_grad &&
+          num_head_q >= 24 && q_seq_len == kv_seq_len && q_seq_len >= 1024 &&
+          q_seq_len <= 8192 && q_seq_len % 128 == 0);
+}
+
 }  // namespace
 
 // Torch's extensibility is pretty gross here due to weird SDPA
@@ -159,7 +197,11 @@ int64_t AtenFusedSdpChoice(const at::Tensor& query, const at::Tensor& key,
           if (supported_flash_dtype &&
               IsSupportedFlashAttentionShape(query, key, value, attn_mask) &&
               consistent_ranks && valid_flash_dropout && !mask_requires_grad) {
-            return static_cast<int64_t>(at::SDPBackend::cudnn_attention);
+            if (!ShouldPreferOverrideableSdp(query, key, value, attn_mask,
+                                             is_causal, overrideable_enabled,
+                                             has_dropout)) {
+              return static_cast<int64_t>(at::SDPBackend::cudnn_attention);
+            }
           } else {
             // Use c10::str rather than absl::StrCat as it will convert enums
             // into their string representation.

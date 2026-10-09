@@ -191,6 +191,39 @@ bool CanUseXlaOnlineSoftmax(mlir::MlirOp query, mlir::MlirOp key) {
          seq_len_kv <= kMaxOnlineSoftmaxSeqLen && head_dim >= kMinMxuHeadDim;
 }
 
+bool CanUseXlaOnlineSoftmaxForward(mlir::MlirOp query, mlir::MlirOp key,
+                                   bool has_mask_or_causal) {
+  if (!IsSdpaSequenceAlignedAndLarge(query, key)) {
+    return false;
+  }
+  if (CanUseXlaOnlineSoftmax(query, key)) {
+    return true;
+  }
+  if (!has_mask_or_causal) {
+    return false;
+  }
+  constexpr int64_t kMinMaskedOnlineSoftmaxSeqLen = 2048;
+  constexpr int64_t kMaxOnlineSoftmaxSeqLen = 8192;
+  constexpr int64_t kMinMaskedOnlineSoftmaxHeadDim = 64;
+
+  const auto query_shape = GetTensorTypeOrDie(query).getShape();
+  const auto key_shape = GetTensorTypeOrDie(key).getShape();
+  const int query_rank = query_shape.size();
+  const int key_rank = key_shape.size();
+  const int64_t seq_len_q = query_shape[query_rank - 2];
+  const int64_t seq_len_kv = key_shape[key_rank - 2];
+  const int64_t head_dim = query_shape[query_rank - 1];
+  const bool is_power_of_two_head_dim =
+      head_dim >= kMinMaskedOnlineSoftmaxHeadDim &&
+      (head_dim & (head_dim - 1)) == 0;
+
+  return is_power_of_two_head_dim &&
+         seq_len_q >= kMinMaskedOnlineSoftmaxSeqLen &&
+         seq_len_kv >= kMinMaskedOnlineSoftmaxSeqLen &&
+         seq_len_q <= kMaxOnlineSoftmaxSeqLen &&
+         seq_len_kv <= kMaxOnlineSoftmaxSeqLen;
+}
+
 mlir::MlirOp ConvertElementTypeIfNeeded(mlir::MlirOp op,
                                         mlir::Type target_type) {
   if (GetTensorTypeOrDie(op).getElementType() != target_type) {
@@ -198,7 +231,6 @@ mlir::MlirOp ConvertElementTypeIfNeeded(mlir::MlirOp op,
   }
   return op;
 }
-
 absl::StatusOr<AttentionPrepResults> PrepareAttentionLogits(
     mlir::MlirBuilder& builder, mlir::MLIRContext* context, mlir::MlirOp query,
     mlir::MlirOp key, mlir::MlirOp value, std::optional<mlir::MlirOp> mask,
@@ -510,15 +542,16 @@ absl::StatusOr<MlirOpResults<2>> BuildScaledDotProductFusedAttentionShloOp(
   }
 
   // Softmax along the last dimension (Lk). Emit canonical Div when XLA's
-  // online-softmax pattern matcher applies (or when sequences are unaligned),
-  // and 3D reciprocal multiplication otherwise (e.g. ultra-long sequences >8192
-  // or head_dim < 128 where online-softmax does not match or underutilizes
-  // MXU).
+  // online-softmax pattern matcher applies (including masked/causal attention
+  // with power-of-two head_dim >= 64 and sequences in [2048, 8192]), or when
+  // sequences are unaligned, and 3D reciprocal multiplication otherwise (e.g.
+  // ultra-long sequences > 8192 or unmasked head_dim < 128).
   mlir::MlirOp exp_val = mlir::stablehlo::Exp(logits);
   mlir::MlirOp sum_exp = SumReduce(builder, exp_val, /*dimension=*/3);
   mlir::MlirOp softmax;
   if (IsSdpaSequenceAlignedAndLarge(query_mlir, key_mlir) &&
-      !CanUseXlaOnlineSoftmax(query_mlir, key_mlir)) {
+      !CanUseXlaOnlineSoftmaxForward(query_mlir, key_mlir,
+                                     is_causal || mask_mlir.has_value())) {
     auto one = MakeConstantLike(sum_exp, 1.0);
     mlir::MlirOp inv_sum_exp = mlir::stablehlo::Div(one, sum_exp);
     TT_ASSIGN_OR_RETURN(mlir::MlirOp inv_sum_exp_broadcasted,
