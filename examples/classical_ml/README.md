@@ -73,10 +73,27 @@ python3 -c "import torch, torch_tpu; print(f'PyTorch: {torch.__version__} | Acce
 
 ### Step 2: Run Training & Benchmark
 
+#### From the Command Line (TPU VM or Container Shell)
+
 Execute the training benchmark script:
 
 ```bash
-python3 train_classical_ml_torchtpu.py \
+python3 ./train_classical_ml_torchtpu.py \
+    --log_dir=./runs/tpu_classical_ml \
+    --batch_size=256 \
+    --micro_batches=8 \
+    --epochs=3
+```
+
+#### Running on GKE
+
+To run this example on a single-device TPU v7x pod on GKE, update the container
+`command:` in `examples/simple_pytorch/torchtpu_singledevice_slice_job.yaml` to
+run:
+
+```bash
+cd /workspace/examples/classical_ml/
+python3 ./train_classical_ml_torchtpu.py \
     --log_dir=./runs/tpu_classical_ml \
     --batch_size=256 \
     --micro_batches=8 \

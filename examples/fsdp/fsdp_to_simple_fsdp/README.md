@@ -115,11 +115,33 @@ def train_step(model, x, y, world_size):
 
 ## Running the Example
 
+### 1. From the Command Line (TPU VM or Container Shell)
+
 From this directory, run the 8-core TPU launcher script:
 
 ```bash
-./run_fsdp_to_simple_fsdp.sh
+bash ./run_fsdp_to_simple_fsdp.sh
 ```
+
+### 2. Running on GKE
+
+To run this example on a single-host 4-chip (8-core) TPU v7x slice on GKE,
+update the container `command:` in
+`examples/tensor_parallel/torchtpu_singlehost_slice_job.yaml` to run:
+
+```bash
+cd /workspace/examples/fsdp/fsdp_to_simple_fsdp/
+bash ./run_fsdp_to_simple_fsdp.sh
+```
+
+Then:
+
+1.  If you haven't set up your cluster yet, complete the **One-time setup**
+    section in
+    [Get started with TorchTPU on GKE](../../../docs/markdown/1_basics_3_get_started_on_gke.md).
+2.  Submit the job by following the **Single-Host Workload Execution (4-chip /
+    8-device slice)** section in
+    [Running distributed workloads on GKE](../../../docs/markdown/1_basics_5_distributed_on_gke.md).
 
 ## Files in This Directory
 

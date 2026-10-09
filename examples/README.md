@@ -25,16 +25,28 @@ print(f"Result on TPU: {y}")
 
 For `torch.compile()` usage, refer to `compile/example/simple.py`.
 
-For distributed training examples, refer to `examples/distributed/`.
+For distributed training examples, refer to `examples/tensor_parallel/` and
+`examples/fsdp/`.
 
-For model inference examples, refer to `examples/`.
+## Available Examples
 
-## Available Models
-
--   simple_nn
+-   [simple_pytorch](simple_pytorch/README.md): Minimal single-device PyTorch
+    example on TPU, plus reference Kueue and single-device GKE manifests.
 -   [classical_ml](classical_ml/README.md): Classical ML (MLP) training and
     full-stack profiling (TensorBoard + XProf) with eager vs. `torch.compile`
     execution.
+-   [tensor_parallel/manual](tensor_parallel/manual/README.md): Manual
+    Megatron-LM style Tensor Parallelism using explicit collective operations,
+    with single-host and multi-host GKE manifests.
+-   [tensor_parallel/dtensor_wrapped](tensor_parallel/dtensor_wrapped/README.md):
+    Tensor Parallelism using PyTorch `DTensor` and `parallelize_module`
+    wrappers.
+-   [fsdp/manual](fsdp/manual/README.md): Manual Fully Sharded Data Parallel
+    ("DIY FSDP") using explicit functional collectives, activation
+    checkpointing, and `torch.compile`.
+-   [fsdp/fsdp_to_simple_fsdp](fsdp/fsdp_to_simple_fsdp/README.md): Side-by-side
+    comparison and migration guide from PyTorch FSDPv2 (`fully_shard`) to
+    `SimpleFSDP` (`data_parallel`).
 
 ## Benchmarking
 

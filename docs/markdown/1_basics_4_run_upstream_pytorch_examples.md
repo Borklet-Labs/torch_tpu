@@ -3,3 +3,178 @@ torch_tpu_version: 0.1.1.dev20260922
 ---
 
 # Running upstream PyTorch examples and tests
+
+TorchTPU is a native PyTorch backend (`device="tpu"`, distributed
+`backend="tpu_dist"`), which means you can run both the bundled examples in
+`examples/` and upstream PyTorch scripts with minimal changes.
+
+This guide explains what you need to do to package, configure, and run TorchTPU
+and upstream PyTorch examples on Google Kubernetes Engine (GKE)—which is
+required for TPU v7x and newer generations—and links to related tutorials for
+each stage of the workflow.
+
+## Related tutorials and reference guides
+
+*   [Introduction to TorchTPU](./1_basics_1_intro_to_torchtpu.md): Overview of
+    TorchTPU's architecture, execution modes, and native PyTorch integration.
+*   [Get started with TorchTPU on a VM](./1_basics_2_get_started_on_vm.md):
+    Installing and running TorchTPU directly on a single Cloud TPU VM (such as
+    v6e).
+*   [Get started with TorchTPU on GKE](./1_basics_3_get_started_on_gke.md):
+    One-time GKE cluster credentials, Artifact Registry, Docker, and Kueue
+    setup, plus launching a single-device workload.
+*   [Running distributed workloads on GKE](./1_basics_5_distributed_on_gke.md):
+    Launching single-host (`Job`) and multi-host (`JobSet`) distributed
+    workloads on GKE.
+*   [FSDP best practices](./3_practical_examples_3_fsdp_best_practices.md):
+    Recommended patterns for Fully Sharded Data Parallel (FSDP) training on
+    TorchTPU.
+*   [`torch.tpu` API reference](./6_reference_2_torchtpu_api.md) and
+    [Environment variables](./6_reference_4_environment_variables.md): Reference
+    documentation for `torch.tpu` APIs and runtime environment variables.
+
+## End-to-end workflow for running examples on GKE
+
+Running any example on a GKE TPU cluster follows five steps:
+
+1.  **Complete one-time GKE and Kueue setup** (environment variables, cluster
+    credentials, and the Kueue `multislice-queue`).
+2.  **Choose or build your Docker container image** (which packages `examples/`
+    under `/workspace/examples/`).
+3.  **Select a Kubernetes manifest template** matching your target topology
+    (single-device `Job`, single-host 4-chip `Job`, or multi-host `JobSet`).
+4.  **Configure the container `command:`** in the manifest to point to the
+    example script you want to run.
+5.  **Patch placeholders and submit with `kubectl`** (`<DOCKER_IMAGE>` and
+    `<NODEPOOL_NAME>`), then monitor pod logs.
+
+--------------------------------------------------------------------------------
+
+### Step 1: Complete one-time GKE and Kueue setup
+
+Go to [Get started with TorchTPU on GKE](./1_basics_3_get_started_on_gke.md) and
+complete its **One-time setup** section. When you are done, you will have:
+
+*   Your cluster environment variables exported (`CLUSTER`, `ZONE_NAME`,
+    `NODEPOOL_NAME`, `PROJECT`, `TORCH_TPU_SRC`, `ARTIFACT_REGISTRY_URL`, and
+    `DOCKER_IMAGE`).
+*   `kubectl` credentials for your cluster.
+*   The Kueue `multislice-queue` created from
+    `examples/simple_pytorch/torchtpu_kueue_cohort_setup.yaml`.
+
+You only need to do this once per cluster.
+
+--------------------------------------------------------------------------------
+
+### Step 2: Use the prebuilt image or build a custom Docker image
+
+The default nightly container image
+(`us-docker.pkg.dev/ml-oss-artifacts-transient/torch-tpu-docker-container/torch-tpu:nightly-latest`)
+already includes the repository's `examples/` directory at
+`/workspace/examples/` inside the container. If you are running an unmodified
+example, you can skip this step.
+
+If you **modify an existing example**, **add your own upstream PyTorch script**
+into `$TORCH_TPU_SRC/examples/`, or **build `torch_tpu` from local source**,
+build and push your own image by following the **[Optional] Build TorchTPU
+docker** section in
+[Get started with TorchTPU on GKE](./1_basics_3_get_started_on_gke.md).
+
+> [!TIP] `docker/build_image_multistage.sh` automatically copies
+> `$TORCH_TPU_SRC/examples` into `/workspace/examples/` in the image. Any script
+> or directory you place under `examples/` before building will be available at
+> `/workspace/examples/<your_dir>` on the GKE pod.
+
+--------------------------------------------------------------------------------
+
+### Step 3: Choose a Kubernetes manifest template
+
+The `examples/` directory provides three reference Kubernetes manifests covering
+the most common TPU v7x slice shapes:
+
+| Workload Type     | Manifest Path                                                   | TPU Topology         | `TORCH_TPU_TOPOLOGY` | Description                                |
+:                   :                                                                 : (`gke-tpu-topology`) :                      :                                            :
+| :---------------- | :-------------------------------------------------------------- | :------------------- | :------------------- | :----------------------------------------- |
+| **Single-Device** | `examples/simple_pytorch/torchtpu_singledevice_slice_job.yaml`  | `2x2x1`              | `"1,1,1,1"`          | Runs a single Python process on 1 TPU core |
+: (1 chip / 1 core) :                                                                 :                      :                      : (see [Get started with TorchTPU on         :
+:                   :                                                                 :                      :                      : GKE](./1_basics_3_get_started_on_gke.md)). :
+| **Single-Host     | `examples/tensor_parallel/torchtpu_singlehost_slice_job.yaml`   | `2x2x1`              | `"2,2,1,2"`          | Runs 8 distributed ranks (`WORLD_SIZE=8`)  |
+: Distributed** (4  :                                                                 :                      :                      : on a single 4-chip host via `torchrun`     :
+: chips / 8 cores)  :                                                                 :                      :                      : (see [Running distributed workloads on     :
+:                   :                                                                 :                      :                      : GKE](./1_basics_5_distributed_on_gke.md)). :
+| **Multi-Host      | `examples/tensor_parallel/torchtpu_multihost_slice_jobset.yaml` | `4x4x4`              | `"4,4,4,2"`          | Kubernetes `JobSet` coordinating 16 worker |
+: Distributed** (64 :                                                                 :                      :                      : pods across a 64-chip slice (see [Running  :
+: chips / 128       :                                                                 :                      :                      : distributed workloads on                   :
+: cores)            :                                                                 :                      :                      : GKE](./1_basics_5_distributed_on_gke.md)). :
+
+All three manifests come pre-configured with `kueue.x-k8s.io/queue-name:
+multislice-queue`, `cloud.google.com/gke-tpu-accelerator: tpu7x`, and `/dev/shm`
+(`emptyDir: Medium: Memory`) for multi-process shared memory. To target other
+TPU slice topologies, update `cloud.google.com/gke-tpu-slice-topology`,
+`cloud.google.com/gke-tpu-topology`, and `TORCH_TPU_TOPOLOGY` in the manifest
+(for supported topologies and chip layouts, see
+[TPU VM system architecture](https://docs.cloud.google.com/tpu/docs/system-architecture-tpu-vm)
+and
+[TPU machine types and topologies](https://docs.cloud.google.com/compute/docs/tpus/tpu-machines)).
+
+--------------------------------------------------------------------------------
+
+### Step 4: Configure the manifest `command:` to run different examples
+
+Inside the container, all bundled examples from the repository's `examples/`
+directory (`$TORCH_TPU_SRC/examples/`, indexed in `examples/README.md`) reside
+under `/workspace/examples/`. Under each example directory, there is a
+`README.md` with instructions on how to launch that example—both directly from
+the command line and by updating the `command:` section of the appropriate
+Kubernetes manifest to `cd` into `/workspace/examples/<example_dir>/` and run
+its launch script.
+
+--------------------------------------------------------------------------------
+
+### Step 5: Patch placeholders, submit, and inspect logs
+
+Submitting works the same way for every example; only the manifest changes.
+Follow the section that matches the manifest you chose in Step 3:
+
+*   **Single-device** (`torchtpu_singledevice_slice_job.yaml`): follow
+    **Single-Host Workload Execution (1-chip / 1-device slice)** in
+    [Get started with TorchTPU on GKE](./1_basics_3_get_started_on_gke.md).
+*   **Single-host distributed** (`torchtpu_singlehost_slice_job.yaml`): follow
+    **Single-Host Workload Execution (4-chip / 8-device slice)** in
+    [Running distributed workloads on GKE](./1_basics_5_distributed_on_gke.md).
+*   **Multi-host distributed** (`torchtpu_multihost_slice_jobset.yaml`): follow
+    **Multi-Host Workload Execution (64-chip / 128-device slice)** in
+    [Running distributed workloads on GKE](./1_basics_5_distributed_on_gke.md).
+
+Each of those sections shows how to fill in the `<DOCKER_IMAGE>` and
+`<NODEPOOL_NAME>` placeholders, apply the manifest with `kubectl`, and check the
+job status.
+
+> [!NOTE] Kubernetes Jobs can't be changed after they are created. To re-run a
+> manifest with a different `command:` or image, delete the old job first with
+> `kubectl delete -f <manifest>`, then apply the manifest again.
+
+--------------------------------------------------------------------------------
+
+## Porting an upstream PyTorch example to run on GKE
+
+Because TorchTPU is a native PyTorch backend, getting an upstream PyTorch
+example or test running on GKE is a **minimal process**:
+
+*   **No code changes needed for non-distributed examples**: For non-distributed
+    examples, no code changes should be needed to make the code work.
+*   **Examples that work with devices work out of the box**: Users should expect
+    any upstream example that is written to work with standard PyTorch devices
+    (for example, via `torch.accelerator` or `torch.device`) to work with
+    TorchTPU.
+*   **Non-deprecated examples are expected to work**: Users should expect
+    actively maintained, non-deprecated upstream PyTorch examples and modern
+    APIs to work out of the box (see
+    [Supported feature set](./6_reference_1_supported_feature_set.md) and
+    [Known limitations](./2_in_depth_2_known_limitations.md) for details).
+*   **Distributed examples may need minor modifications**: Some upstream
+    distributed examples are overtuned to other devices (such as GPU- or
+    NCCL-specific backends, flags, or sharding assumptions) and may require
+    modification to run on TPU (see
+    [Running distributed workloads on GKE](./1_basics_5_distributed_on_gke.md)
+    and [FSDP best practices](./3_practical_examples_3_fsdp_best_practices.md)).

@@ -253,13 +253,22 @@ You can run the manual FSDP worker across 8 TPU cores using the shell launcher
 (`torchrun`):
 
 ```bash
-./launch.sh
+bash ./launch.sh
 ```
 
 Or via the Python elastic launcher:
 
 ```bash
-python3 launch.py
+python3 ./launch.py
+```
+
+To run on a single-host 4-chip (8-core) TPU v7x slice on GKE, update the
+container `command:` in
+`examples/tensor_parallel/torchtpu_singlehost_slice_job.yaml` to run:
+
+```bash
+cd /workspace/examples/fsdp/manual/
+bash ./launch.sh
 ```
 
 ### Expected Output
