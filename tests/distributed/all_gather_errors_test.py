@@ -28,7 +28,6 @@ from tests.distributed import distributed_utils
 
 
 def run_all_gather_dtype_error() -> None:
-  dist.init_process_group(backend="tpu_dist")
   world_size = int(os.environ["WORLD_SIZE"])
   input_tensor = torch.ones((1, 2), dtype=torch.float64, device="tpu")
   output_tensors = [
@@ -42,7 +41,6 @@ def run_all_gather_dtype_error() -> None:
 
 
 def run_all_gather_wrong_num_tensors() -> None:
-  dist.init_process_group(backend="tpu_dist")
   input_tensor = torch.ones((1, 2), dtype=torch.float32, device="tpu")
   output_tensors = [torch.empty((1, 2), dtype=torch.float32, device="tpu")]
   # This message comes from native PyTorch.
@@ -55,7 +53,6 @@ def run_all_gather_wrong_num_tensors() -> None:
 
 
 def run_all_gather_dispatch_failure() -> None:
-  dist.init_process_group(backend="tpu_dist")
   world_size = int(os.environ["WORLD_SIZE"])
   input_tensor = torch.ones((1, 2), dtype=torch.float32, device="tpu")
   output_tensors = [
@@ -65,34 +62,31 @@ def run_all_gather_dispatch_failure() -> None:
   tt_testing.set_op_dispatch_failure(
       "distributed.all_gather", "forced dispatch failure"
   )
+  try:
+    expected_msg = re.compile(
+        r"distributed\.all_gather\(\): forced dispatch failure.*"
+    )
+    with et.assert_raises_message(RuntimeError, tpu=expected_msg):
+      dist.all_gather(output_tensors, input_tensor)
+  finally:
+    tt_testing.set_op_dispatch_failure("", "")
 
-  expected_msg = re.compile(
-      r"distributed\.all_gather\(\): forced dispatch failure.*"
-  )
-  with et.assert_raises_message(RuntimeError, tpu=expected_msg):
-    dist.all_gather(output_tensors, input_tensor)
+
+def run_all_gather_errors() -> None:
+  dist.init_process_group(backend="tpu_dist")
+  run_all_gather_dtype_error()
+  run_all_gather_wrong_num_tensors()
+  run_all_gather_dispatch_failure()
 
 
 class AllGatherErrorsTest(et.TpuOnlyDistributedErrorTestBase):
 
   _world_size = 8
 
-  def test_invalid_dtype(self):
+  def test_all_gather_errors(self):
     distributed_utils.dist_run(
         nproc_per_node=self._world_size,
-        fn=run_all_gather_dtype_error,
-    )
-
-  def test_wrong_num_of_tensors(self):
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=run_all_gather_wrong_num_tensors,
-    )
-
-  def test_dispatch_failure(self):
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=run_all_gather_dispatch_failure,
+        fn=run_all_gather_errors,
     )
 
 

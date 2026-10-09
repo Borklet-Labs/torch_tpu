@@ -45,18 +45,21 @@ from tests.distributed import distributed_utils
 
 def run_all_reduce_error() -> None:
   """Tests all-reduce error."""
-  dist.init_process_group(backend="tpu_dist")
   x = torch.tensor([0.0, 1.0, 2.0, 3.0], dtype=torch.float32, device="tpu")
-  # BAND is only supported for integer tensors. This should raise RuntimeError.
-  handle = torch.distributed.all_reduce(
-      x, op=torch.distributed.ReduceOp.BAND, async_op=True
+  expected_msg = (
+      "distributed.all_reduce(): expected the tensors dtype to be integer on"
+      " bitwise reduction ops (BAND, BOR, BXOR), got float32"
   )
-  handle.wait()
+  # BAND is only supported for integer tensors. This should raise RuntimeError.
+  with et.assert_raises_message(RuntimeError, tpu=expected_msg):
+    handle = torch.distributed.all_reduce(
+        x, op=torch.distributed.ReduceOp.BAND, async_op=True
+    )
+    handle.wait()
 
 
 def run_all_gather_tensor_wrong_number_output_dimensions() -> None:
   """Tests incorrect output dimensionality."""
-  dist.init_process_group(backend="tpu_dist")
   world_size = int(os.environ["WORLD_SIZE"])
   x = torch.ones((2, 2), device="tpu", dtype=torch.float32)
   output = torch.empty((world_size, 2, 2, 1), device="tpu", dtype=torch.float32)
@@ -72,7 +75,6 @@ def run_all_gather_tensor_wrong_number_output_dimensions() -> None:
 
 def run_all_gather_tensor_wrong_concat_dimension() -> None:
   """Tests incorrect size along concatenation dimension."""
-  dist.init_process_group(backend="tpu_dist")
   world_size = int(os.environ["WORLD_SIZE"])
   x = torch.ones((2, 2), device="tpu", dtype=torch.float32)
   output = torch.empty(
@@ -91,7 +93,6 @@ def run_all_gather_tensor_wrong_concat_dimension() -> None:
 
 def run_all_gather_tensor_wrong_stack_dimension() -> None:
   """Tests incorrect size along stacking dimension."""
-  dist.init_process_group(backend="tpu_dist")
   world_size = int(os.environ["WORLD_SIZE"])
   x = torch.ones((2, 2), device="tpu", dtype=torch.float32)
   output = torch.empty(
@@ -109,7 +110,6 @@ def run_all_gather_tensor_wrong_stack_dimension() -> None:
 
 def run_all_gather_tensor_stack_mismatched_dim() -> None:
   """Tests incorrect size along a non-stacking dimension."""
-  dist.init_process_group(backend="tpu_dist")
   world_size = int(os.environ["WORLD_SIZE"])
   x = torch.ones((2, 2), device="tpu", dtype=torch.float32)
   output = torch.empty((world_size, 3, 2), device="tpu", dtype=torch.float32)
@@ -124,7 +124,6 @@ def run_all_gather_tensor_stack_mismatched_dim() -> None:
 
 def run_all_gather_tensor_concat_mismatched_dim() -> None:
   """Tests incorrect size along a non-concatenation dimension."""
-  dist.init_process_group(backend="tpu_dist")
   world_size = int(os.environ["WORLD_SIZE"])
   x = torch.ones((2, 2), device="tpu", dtype=torch.float32)
   output = torch.empty((world_size * 2, 3), device="tpu", dtype=torch.float32)
@@ -139,7 +138,6 @@ def run_all_gather_tensor_concat_mismatched_dim() -> None:
 
 def run_all_gather_tensor_wrong_scalar_dimension() -> None:
   """Tests incorrect size when gathering scalars."""
-  dist.init_process_group(backend="tpu_dist")
   world_size = int(os.environ["WORLD_SIZE"])
   x = torch.tensor(1.0, device="tpu", dtype=torch.float32)
   output = torch.empty(
@@ -155,7 +153,6 @@ def run_all_gather_tensor_wrong_scalar_dimension() -> None:
 
 
 def run_all_gather_uneven_output_sizes() -> None:
-  dist.init_process_group(backend="tpu_dist")
   rank = int(os.environ["RANK"])
   world_size = int(os.environ["WORLD_SIZE"])
   x = torch.full(
@@ -174,7 +171,6 @@ def run_all_gather_uneven_output_sizes() -> None:
 
 
 def run_all_gather_mismatch_input_size() -> None:
-  dist.init_process_group(backend="tpu_dist")
   world_size = int(os.environ["WORLD_SIZE"])
   x = torch.ones((2, 2), device="tpu", dtype=torch.float32)
   outputs = [
@@ -191,7 +187,6 @@ def run_all_gather_mismatch_input_size() -> None:
 
 
 def run_all_gather_mismatch_dtype() -> None:
-  dist.init_process_group(backend="tpu_dist")
   world_size = int(os.environ["WORLD_SIZE"])
   x = torch.ones((3, 2), device="tpu", dtype=torch.int32)
   outputs = [
@@ -210,7 +205,6 @@ def run_all_gather_mismatch_dtype() -> None:
 
 def run_reduce_scatter_errors() -> None:
   """Tests reduce-scatter functionality with invalid inputs."""
-  dist.init_process_group(backend="tpu_dist")
   world_size = int(os.environ["WORLD_SIZE"])
 
   # Helps the test look nicer.
@@ -266,7 +260,6 @@ def run_reduce_scatter_errors() -> None:
 
 def run_reduce_scatter_tensor_errors() -> None:
   """Tests reduce_scatter_tensor with invalid inputs."""
-  dist.init_process_group(backend="tpu_dist")
   world_size = int(os.environ["WORLD_SIZE"])
 
   output = torch.zeros((3, 4, 5), device="tpu")
@@ -283,7 +276,6 @@ def run_reduce_scatter_tensor_errors() -> None:
 
 def run_gather_wrong_input_size() -> None:
   """Tests gather failure when input_tensors.size() != 1."""
-  dist.init_process_group(backend="tpu_dist")
   dst = 0
   pg = dist.group.WORLD
   opts = dist.GatherOptions()
@@ -296,7 +288,6 @@ def run_gather_wrong_input_size() -> None:
 
 def run_gather_wrong_output_list_size() -> None:
   """Tests gather failure when output_tensors.size() != 1 on root."""
-  dist.init_process_group(backend="tpu_dist")
   rank = int(os.environ["RANK"])
   dst = 0
   pg = dist.group.WORLD
@@ -317,7 +308,6 @@ def run_gather_wrong_output_list_size() -> None:
 
 def run_gather_wrong_output_tensor_count() -> None:
   """Tests gather failure when output_tensor_list.size() != world_size."""
-  dist.init_process_group(backend="tpu_dist")
   rank = int(os.environ["RANK"])
   world_size = int(os.environ["WORLD_SIZE"])
   dst = 0
@@ -338,7 +328,6 @@ def run_gather_wrong_output_tensor_count() -> None:
 
 def run_gather_mismatch_input_size() -> None:
   """Tests gather failure when input shape != output shape."""
-  dist.init_process_group(backend="tpu_dist")
   rank = int(os.environ["RANK"])
   world_size = int(os.environ["WORLD_SIZE"])
   dst = 0
@@ -358,7 +347,6 @@ def run_gather_mismatch_input_size() -> None:
 
 def run_gather_non_uniform_output_shapes() -> None:
   """Tests gather failure when output tensors have different shapes."""
-  dist.init_process_group(backend="tpu_dist")
   rank = int(os.environ["RANK"])
   world_size = int(os.environ["WORLD_SIZE"])
   dst = 0
@@ -378,7 +366,6 @@ def run_gather_non_uniform_output_shapes() -> None:
 
 def run_gather_output_on_non_root() -> None:
   """Tests gather failure when output list is provided on non-root."""
-  dist.init_process_group(backend="tpu_dist")
   rank = int(os.environ["RANK"])
   world_size = int(os.environ["WORLD_SIZE"])
   dst = 0
@@ -403,6 +390,29 @@ def run_gather_output_on_non_root() -> None:
     gather_list = [torch.zeros(2, device="tpu") for _ in range(world_size)]
     with et.assert_raises_message(RuntimeError, tpu=expected_msg):
       pg.gather([gather_list], [tensor], opts)
+
+
+def run_collective_validation_errors() -> None:
+  """Runs synchronous collective input validation error checks."""
+  dist.init_process_group(backend="tpu_dist")
+  run_all_reduce_error()
+  run_all_gather_tensor_wrong_number_output_dimensions()
+  run_all_gather_tensor_wrong_concat_dimension()
+  run_all_gather_tensor_wrong_stack_dimension()
+  run_all_gather_tensor_stack_mismatched_dim()
+  run_all_gather_tensor_concat_mismatched_dim()
+  run_all_gather_tensor_wrong_scalar_dimension()
+  run_all_gather_uneven_output_sizes()
+  run_all_gather_mismatch_input_size()
+  run_all_gather_mismatch_dtype()
+  run_reduce_scatter_errors()
+  run_reduce_scatter_tensor_errors()
+  run_gather_wrong_input_size()
+  run_gather_wrong_output_list_size()
+  run_gather_wrong_output_tensor_count()
+  run_gather_mismatch_input_size()
+  run_gather_non_uniform_output_shapes()
+  run_gather_output_on_non_root()
 
 
 def run_conflicting_device_assignments_error() -> None:
@@ -605,118 +615,11 @@ def _remove_node_local_store_file() -> None:
 class CollectiveErrorsTest(et.TpuOnlyDistributedErrorTestBase):
   _world_size = 8
 
-  def test_all_gather_tensor_wrong_number_output_dimensions(self):
+  def test_collective_validation_errors(self):
     distributed_utils.dist_run(
         nproc_per_node=self._world_size,
-        fn=run_all_gather_tensor_wrong_number_output_dimensions,
+        fn=run_collective_validation_errors,
     )
-
-  def test_all_gather_tensor_wrong_concat_dimension(self):
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=run_all_gather_tensor_wrong_concat_dimension,
-    )
-
-  def test_all_gather_tensor_wrong_stack_dimension(self):
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=run_all_gather_tensor_wrong_stack_dimension,
-    )
-
-  def test_all_gather_tensor_stack_mismatched_dim(self):
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=run_all_gather_tensor_stack_mismatched_dim,
-    )
-
-  def test_all_gather_tensor_concat_mismatched_dim(self):
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=run_all_gather_tensor_concat_mismatched_dim,
-    )
-
-  def test_all_gather_tensor_wrong_scalar_dimension(self):
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=run_all_gather_tensor_wrong_scalar_dimension,
-    )
-
-  def test_all_gather_uneven_output_sizes(self):
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=run_all_gather_uneven_output_sizes,
-    )
-
-  def test_all_gather_mismatch_input_size(self):
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=run_all_gather_mismatch_input_size,
-    )
-
-  def test_all_gather_mismatch_dtype(self):
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=run_all_gather_mismatch_dtype,
-    )
-
-  def test_reduce_scatter_errors(self):
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=run_reduce_scatter_errors,
-    )
-
-  def test_reduce_scatter_tensor_errors(self):
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=run_reduce_scatter_tensor_errors,
-    )
-
-  def test_gather_wrong_input_size(self):
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=run_gather_wrong_input_size,
-    )
-
-  def test_gather_wrong_output_list_size(self):
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=run_gather_wrong_output_list_size,
-    )
-
-  def test_gather_wrong_output_tensor_count(self):
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=run_gather_wrong_output_tensor_count,
-    )
-
-  def test_gather_mismatch_input_size(self):
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=run_gather_mismatch_input_size,
-    )
-
-  def test_gather_non_uniform_output_shapes(self):
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=run_gather_non_uniform_output_shapes,
-    )
-
-  def test_gather_output_on_non_root(self):
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=run_gather_output_on_non_root,
-    )
-
-  def test_all_reduce_error(self):
-    expected_msg = (
-        "distributed.all_reduce(): expected the tensors dtype to be integer on"
-        " bitwise reduction ops (BAND, BOR, BXOR), got float32"
-    )
-    with et.assert_subprocess_raises_message(RuntimeError, expected_msg):
-      distributed_utils.dist_run(
-          nproc_per_node=self._world_size,
-          fn=run_all_reduce_error,
-      )
 
   def test_conflicting_device_assignments_error(self):
     distributed_utils.dist_run(

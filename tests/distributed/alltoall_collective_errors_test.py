@@ -28,7 +28,6 @@ from tests.distributed import distributed_utils
 
 
 def run_all_to_all_single_dtype_error() -> None:
-  dist.init_process_group(backend="tpu_dist")
   input_tensor = torch.ones((1, 2), dtype=torch.float64, device="tpu")
   output_tensor = torch.empty((1, 2), dtype=torch.int64, device="tpu")
   # This message comes from native PyTorch.
@@ -38,7 +37,6 @@ def run_all_to_all_single_dtype_error() -> None:
 
 
 def run_all_to_all_single_invalid_tensor_size_error() -> None:
-  dist.init_process_group(backend="tpu_dist")
   input_tensor = torch.ones((1, 2), dtype=torch.int64, device="tpu")
   output_tensor = torch.empty((1, 2), dtype=torch.int64, device="tpu")
   expected_msg = (
@@ -50,7 +48,6 @@ def run_all_to_all_single_invalid_tensor_size_error() -> None:
 
 
 def run_all_to_all_single_invalid_split_sizes_size_error() -> None:
-  dist.init_process_group(backend="tpu_dist")
   input_tensor = torch.ones((8, 2), dtype=torch.int64, device="tpu")
   output_tensor = torch.empty((8, 2), dtype=torch.int64, device="tpu")
   input_split_sizes = [2] * 9
@@ -67,7 +64,6 @@ def run_all_to_all_single_invalid_split_sizes_size_error() -> None:
 
 
 def run_all_to_all_single_invalid_split_sizes_sum_error() -> None:
-  dist.init_process_group(backend="tpu_dist")
   input_tensor = torch.ones((8, 2), dtype=torch.int64, device="tpu")
   output_tensor = torch.empty((8, 2), dtype=torch.int64, device="tpu")
   input_split_sizes = [1, 3, 1, 1, 1, 1, 1, 1]
@@ -84,7 +80,6 @@ def run_all_to_all_single_invalid_split_sizes_sum_error() -> None:
 
 
 def run_all_to_all_single_uneven_trailing_dims_mismatch_error() -> None:
-  dist.init_process_group(backend="tpu_dist")
   input_tensor = torch.ones((10, 4), dtype=torch.float32, device="tpu")
   output_tensor = torch.empty((10, 8), dtype=torch.float32, device="tpu")
   input_split_sizes = [2, 1, 1, 1, 1, 1, 1, 2]
@@ -100,7 +95,6 @@ def run_all_to_all_single_uneven_trailing_dims_mismatch_error() -> None:
 
 
 def run_all_to_all_single_uneven_dim_count_mismatch_error() -> None:
-  dist.init_process_group(backend="tpu_dist")
   input_tensor = torch.ones((10, 4), dtype=torch.float32, device="tpu")
   output_tensor = torch.empty(10, dtype=torch.float32, device="tpu")
   input_split_sizes = [2, 1, 1, 1, 1, 1, 1, 2]
@@ -116,7 +110,6 @@ def run_all_to_all_single_uneven_dim_count_mismatch_error() -> None:
 
 
 def run_all_to_all_single_negative_split_size_error() -> None:
-  dist.init_process_group(backend="tpu_dist")
   input_tensor = torch.ones((8, 2), dtype=torch.float32, device="tpu")
   output_tensor = torch.empty((8, 2), dtype=torch.float32, device="tpu")
   input_split_sizes = [-1, 3, 1, 1, 1, 1, 1, 1]
@@ -132,7 +125,6 @@ def run_all_to_all_single_negative_split_size_error() -> None:
 
 
 def run_all_to_all_single_send_recv_mismatch_error() -> None:
-  dist.init_process_group(backend="tpu_dist")
   world_size = int(os.environ["WORLD_SIZE"])
   input_tensor = torch.ones((9, 2), dtype=torch.float32, device="tpu")
   output_tensor = torch.empty((10, 2), dtype=torch.float32, device="tpu")
@@ -148,7 +140,6 @@ def run_all_to_all_single_send_recv_mismatch_error() -> None:
 
 
 def run_all_to_all_single_asymmetric_cross_rank_buffer_error() -> None:
-  dist.init_process_group(backend="tpu_dist")
   rank = int(os.environ["RANK"])
   world_size = int(os.environ["WORLD_SIZE"])
   if rank == 0:
@@ -174,7 +165,6 @@ def run_all_to_all_single_asymmetric_cross_rank_buffer_error() -> None:
 
 def run_all_to_all_single_asymmetric_cross_rank_output_buffer_error() -> None:
   """Keeps input buffers symmetric so the output buffer check is reached."""
-  dist.init_process_group(backend="tpu_dist")
   rank = int(os.environ["RANK"])
   world_size = int(os.environ["WORLD_SIZE"])
   # Every rank allocates the same input capacity (9), so the input buffer check
@@ -199,75 +189,34 @@ def run_all_to_all_single_asymmetric_cross_rank_output_buffer_error() -> None:
     )
 
 
+def run_all_to_all_single_errors() -> None:
+  dist.init_process_group(backend="tpu_dist")
+  run_all_to_all_single_send_recv_mismatch_error()
+  run_all_to_all_single_asymmetric_cross_rank_buffer_error()
+  run_all_to_all_single_asymmetric_cross_rank_output_buffer_error()
+  run_all_to_all_single_negative_split_size_error()
+  run_all_to_all_single_dtype_error()
+  run_all_to_all_single_invalid_tensor_size_error()
+  run_all_to_all_single_invalid_split_sizes_size_error()
+  run_all_to_all_single_invalid_split_sizes_sum_error()
+  run_all_to_all_single_uneven_trailing_dims_mismatch_error()
+  run_all_to_all_single_uneven_dim_count_mismatch_error()
+
+
 class AllToAllSingleCollectiveErrorsTest(
     seed_test_utils.MultiProcessRepeatableTest
 ):
 
   _world_size = 8
 
-  def test_send_recv_mismatch(self):
+  def test_all_to_all_single_errors(self):
     distributed_utils.dist_run(
         nproc_per_node=self._world_size,
-        fn=run_all_to_all_single_send_recv_mismatch_error,
-    )
-
-  def test_asymmetric_cross_rank_buffer(self):
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=run_all_to_all_single_asymmetric_cross_rank_buffer_error,
-    )
-
-  def test_asymmetric_cross_rank_output_buffer(self):
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=run_all_to_all_single_asymmetric_cross_rank_output_buffer_error,
-    )
-
-  def test_negative_split_size(self):
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=run_all_to_all_single_negative_split_size_error,
-    )
-
-  def test_invalid_dtype(self):
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=run_all_to_all_single_dtype_error,
-    )
-
-  def test_invalid_tensor_size(self):
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=run_all_to_all_single_invalid_tensor_size_error,
-    )
-
-  def test_invalid_split_sizes_size(self):
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=run_all_to_all_single_invalid_split_sizes_size_error,
-    )
-
-  def test_invalid_split_sizes_sum(self):
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=run_all_to_all_single_invalid_split_sizes_sum_error,
-    )
-
-  def test_invalid_trailing_dims(self):
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=run_all_to_all_single_uneven_trailing_dims_mismatch_error,
-    )
-
-  def test_invalid_dim_count(self):
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=run_all_to_all_single_uneven_dim_count_mismatch_error,
+        fn=run_all_to_all_single_errors,
     )
 
 
 def run_all_to_all_unequal_tensor_list_size_error() -> None:
-  dist.init_process_group(backend="tpu_dist")
   world_size = int(os.environ["WORLD_SIZE"])
   device = "tpu"
   input_tensors = [
@@ -286,7 +235,6 @@ def run_all_to_all_unequal_tensor_list_size_error() -> None:
 
 
 def run_all_to_all_wrong_num_input_tensors_error() -> None:
-  dist.init_process_group(backend="tpu_dist")
   world_size = int(os.environ["WORLD_SIZE"])
   device = "tpu"
   input_tensors = [
@@ -307,7 +255,6 @@ def run_all_to_all_wrong_num_input_tensors_error() -> None:
 
 
 def run_all_to_all_unequal_input_tensor_trailing_dims_error() -> None:
-  dist.init_process_group(backend="tpu_dist")
   world_size = int(os.environ["WORLD_SIZE"])
   device = "tpu"
   input_tensors = [
@@ -328,7 +275,6 @@ def run_all_to_all_unequal_input_tensor_trailing_dims_error() -> None:
 
 
 def run_all_to_all_unequal_output_tensor_trailing_dims_error() -> None:
-  dist.init_process_group(backend="tpu_dist")
   world_size = int(os.environ["WORLD_SIZE"])
   device = "tpu"
   input_tensors = [
@@ -349,7 +295,6 @@ def run_all_to_all_unequal_output_tensor_trailing_dims_error() -> None:
 
 
 def run_all_to_all_dim_count_mismatch_error() -> None:
-  dist.init_process_group(backend="tpu_dist")
   world_size = int(os.environ["WORLD_SIZE"])
   device = "tpu"
   input_tensors = [
@@ -368,7 +313,6 @@ def run_all_to_all_dim_count_mismatch_error() -> None:
 
 
 def run_all_to_all_dtype_mismatch_error() -> None:
-  dist.init_process_group(backend="tpu_dist")
   world_size = int(os.environ["WORLD_SIZE"])
   device = "tpu"
   input_tensors = [
@@ -383,44 +327,24 @@ def run_all_to_all_dtype_mismatch_error() -> None:
     torch.distributed.all_to_all(output_tensors, input_tensors)
 
 
+def run_all_to_all_errors() -> None:
+  dist.init_process_group(backend="tpu_dist")
+  run_all_to_all_unequal_tensor_list_size_error()
+  run_all_to_all_wrong_num_input_tensors_error()
+  run_all_to_all_unequal_input_tensor_trailing_dims_error()
+  run_all_to_all_unequal_output_tensor_trailing_dims_error()
+  run_all_to_all_dim_count_mismatch_error()
+  run_all_to_all_dtype_mismatch_error()
+
+
 class AllToAllCollectiveErrorsTest(seed_test_utils.MultiProcessRepeatableTest):
 
   _world_size = 8
 
-  def test_unequal_tensor_list_size(self):
+  def test_all_to_all_errors(self):
     distributed_utils.dist_run(
         nproc_per_node=self._world_size,
-        fn=run_all_to_all_unequal_tensor_list_size_error,
-    )
-
-  def test_wrong_num_input_tensors(self):
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=run_all_to_all_wrong_num_input_tensors_error,
-    )
-
-  def test_unequal_input_tensor_trailing_dims(self):
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=run_all_to_all_unequal_input_tensor_trailing_dims_error,
-    )
-
-  def test_unequal_output_tensor_trailing_dims(self):
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=run_all_to_all_unequal_output_tensor_trailing_dims_error,
-    )
-
-  def test_dim_count_mismatch(self):
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=run_all_to_all_dim_count_mismatch_error,
-    )
-
-  def test_dtype_mismatch(self):
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=run_all_to_all_dtype_mismatch_error,
+        fn=run_all_to_all_errors,
     )
 
 
@@ -434,7 +358,6 @@ def _make_ragged_all_to_all_metadata(
 
 
 def run_ragged_all_to_all_dim_count_mismatch_error() -> None:
-  dist.init_process_group(backend="tpu_dist")
   world_size = int(os.environ["WORLD_SIZE"])
   input_offsets, send_sizes, output_offsets, recv_sizes = (
       _make_ragged_all_to_all_metadata(world_size)
@@ -457,7 +380,6 @@ def run_ragged_all_to_all_dim_count_mismatch_error() -> None:
 
 
 def run_ragged_all_to_all_trailing_dims_mismatch_error() -> None:
-  dist.init_process_group(backend="tpu_dist")
   world_size = int(os.environ["WORLD_SIZE"])
   input_offsets, send_sizes, output_offsets, recv_sizes = (
       _make_ragged_all_to_all_metadata(world_size)
@@ -480,7 +402,6 @@ def run_ragged_all_to_all_trailing_dims_mismatch_error() -> None:
 
 
 def run_ragged_all_to_all_dtype_mismatch_error() -> None:
-  dist.init_process_group(backend="tpu_dist")
   world_size = int(os.environ["WORLD_SIZE"])
   input_offsets, send_sizes, output_offsets, recv_sizes = (
       _make_ragged_all_to_all_metadata(world_size)
@@ -502,26 +423,21 @@ def run_ragged_all_to_all_dtype_mismatch_error() -> None:
     )
 
 
+def run_ragged_all_to_all_errors() -> None:
+  dist.init_process_group(backend="tpu_dist")
+  run_ragged_all_to_all_dim_count_mismatch_error()
+  run_ragged_all_to_all_trailing_dims_mismatch_error()
+  run_ragged_all_to_all_dtype_mismatch_error()
+
+
 class RaggedAllToAllErrorsTest(seed_test_utils.MultiProcessRepeatableTest):
 
   _world_size = 8
 
-  def test_dim_count_mismatch(self):
+  def test_ragged_all_to_all_errors(self):
     distributed_utils.dist_run(
         nproc_per_node=self._world_size,
-        fn=run_ragged_all_to_all_dim_count_mismatch_error,
-    )
-
-  def test_trailing_dims_mismatch(self):
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=run_ragged_all_to_all_trailing_dims_mismatch_error,
-    )
-
-  def test_dtype_mismatch(self):
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=run_ragged_all_to_all_dtype_mismatch_error,
+        fn=run_ragged_all_to_all_errors,
     )
 
 
