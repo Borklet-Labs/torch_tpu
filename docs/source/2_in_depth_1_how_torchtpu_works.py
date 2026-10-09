@@ -42,7 +42,7 @@ def _(mo):
 
     TPUs are programmed with the [XLA compiler](https://github.com/openxla/xla) stack through two different entry points: [StableHLO](https://openxla.org/stablehlo/spec) and [Mosaic](https://docs.jax.dev/en/latest/pallas/design/design.html#lowering-pallas-to-mosaic-for-tpu). The actual TPU ISA is proprietary, subject to change, and not publicly available. Effectively, one can think of StableHLO and (even more so) of Mosaic as equivalent to PTX. See picture below for a high-level sketch:
 
-    ![How TorchTPU Works](../images/inputs_to_tpu.svg)
+    ![How TorchTPU Works](../images/torch_tpu_inputs_to_tpu.svg)
 
     A C++ program can access a local TPU by instantiating a [PjRT Client](https://openxla.org/xla/pjrt/cpp_api_overview), whose API provides methods to compile MLIR (StableHLO or Mosaic) into a TPU executable, to launch that executable, and to copy data to-from the TPU. Note that TPU execution is asynchronous and the CPU can wait for a TPU result to be ready by waiting on the associated PjRTBuffer.
     StableHLO follows the [SSA Paradigm](https://en.wikipedia.org/wiki/Static_single-assignment_form) and, hence, doesn’t allow for in-place mutations, i.e., a write operation always produces a new value (at least conceptually). This is particularly significant for TorchTPU, which provides familiar Pytorch “view” semantics, including mutations, through view decomposition and inversion.

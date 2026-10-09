@@ -40,7 +40,7 @@ The actual TPU ISA is proprietary, subject to change, and not publicly
 available. Effectively, one can think of StableHLO and (even more so) of Mosaic
 as equivalent to PTX. See picture below for a high-level sketch:
 
-![How TorchTPU Works](../images/inputs_to_tpu.svg)
+![How TorchTPU Works](../images/torch_tpu_inputs_to_tpu.svg)
 
 A C++ program can access a local TPU by instantiating a
 [PjRT Client](https://openxla.org/xla/pjrt/cpp_api_overview), whose API provides
@@ -192,7 +192,6 @@ TorchTPU does not use TorchInductor, instead reusing the mature XLA compiler
 stack that has developed alongside the TPU architecture.
 
 # More detail
-
 In the following documents we’ll go into more detail about the:
 
 *   [Memory model](./2_in_depth_2_torchtpu_and_tpu_memory_model.md) supported by
