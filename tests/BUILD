@@ -1967,6 +1967,7 @@ torch_tpu_py_test(
     tags = ["requires-tpu-v5lite"],
     deps = [
         ":accelerator_test_utils",
+        ":oss_utils",
         ":seed_test_utils",
         "//shims/absl_py/flags",
         "//shims/absl_py/logging",
@@ -1990,6 +1991,7 @@ torch_tpu_py_test(
     ],
     deps = [
         ":accelerator_test_utils",
+        ":oss_utils",
         ":seed_test_utils",
         "//shims/absl_py/flags",
         "//shims/absl_py/logging",
