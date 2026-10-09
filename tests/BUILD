@@ -1274,12 +1274,15 @@ torch_tpu_py_test(
     name = "sparse_gather_test",
     srcs = ["sparse_gather_test.py"],
     main = "sparse_gather_test.py",
-    notap = "Requires SparseCore accelerator",
+    nonightly_oss = "Requires TPU v7 SparseCore; nightly_tpu.yml runs on TPU v6.",
     oss_presubmit_tpu_generation = tpu_gen(
         "v7",
         reason = "Requires SparseCore accelerator",
     ),
     tags = [
+        "fails-on-tpu-v5",
+        "fails-on-tpu-v6",
+        "ok-to-wait-for-v7x-in-presubmit",
         "requires-tpu-v7x",
     ],
     deps = [
@@ -1297,12 +1300,15 @@ torch_tpu_py_test(
     name = "sparse_iota_test",
     srcs = ["sparse_iota_test.py"],
     main = "sparse_iota_test.py",
-    notap = "Requires SparseCore accelerator",
+    nonightly_oss = "Requires TPU v7 SparseCore; nightly_tpu.yml runs on TPU v6.",
     oss_presubmit_tpu_generation = tpu_gen(
         "v7",
         reason = "Requires SparseCore accelerator",
     ),
     tags = [
+        "fails-on-tpu-v5",
+        "fails-on-tpu-v6",
+        "ok-to-wait-for-v7x-in-presubmit",
         "requires-tpu-v7x",
     ],
     deps = [
@@ -1319,12 +1325,15 @@ torch_tpu_py_test(
     name = "sparse_map_row_test",
     srcs = ["sparse_map_row_test.py"],
     main = "sparse_map_row_test.py",
-    notap = "Requires SparseCore accelerator",
+    nonightly_oss = "Requires TPU v7 SparseCore; nightly_tpu.yml runs on TPU v6.",
     oss_presubmit_tpu_generation = tpu_gen(
         "v7",
         reason = "Requires SparseCore accelerator",
     ),
     tags = [
+        "fails-on-tpu-v5",
+        "fails-on-tpu-v6",
+        "ok-to-wait-for-v7x-in-presubmit",
         "requires-tpu-v7x",
     ],
     deps = [
@@ -1342,8 +1351,14 @@ torch_tpu_py_test(
     name = "sparse_dense_matmul_stacking_ops_test",
     srcs = ["sparse_dense_matmul_stacking_ops_test.py"],
     main = "sparse_dense_matmul_stacking_ops_test.py",
-    notap = "Requires SparseCore accelerator",
+    nonightly_oss = "Requires TPU v7 SparseCore; nightly_tpu.yml runs on TPU v6.",
+    oss_presubmit_tpu_generation = tpu_gen(
+        "v7",
+        reason = "Requires SparseCore accelerator",
+    ),
     tags = [
+        "fails-on-tpu-v5",
+        "fails-on-tpu-v6",
         "ok-to-wait-for-v7x-in-presubmit",
         "requires-tpu-v7x",
     ],

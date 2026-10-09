@@ -57,8 +57,10 @@ torch_tpu_py_library(
 torch_tpu_py_test(
     name = "device_utils_test",
     srcs = ["device_utils_test.py"],
-    args = ["--torch_tpu_internal_enable_compilation_container=true"],
-    notest_oss = True,  # Flags don't work in OSS.  # NOTEST_OSS_OK=benchmarks run nightly
+    args = if_oss(
+        [],
+        ["--torch_tpu_internal_enable_compilation_container=true"],
+    ),
     tags = [
         "requires-tpu-v5lite",
     ],
@@ -68,6 +70,7 @@ torch_tpu_py_test(
         "//shims/torch:pytorch",
         "//src/torch_tpu",
         "//src/torch_tpu/_internal/benchmarks:xprof_adapter",
+        "//tests:oss_utils",
         "//tests:seed_test_utils",
     ],
 )

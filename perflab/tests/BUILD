@@ -43,7 +43,6 @@ torch_tpu_py_test(
 torch_tpu_py_test(
     name = "measure_test",
     srcs = ["measure_test.py"],
-    nonightly_oss = "TODO:(b/553018817) Re-enable once OSS backend loading is resolved",
     deps = [
         "//perflab:measure",
         "//perflab:metrics",

@@ -62,6 +62,12 @@ class XprofAnalysisClient(contextlib.AbstractContextManager):
   def get_profile_data(self, *args, **kwargs):
     return None, None
 
+  def get_hosts(self, *args, **kwargs):
+    return []
+
+  def get_xspace(self, *args, **kwargs):
+    return None
+
   def upload(self, *args, **kwargs):
     pass
 

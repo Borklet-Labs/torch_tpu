@@ -21,6 +21,7 @@ import tempfile
 
 from absl.testing import absltest
 import portpicker
+import torch  # pylint: disable=unused-import  # ruff: ignore[unused-import]
 from torch_tpu._internal import testing as tt_testing
 from torch_tpu._internal.profiler import _profiler_backend as profiler_backend
 from tests import seed_test_utils
