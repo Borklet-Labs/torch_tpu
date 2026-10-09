@@ -9834,6 +9834,39 @@ class OpsUnitTest(TorchTpuVsCpuTestBase):
     _, norm_md_last = torch.ops.aten._weight_norm_interface(v, g_md_last, 2)
     self.assertEqual(norm_md_last.shape, (1, 1, 4))
 
+  @parameterized.parameters(
+      ((8, 4, 5), 2, torch.float32),
+      ((2, 3, 4), 0, torch.bfloat16),
+      ((5, 10, 7), 0, torch.float16),
+      ((10,), 0, torch.float64),
+      ((2, 3), 0, torch.float32),
+      ((2, 3), 1, torch.bfloat16),
+      ((2, 3, 4, 5), 3, torch.float16),
+      ((2, 3, 4, 5), 0, torch.float64),
+  )
+  def test_weight_norm_backward(self, shape, dim, dtype):
+    """Tests torch.nn.utils.weight_norm backward across shapes, dims, and dtypes."""
+    weight = torch.randn(shape, dtype=dtype)
+    grad_w = torch.randn(shape, dtype=dtype)
+
+    class InlineWeightNormModule(torch.nn.Module):
+
+      def __init__(self, w):
+        super().__init__()
+        self.weight = torch.nn.Parameter(w)
+
+      def forward(self):
+        return self.weight
+
+    def run_module(device):
+      m = InlineWeightNormModule(weight.clone()).to(device)
+      torch.nn.utils.weight_norm(m, name="weight", dim=dim)
+      w = m()
+      w.backward(grad_w.to(device))
+      return m.weight_v.grad, m.weight_g.grad
+
+    self.assert_close_tpu_vs_cpu(run_module)
+
   @parameterized.product(
       input_dtype=[
           torch.float32,

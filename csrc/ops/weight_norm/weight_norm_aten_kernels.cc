@@ -37,6 +37,7 @@
 #include "csrc/ops/op_builder_utils.h"
 #include "csrc/ops/op_names.h"
 #include "csrc/ops/reductions/reductions.h"
+#include "csrc/ops/reductions/sum.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "stablehlo/integrations/cpp/builder/AttrTypeBuilderUtil.h"
 #include "stablehlo/integrations/cpp/builder/MlirBuilder.h"
@@ -108,6 +109,117 @@ absl::StatusOr<MlirOpResults<2>> BuildWeightNormShlo(mlir::MlirOp v_op,
   auto weight_norm = mlir::stablehlo::Mul(v_op, inv_norm_bcst);
 
   return MlirOpResults<2>{weight_norm, v_norm_aligned};
+}
+
+// Builds the StableHLO graph for weight_norm backward, following PyTorch ATen's
+// native analytical backward formulation (see WeightNorm.cpp and
+// WeightNormKernel.cpp).
+//
+// Forward formula:
+//   w = g * (v / ||v||)
+//
+// Analytical gradients:
+//   grad_g = sum(grad_w * v) / ||v||
+//   grad_v = (g / ||v||) * (grad_w - v * (grad_g / ||v||))
+//
+// where:
+//   - sum(...) reduces over all dimensions of v (if g is a scalar) or all
+//     dimensions except `dim`.
+//   - ||v|| is `norms_op`.
+absl::StatusOr<MlirOpResults<2>> BuildWeightNormBackwardShlo(
+    mlir::MlirOp grad_w_op, mlir::MlirOp v_op, mlir::MlirOp g_op,
+    mlir::MlirOp norms_op, int64_t dim) {
+  auto v_orig_type = GetTensorTypeOrDie(v_op);
+  auto g_orig_type = GetTensorTypeOrDie(g_op);
+  auto v_rank = v_orig_type.getRank();
+  auto g_rank = g_orig_type.getRank();
+
+  // Like PyTorch's native CPU and CUDA kernels (which dispatch with
+  // accscalar_t = at::opmath_type<scalar_t> and evaluate in float32 for
+  // BFloat16/Half to maintain numerical stability during reductions and
+  // divisions), promote lower-precision inputs (FP16/BF16) to F32. F32 and F64
+  // inputs remain unchanged.
+  TT_ASSIGN_OR_RETURN(grad_w_op, PromoteFloatDtype(grad_w_op));
+  TT_ASSIGN_OR_RETURN(v_op, PromoteFloatDtype(v_op));
+  TT_ASSIGN_OR_RETURN(g_op, PromoteFloatDtype(g_op));
+  TT_ASSIGN_OR_RETURN(norms_op, PromoteFloatDtype(norms_op));
+
+  auto v_calc_type = GetTensorTypeOrDie(v_op);
+  TT_ASSIGN_OR_RETURN(auto element_type, ConvertTo<mlir::ElementType>(
+                                             v_calc_type.getElementType()));
+
+  // Determine reduction dimensions:
+  // - If g is a scalar (rank 0), reduce all dimensions of v.
+  // - If g is per-slice (rank > 0), reduce all dimensions except `dim`.
+  // - If g has the same rank as v (singleton dims), preserve dimensions
+  //   (ReductionMode::kKeepDims); otherwise drop them
+  //   (ReductionMode::kDropDims).
+  Dimensions reduce_dims;
+  reduce_dims.reserve(v_rank);
+  for (int i = 0; i < v_rank; ++i) {
+    if (g_rank == 0 || i != dim) {
+      reduce_dims.push_back(i);
+    }
+  }
+
+  ReductionMode reduction_mode =
+      (g_rank == v_rank) ? ReductionMode::kKeepDims : ReductionMode::kDropDims;
+
+  // Step 1: Compute inner product per_dim_sums = sum(grad_w * v) over the
+  // reduction dimensions.
+  auto gw_v = mlir::stablehlo::Mul(grad_w_op, v_op);
+  TT_ASSIGN_OR_RETURN(
+      auto per_dim_sums,
+      BuildSumShlo(gw_v, reduce_dims, reduction_mode, element_type));
+
+  // Align shapes with g_op (e.g., if g is [C, 1, 1] but per_dim_sums is [C]).
+  TT_ASSIGN_OR_RETURN(auto per_dim_sums_aligned,
+                      BroadcastIfNeeded(per_dim_sums, g_op));
+  TT_ASSIGN_OR_RETURN(auto norms_aligned, BroadcastIfNeeded(norms_op, g_op));
+
+  // Step 2: Compute grad_g = per_dim_sums / ||v||
+  auto grad_g = mlir::stablehlo::Div(per_dim_sums_aligned, norms_aligned);
+
+  // Step 3: Compute grad_v = (g / ||v||) * (grad_w - v * (grad_g / ||v||))
+  //
+  // First compute the projection scaling factor:
+  //   v_scale = grad_g / ||v|| = per_dim_sums / (||v||^2)
+  // and broadcast it to match v's shape.
+  Dimensions broadcast_dims;
+  broadcast_dims.reserve(v_rank);
+  auto g_calc_rank = GetTensorTypeOrDie(g_op).getRank();
+  if (g_calc_rank == v_rank) {
+    for (int i = 0; i < v_rank; ++i) broadcast_dims.push_back(i);
+  } else if (g_calc_rank > 0) {
+    broadcast_dims.push_back(dim);
+  }
+
+  auto v_scale = mlir::stablehlo::Div(grad_g, norms_aligned);
+  auto v_scale_bcst =
+      mlir::stablehlo::BroadcastInDim(v_calc_type, v_scale, broadcast_dims);
+
+  // diff = grad_w - v * v_scale
+  auto v_scaled = mlir::stablehlo::Mul(v_op, v_scale_bcst);
+  auto diff = mlir::stablehlo::Subtract(grad_w_op, v_scaled);
+
+  // inv_norm = g / ||v||
+  auto inv_norm = mlir::stablehlo::Div(g_op, norms_aligned);
+  auto inv_norm_bcst =
+      mlir::stablehlo::BroadcastInDim(v_calc_type, inv_norm, broadcast_dims);
+
+  // grad_v = diff * inv_norm
+  auto grad_v = mlir::stablehlo::Mul(diff, inv_norm_bcst);
+
+  // Convert outputs back to original dtypes if they were promoted.
+  auto maybe_convert = [](mlir::MlirOp op, mlir::Type target_type) {
+    return GetTensorTypeOrDie(op).getElementType() != target_type
+               ? mlir::stablehlo::ConvertElementType(op, target_type)
+               : op;
+  };
+  grad_v = maybe_convert(grad_v, v_orig_type.getElementType());
+  grad_g = maybe_convert(grad_g, g_orig_type.getElementType());
+
+  return MlirOpResults<2>{grad_v, grad_g};
 }
 }  // namespace
 
@@ -189,6 +301,41 @@ std::tuple<at::Tensor, at::Tensor> AtenWeightNormInterface(const at::Tensor& v,
     return std::make_tuple(MakeTensor(std::move(weight_norm_buf)),
                            MakeTensor(std::move(v_norm_buf)));
   });
+}
+
+std::tuple<at::Tensor, at::Tensor> AtenWeightNormInterfaceBackward(
+    const at::Tensor& grad_w, const at::Tensor& saved_v,
+    const at::Tensor& saved_g, const at::Tensor& saved_norms,
+    const int64_t dim) {
+  TT_KERNEL(
+      OpName::kWeightNormInterfaceBackward, param_keys,
+      (grad_w, saved_v, saved_g, saved_norms, dim), {
+        const int64_t v_rank = saved_v.dim();
+        TT_ASSIGN_OR_THROW(auto wrapped_dim, SafeWrapDim(dim, v_rank));
+
+        TT_ASSIGN_OR_THROW(const auto grad_v_dtype,
+                           ConvertTo<mlir::ElementType>(saved_v.scalar_type()));
+        TT_ASSIGN_OR_THROW(const auto grad_g_dtype,
+                           ConvertTo<mlir::ElementType>(saved_g.scalar_type()));
+
+        auto op_builder = [wrapped_dim](FixedSizeSpan<mlir::MlirOp, 4> inputs)
+            -> absl::StatusOr<MlirOpResults<2>> {
+          return BuildWeightNormBackwardShlo(inputs[0], inputs[1], inputs[2],
+                                             inputs[3], wrapped_dim);
+        };
+
+        TT_ASSIGN_OR_THROW(
+            (auto [grad_v_buf, grad_g_buf]),
+            (DispatchOp<4, 2>(
+                std::move(op_builder), {grad_w, saved_v, saved_g, saved_norms},
+                {.out_dtypes = {grad_v_dtype, grad_g_dtype},
+                 .out_dims_list = {CopyIntVector(saved_v.sizes()),
+                                   CopyIntVector(saved_g.sizes())},
+                 .op_param_cache_keys = std::move(param_keys)})));
+
+        return std::make_tuple(MakeTensor(std::move(grad_v_buf)),
+                               MakeTensor(std::move(grad_g_buf)));
+      });
 }
 
 }  // namespace torch_tpu

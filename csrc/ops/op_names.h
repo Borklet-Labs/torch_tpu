@@ -868,6 +868,7 @@ enum class OpName {
   kViewAsComplex,
   kViewAsReal,
   kWeightNormInterface,
+  kWeightNormInterfaceBackward,
   kWhereSelf,
   kWhereSelfOut,
   kXlogyOutTensor,
@@ -2578,6 +2579,8 @@ ToString(  // NOLINT(google-readability-function-size)
       return "view_as_real";
     case OpName::kWeightNormInterface:
       return "_weight_norm_interface";
+    case OpName::kWeightNormInterfaceBackward:
+      return "_weight_norm_interface_backward";
     case OpName::kWhereSelf:
       return "where.self";
     case OpName::kWhereSelfOut:
