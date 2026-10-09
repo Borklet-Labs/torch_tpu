@@ -1252,9 +1252,10 @@ torch_tpu_py_test(
     name = "sparse_dense_matmul_test",
     srcs = ["sparse_dense_matmul_test.py"],
     main = "sparse_dense_matmul_test.py",
-    # Cannot run in OSS either: TPU v7 is not available in presubmit.
-    notap = "Subslicing errors on tpu7x. See b/515767150",
     tags = [
+        # Requires SparseCore accelerator, which is not available on TPU v5e and below.
+        "fails-on-tpu-v5",
+        "ok-to-wait-for-v7x-in-presubmit",
         "requires-tpu-v7x",
     ],
     deps = [

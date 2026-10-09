@@ -101,10 +101,7 @@ def _get_sc_simd_width():
 
 
 class SparseDenseMatmulTest(op_testing.TorchTpuTestBase):
-  """Tests for sparse_dense_matmul op.
-
-  This operator requires TPU v5e hardware because it uses SparseCore.
-  """
+  """Tests for sparse_dense_matmul op on SparseCore-enabled TPUs."""
 
   def test_input_preprocessing_on_tpu_numerical(self):
     device = torch.device("tpu")
@@ -243,13 +240,17 @@ class SparseDenseMatmulTest(op_testing.TorchTpuTestBase):
 
   def test_input_preprocessing_stats(self):
     """Tests that preprocess_sparse_dense_matmul_input returns stats dict."""
-    val_f0 = torch.arange(20, dtype=torch.int32)
-    off_f0 = torch.tensor([0, 10, 20], dtype=torch.int32)
+    num_sc = _get_num_sc_per_device()
+    ids_per_sample = 5 * num_sc
+    val_f0 = torch.arange(ids_per_sample * num_sc, dtype=torch.int32)
+    off_f0 = torch.arange(
+        0, ids_per_sample * (num_sc + 1), ids_per_sample, dtype=torch.int32
+    )
 
     options = {
         "local_device_count": 1,
         "global_device_count": 1,
-        "num_sc_per_device": _get_num_sc_per_device(),
+        "num_sc_per_device": num_sc,
         "sc_simd_width": _get_sc_simd_width(),
         "allow_id_dropping": True,
     }
@@ -259,8 +260,8 @@ class SparseDenseMatmulTest(op_testing.TorchTpuTestBase):
         off_f0,
         max_ids_per_partition=2,
         max_unique_ids_per_partition=2,
-        suggested_coo_buffer_size=32,
-        batch_size=2,
+        suggested_coo_buffer_size=8 * num_sc * num_sc,
+        batch_size=num_sc,
         combiner="sum",
         options=options,
     )
@@ -270,21 +271,20 @@ class SparseDenseMatmulTest(op_testing.TorchTpuTestBase):
     self.assertIn("max_unique_ids_per_partition", table_0_outputs)
     self.assertIn("required_buffer_sizes", table_0_outputs)
 
-    num_sc = _get_num_sc_per_device()
     self.assert_close(
-        golden_result=torch.tensor([12], dtype=torch.int32),
+        golden_result=torch.tensor([3 * num_sc * num_sc], dtype=torch.int32),
         torch_tpu_result=table_0_outputs["dropped_id_count"],
     )
     self.assert_close(
-        golden_result=torch.full((num_sc,), 10 // num_sc, dtype=torch.int32),
+        golden_result=torch.full((num_sc,), 5, dtype=torch.int32),
         torch_tpu_result=table_0_outputs["max_ids_per_partition"],
     )
     self.assert_close(
-        golden_result=torch.full((num_sc,), 10 // num_sc, dtype=torch.int32),
+        golden_result=torch.full((num_sc,), 5, dtype=torch.int32),
         torch_tpu_result=table_0_outputs["max_unique_ids_per_partition"],
     )
     self.assert_close(
-        golden_result=torch.full((num_sc,), 32 // num_sc, dtype=torch.int32),
+        golden_result=torch.full((num_sc,), 8 * num_sc, dtype=torch.int32),
         torch_tpu_result=table_0_outputs["required_buffer_sizes"],
     )
 
@@ -421,164 +421,75 @@ class SparseDenseMatmulTest(op_testing.TorchTpuTestBase):
       torch.ops.tpu.compute_sparse_dense_matmul_stats(val_float, off, 1, 2)
 
   def _get_inputs(self, device):
-    row_pointers = torch.tensor(
-        [
-            3,
-            9,
-            16,
-            16,
-            16,
-            16,
-            16,
-            16,
-            16,
-            16,
-            16,
-            16,
-            16,
-            16,
-            16,
-            16,  # input for SC 0
-            3,
-            9,
-            16,
-            16,
-            16,
-            16,
-            16,
-            16,
-            16,
-            16,
-            16,
-            16,
-            16,
-            16,
-            16,
-            16,  # input for SC 1
-        ],
+    num_sc = _get_num_sc_per_device()
+    input_indices = torch.tensor([2, 1, 4, 0, 3, 6, 0, 2], dtype=torch.int32)
+    input_offsets = torch.tensor(
+        [0, 1, 2, 3, 4, 4, 4, 4, 4, 5, 6, 7, 8, 8, 8, 8, 8],
         dtype=torch.int32,
-        device=device,
     )
-    embedding_ids = torch.tensor(
-        [
-            0,
-            1,
-            2,
-            2147483647,
-            2147483647,
-            2147483647,
-            2147483647,
-            2147483647,
-            0,
-            2147483647,
-            2147483647,
-            2147483647,
-            2147483647,
-            2147483647,
-            2147483647,
-            2147483647,
-            0,
-            1,
-            3,
-            2147483647,
-            2147483647,
-            2147483647,
-            2147483647,
-            2147483647,
-            1,
-            2147483647,
-            2147483647,
-            2147483647,
-            2147483647,
-            2147483647,
-            2147483647,
-            2147483647,
-        ],
-        dtype=torch.int32,
-        device=device,
+    preprocessed = preprocess_sparse_dense_matmul_input(
+        input_indices,
+        input_offsets,
+        max_ids_per_partition=16,
+        max_unique_ids_per_partition=16,
+        suggested_coo_buffer_size=8 * num_sc * num_sc,
+        batch_size=16,
+        combiner="sum",
+        options={
+            "local_device_count": 1,
+            "global_device_count": 1,
+            "num_sc_per_device": num_sc,
+            "sc_simd_width": _get_sc_simd_width(),
+            "allow_id_dropping": False,
+        },
     )
-    sample_ids = torch.tensor(
-        [
-            3,
-            0,
-            2,
-            2147483647,
-            2147483647,
-            2147483647,
-            2147483647,
-            2147483647,
-            1,
-            2147483647,
-            2147483647,
-            2147483647,
-            2147483647,
-            2147483647,
-            2147483647,
-            2147483647,
-            2,
-            3,
-            1,
-            2147483647,
-            2147483647,
-            2147483647,
-            2147483647,
-            2147483647,
-            0,
-            2147483647,
-            2147483647,
-            2147483647,
-            2147483647,
-            2147483647,
-            2147483647,
-            2147483647,
-        ],
-        dtype=torch.int32,
-        device=device,
-    )
-    gains = torch.tensor(
-        [
-            1.0,
-            1.0,
-            1.0,
-            float("nan"),
-            float("nan"),
-            float("nan"),
-            float("nan"),
-            float("nan"),
-            1.0,
-            float("nan"),
-            float("nan"),
-            float("nan"),
-            float("nan"),
-            float("nan"),
-            float("nan"),
-            float("nan"),
-            1.0,
-            1.0,
-            1.0,
-            float("nan"),
-            float("nan"),
-            float("nan"),
-            float("nan"),
-            float("nan"),
-            1.0,
-            float("nan"),
-            float("nan"),
-            float("nan"),
-            float("nan"),
-            float("nan"),
-            float("nan"),
-            float("nan"),
-        ],
-        dtype=torch.float32,
-        device=device,
-    )
+    row_pointers = preprocessed["row_pointers"].to(device)
+    embedding_ids = preprocessed["embedding_ids"].to(device)
+    sample_ids = preprocessed["sample_ids"].to(device)
+    gains = preprocessed["gains"].to(device)
     embedding_table = (
         torch.arange(32, dtype=torch.float32, device=device)
         .unsqueeze(1)
         .repeat(1, 8)
     )
     return row_pointers, embedding_ids, sample_ids, gains, embedding_table
+
+  def _get_updated_rows(self, vocab_size: int = 32) -> list[int]:
+    num_sc = _get_num_sc_per_device()
+    shard_size = vocab_size // num_sc
+    logical_ids = [0, 1, 2, 3, 4, 6]
+    return sorted(
+        (k % num_sc) * shard_size + (k // num_sc) for k in logical_ids
+    )
+
+  def _get_expected_forward_output(self, vocab_size: int = 32) -> torch.Tensor:
+    num_sc = _get_num_sc_per_device()
+    shard_size = vocab_size // num_sc
+
+    def phys_row(k: int) -> float:
+      return float((k % num_sc) * shard_size + (k // num_sc))
+
+    return torch.tensor(
+        [
+            [phys_row(2)] * 8,
+            [phys_row(1)] * 8,
+            [phys_row(4)] * 8,
+            [phys_row(0)] * 8,
+            [0.0] * 8,
+            [0.0] * 8,
+            [0.0] * 8,
+            [0.0] * 8,
+            [phys_row(3)] * 8,
+            [phys_row(6)] * 8,
+            [phys_row(0)] * 8,
+            [phys_row(2)] * 8,
+            [0.0] * 8,
+            [0.0] * 8,
+            [0.0] * 8,
+            [0.0] * 8,
+        ],
+        dtype=torch.float32,
+    )
 
   @parameterized.parameters(False, True)
   def test_sparse_dense_matmul_on_tpu(self, compile_op):
@@ -610,27 +521,7 @@ class SparseDenseMatmulTest(op_testing.TorchTpuTestBase):
         embedding_table,
     )
 
-    expected = torch.tensor(
-        [
-            [1.0] * 8,
-            [16.0] * 8,
-            [2.0] * 8,
-            [0.0] * 8,
-            [0.0] * 8,
-            [0.0] * 8,
-            [0.0] * 8,
-            [0.0] * 8,
-            [17.0] * 8,
-            [3.0] * 8,
-            [0.0] * 8,
-            [1.0] * 8,
-            [0.0] * 8,
-            [0.0] * 8,
-            [0.0] * 8,
-            [0.0] * 8,
-        ],
-        dtype=torch.float32,
-    )
+    expected = self._get_expected_forward_output()
 
     self.assert_close(golden_result=expected, torch_tpu_result=out.cpu())
 
@@ -651,27 +542,7 @@ class SparseDenseMatmulTest(op_testing.TorchTpuTestBase):
         max_unique_ids_per_partition=16,
     )
 
-    expected = torch.tensor(
-        [
-            [1.0] * 8,
-            [16.0] * 8,
-            [2.0] * 8,
-            [0.0] * 8,
-            [0.0] * 8,
-            [0.0] * 8,
-            [0.0] * 8,
-            [0.0] * 8,
-            [17.0] * 8,
-            [3.0] * 8,
-            [0.0] * 8,
-            [1.0] * 8,
-            [0.0] * 8,
-            [0.0] * 8,
-            [0.0] * 8,
-            [0.0] * 8,
-        ],
-        dtype=torch.float32,
-    )
+    expected = self._get_expected_forward_output()
     self.assert_close(golden_result=expected, torch_tpu_result=out.cpu())
 
   def test_sparse_dense_matmul_grad_eager_device_assignment(self):
@@ -830,7 +701,7 @@ class SparseDenseMatmulTest(op_testing.TorchTpuTestBase):
 
     updated_table_tpu_np = updated_table_tpu.cpu().numpy()
 
-    updated_rows = [0, 1, 2, 3, 16, 17]
+    updated_rows = self._get_updated_rows(vocab_size)
 
     # Verify that non-updated rows are indeed unchanged
     for i in range(vocab_size):
@@ -968,7 +839,7 @@ class SparseDenseMatmulTest(op_testing.TorchTpuTestBase):
     )
     updated_table_tpu_np = updated_table_tpu.cpu().numpy()
     updated_acc_tpu_np = updated_acc_tpu.cpu().numpy()
-    updated_rows = [0, 1, 2, 3, 16, 17]
+    updated_rows = self._get_updated_rows(vocab_size)
     for i in range(vocab_size):
       if i not in updated_rows:
         self.assertTrue(
@@ -1117,7 +988,7 @@ class SparseDenseMatmulTest(op_testing.TorchTpuTestBase):
     )
     updated_table_tpu_np = updated_table_tpu.cpu().numpy()
     updated_acc_tpu_np = updated_acc_tpu.cpu().numpy()
-    updated_rows = [0, 1, 2, 3, 16, 17]
+    updated_rows = self._get_updated_rows(vocab_size)
     for i in range(vocab_size):
       if i not in updated_rows:
         self.assertTrue(
@@ -1301,7 +1172,7 @@ class SparseDenseMatmulTest(op_testing.TorchTpuTestBase):
     updated_mom_tpu_np = updated_mom_tpu.cpu().numpy()
     updated_vel_tpu_np = updated_vel_tpu.cpu().numpy()
 
-    updated_rows = [0, 1, 2, 3, 16, 17]
+    updated_rows = self._get_updated_rows(vocab_size)
 
     # Verify that non-updated rows are indeed unchanged
     for i in range(vocab_size):
@@ -1506,7 +1377,7 @@ class SparseDenseMatmulTest(op_testing.TorchTpuTestBase):
     updated_mom_tpu_np = updated_mom_tpu.cpu().numpy()
     updated_vel_tpu_np = updated_vel_tpu.cpu().numpy()
 
-    updated_rows = [0, 1, 2, 3, 16, 17]
+    updated_rows = self._get_updated_rows(vocab_size)
 
     # Verify that non-updated rows are indeed unchanged
     for i in range(vocab_size):
