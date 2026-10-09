@@ -17910,6 +17910,25 @@ class OpsGradUnitTest(TorchTpuVsCpuTestBase):
           ),
       )
 
+  def test_masked_scatter_compiled_broadcast_row_gather(self):
+    # Exercises torch.compile on expand_as trailing broadcast mask with bounded
+    # feature rows (row_size >= 128, num_source_rows <= 1024).
+    for dtype in (torch.bfloat16, torch.float16, torch.float32):
+      inputs_cpu = torch.randn(1, 64, 256, dtype=dtype)
+      token_mask_cpu = torch.zeros(1, 64, 1, dtype=torch.bool)
+      token_mask_cpu[0, 5:13, 0] = True
+      source_cpu = torch.randn(8, 256, dtype=dtype)
+
+      def fn(x, m, s):
+        return x.masked_scatter(m.expand_as(x), s)
+
+      expected = fn(inputs_cpu, token_mask_cpu, source_cpu)
+      compiled_fn = torch.compile(fn, backend="tpu")
+      actual = compiled_fn(
+          inputs_cpu.to("tpu"), token_mask_cpu.to("tpu"), source_cpu.to("tpu")
+      ).cpu()
+      utils.assert_close(actual=actual, expected=expected)
+
   def test_masked_scatter_broadcast_mask(self):
     # The mask is broadcast along the trailing dimensions of the input, so
     # every mask element selects a whole contiguous row.

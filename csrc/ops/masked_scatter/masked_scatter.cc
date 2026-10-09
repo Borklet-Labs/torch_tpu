@@ -14,6 +14,7 @@
 
 #include "csrc/ops/masked_scatter/masked_scatter.h"
 
+#include <cstddef>
 #include <cstdint>
 
 #include "absl/status/statusor.h"
@@ -28,6 +29,7 @@
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Types.h"
 #include "mlir/Support/LLVM.h"
+#include "stablehlo/dialect/StablehloOps.h"
 #include "stablehlo/integrations/cpp/builder/AttrTypeBuilderUtil.h"
 #include "stablehlo/integrations/cpp/builder/MlirBuilder.h"
 #include "stablehlo/integrations/cpp/builder/StablehloBuilder.h"
@@ -46,6 +48,61 @@ struct RowPartition {
   // Number of rows, the number of elements divided by `row_size`.
   int64_t num_rows;
 };
+
+bool IsBroadcastOrUnitOperandDim(const mlir::ArrayRef<int64_t> operand_shape,
+                                 const mlir::ArrayRef<int64_t> bcast_dims,
+                                 const int64_t mask_dim) {
+  for (size_t i = 0; i < bcast_dims.size(); ++i) {
+    if (bcast_dims[i] == mask_dim) {
+      return operand_shape[i] == 1;
+    }
+  }
+  return true;
+}
+
+// Narrows trailing dimensions of `mask` that were broadcast from size 1 (e.g.
+// via `expand_as(inputs_embeds)` lowered to `stablehlo.broadcast_in_dim` in
+// `torch.compile`), restoring their size to 1 so `ComputeRowPartition` folds
+// whole feature rows instead of decomposing into scalar gathers.
+mlir::MlirOp NarrowTrailingBroadcastMask(mlir::MlirOp mask) {
+  auto bcast = mlir::dyn_cast_or_null<mlir::stablehlo::BroadcastInDimOp>(
+      mask.getValue().getDefiningOp());
+  if (!bcast) {
+    return mask;
+  }
+  const mlir::RankedTensorType mask_type = GetTensorTypeOrDie(mask);
+  const mlir::RankedTensorType operand_type =
+      mlir::dyn_cast<mlir::RankedTensorType>(bcast.getOperand().getType());
+  if (!operand_type || !mask_type.hasStaticShape() ||
+      !operand_type.hasStaticShape()) {
+    return mask;
+  }
+  const mlir::ArrayRef<int64_t> mask_shape = mask_type.getShape();
+  const mlir::ArrayRef<int64_t> operand_shape = operand_type.getShape();
+  const mlir::ArrayRef<int64_t> bcast_dims = bcast.getBroadcastDimensions();
+  const int64_t mask_rank = mask_shape.size();
+
+  Dimensions start_indices(mask_rank, 0);
+  Dimensions limit_indices(mask_shape.begin(), mask_shape.end());
+  Strides strides(mask_rank, 1);
+  bool narrowed = false;
+
+  for (int64_t d = mask_rank - 1; d >= 0; --d) {
+    if (mask_shape[d] <= 1) {
+      continue;
+    }
+    if (!IsBroadcastOrUnitOperandDim(operand_shape, bcast_dims, d)) {
+      break;
+    }
+    limit_indices[d] = 1;
+    narrowed = true;
+  }
+
+  if (!narrowed) {
+    return mask;
+  }
+  return mlir::stablehlo::Slice(mask, start_indices, limit_indices, strides);
+}
 
 // Calculates the RowPartitions of a tensor of shape `input_shape` into the
 // rows that a mask of shape `mask_shape` selects.
@@ -78,6 +135,7 @@ absl::StatusOr<mlir::MlirOp> BuildMaskedScatterShlo(mlir::MlirOp input,
                                                     mlir::MlirOp mask,
                                                     mlir::MlirOp source) {
   mlir::MlirBuilder& builder = input.getBuilder();
+  mask = NarrowTrailingBroadcastMask(mask);
   const mlir::RankedTensorType input_type = GetTensorTypeOrDie(input);
   const mlir::RankedTensorType mask_type = GetTensorTypeOrDie(mask);
   const mlir::RankedTensorType source_type = GetTensorTypeOrDie(source);
@@ -158,8 +216,43 @@ absl::StatusOr<mlir::MlirOp> BuildMaskedScatterShlo(mlir::MlirOp input,
       mlir::stablehlo::Subtract(selected_row_count, ones);
 
   // 6. Gather one source row per row of the input.
-  mlir::MlirOp gathered_rows =
-      BuildIndexSelectShlo(source_rows, 0, source_row_indices);
+  mlir::MlirOp gathered_rows;
+  const mlir::Type elem_type = input_type.getElementType();
+  if (input_partition.row_size >= 128 && num_source_rows > 0 &&
+      num_source_rows <= 1024 &&
+      (elem_type.isBF16() || elem_type.isF16() || elem_type.isF32())) {
+    const auto mat_i32_type = mlir::makeTensorType(
+        builder.getContext(), {input_partition.num_rows, num_source_rows},
+        i32_type);
+    mlir::MlirOp indices_2d = mlir::stablehlo::BroadcastInDim(
+        mat_i32_type, source_row_indices, llvm::ArrayRef<int64_t>{0});
+    mlir::MlirOp iota_2d = mlir::stablehlo::Iota(builder, mat_i32_type, 1);
+    mlir::MlirOp eq_mask = mlir::stablehlo::Compare(
+        indices_2d, iota_2d, mlir::stablehlo::ComparisonDirection::EQ);
+    mlir::MlirOp indicator =
+        mlir::stablehlo::ConvertElementType(eq_mask, elem_type);
+    auto dot_dims = mlir::stablehlo::DotDimensionNumbersAttr::get(
+        &builder.getContext(),
+        /*lhs_batching_dimensions=*/{},
+        /*rhs_batching_dimensions=*/{},
+        /*lhs_contracting_dimensions=*/{1},
+        /*rhs_contracting_dimensions=*/{0});
+    mlir::ArrayAttr precision_config;
+    if (elem_type.isF16() || elem_type.isF32()) {
+      const mlir::stablehlo::Precision precisions[2] = {
+          mlir::stablehlo::Precision::
+              HIGHEST,  // EXPLICIT_PRECISION_OK=one_hot_lhs
+          mlir::stablehlo::Precision::
+              HIGHEST,  // EXPLICIT_PRECISION_OK=exact_row_gather
+      };
+      precision_config = mlir::stablehlo::PrecisionConfigAttr::get(
+          &builder.getContext(), precisions);
+    }
+    gathered_rows = mlir::stablehlo::DotGeneral(
+        indicator, source_rows, dot_dims, /*precisionConfig=*/precision_config);
+  } else {
+    gathered_rows = BuildIndexSelectShlo(source_rows, 0, source_row_indices);
+  }
 
   // 7. Take the gathered rows where the mask is true, and reshape back.
   mlir::MlirOp row_mask_2d = mlir::stablehlo::BroadcastInDim(
