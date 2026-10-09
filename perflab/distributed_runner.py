@@ -22,9 +22,13 @@ import enum
 import gc
 import glob
 import os
+import re
 import shutil
 import sys
-from typing import Sequence
+import tempfile
+import time
+from typing import NamedTuple, Sequence
+from xml.etree import ElementTree
 
 from absl import app
 from absl import logging
@@ -54,6 +58,8 @@ discovery_lib.import_submodules(distributed_models)
 discovery_lib.import_submodules(steps)
 
 _FRAMEWORK = mode_lib.Framework.TORCH
+# Characters XML 1.0 forbids (all C0 controls except tab, newline and CR).
+_XML_INVALID_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
 
 
 class BarrierPolicy(enum.Enum):
@@ -102,27 +108,84 @@ def _failure_reason(e: Exception) -> str:
   return lines[-1] if lines else type(e).__name__
 
 
+class _TargetResult(NamedTuple):
+  """Outcome of a single batched benchmark target."""
+
+  name: str
+  status: TargetStatus
+  reason: str = ""
+  duration_seconds: float = 0.0
+
+
 def _format_summary(
     platform: target_lib.Platform,
-    results: Sequence[tuple[str, TargetStatus, str]],
+    results: Sequence[_TargetResult],
 ) -> str:
   """Formats a per-target pass/fail summary table."""
   counts = {
-      status: sum(1 for _, s, _ in results if s == status)
+      status: sum(1 for r in results if r.status == status)
       for status in TargetStatus
   }
-  name_width = max((len(name) for name, _, _ in results), default=0)
+  name_width = max((len(r.name) for r in results), default=0)
   lines = [
       f"Distributed benchmark summary ({platform.value}):"
       f" {counts[TargetStatus.PASSED]} passed,"
       f" {counts[TargetStatus.FAILED]} failed,"
       f" {counts[TargetStatus.SKIPPED]} skipped"
   ]
-  for name, status, reason in results:
+  for r in results:
     lines.append(
-        f"  {name:<{name_width}}  {status.value:<7}  {reason}".rstrip()
+        f"  {r.name:<{name_width}}  {r.status.value:<7}  {r.reason}".rstrip()
     )
   return "\n".join(lines)
+
+
+def _write_test_xml(
+    path: str,
+    platform: target_lib.Platform,
+    results: Sequence[_TargetResult],
+) -> None:
+  """Writes `results` as a JUnit XML report, one test case per target.
+
+  Blaze passes the report path in `XML_OUTPUT_FILE`; Sponge reads it to list
+  test cases. Without it, Sponge only shows the pass/fail status of each shard.
+  Test case names are the target names `TESTBRIDGE_TEST_ONLY` accepts, so a
+  failed case can be rerun with `--test_filter=<name>`.
+
+  Args:
+    path: Output path.
+    platform: Platform the targets ran on, used as the test case class name.
+    results: Targets to report.
+  """
+  suite = ElementTree.Element(
+      "testsuite",
+      name="distributed_runner",
+      tests=str(len(results)),
+      failures=str(sum(r.status == TargetStatus.FAILED for r in results)),
+      skipped=str(sum(r.status == TargetStatus.SKIPPED for r in results)),
+      time=f"{sum(r.duration_seconds for r in results):.3f}",
+  )
+  for r in results:
+    case = ElementTree.SubElement(
+        suite,
+        "testcase",
+        name=r.name,
+        classname=f"distributed_benchmarks.{platform.value}",
+        time=f"{r.duration_seconds:.3f}",
+    )
+    # ElementTree escapes markup characters but not control characters, which
+    # XML 1.0 forbids; one (e.g. an ANSI color code in an exception message)
+    # would make Sponge drop every test case of the shard.
+    reason = _XML_INVALID_CHARS.sub("", r.reason)
+    if r.status == TargetStatus.FAILED:
+      ElementTree.SubElement(case, "failure", message=reason).text = reason
+    elif r.status == TargetStatus.SKIPPED:
+      ElementTree.SubElement(case, "skipped", message=reason)
+  root = ElementTree.Element("testsuites")
+  root.append(suite)
+  ElementTree.ElementTree(root).write(
+      path, encoding="utf-8", xml_declaration=True
+  )
 
 
 def resolve_benchmark_targets(
@@ -155,6 +218,52 @@ def resolve_benchmark_targets(
     )
 
   return [target_map[token] for token in tokens]
+
+
+def _shard_env() -> tuple[int, int]:
+  """Returns `(shard_index, total_shards)` from the blaze sharding env.
+
+  Returns `(0, 1)` without the sharding environment (e.g. multi-host Borg runs).
+
+  Raises:
+    ValueError: If the shard index is out of range.
+  """
+  total_shards = int(
+      os.environ.get("TEST_TOTAL_SHARDS", "1")  # PY_ENVIRON_OK=benchmark
+  )
+  shard_index = int(
+      os.environ.get("TEST_SHARD_INDEX", "0")  # PY_ENVIRON_OK=benchmark
+  )
+  if not 0 <= shard_index < total_shards:
+    raise ValueError(
+        f"TEST_SHARD_INDEX={shard_index} is out of range for"
+        f" TEST_TOTAL_SHARDS={total_shards}."
+    )
+  return shard_index, total_shards
+
+
+def _shard_targets(
+    targets: Sequence[tuple[registry_lib.BenchmarkSpec, common.RunMode]],
+) -> list[tuple[registry_lib.BenchmarkSpec, common.RunMode]]:
+  """Returns the subset of `targets` that this blaze test shard runs.
+
+  Implements the blaze test sharding protocol (go/test-sharding): reads
+  `TEST_TOTAL_SHARDS` / `TEST_SHARD_INDEX`, assigns targets round-robin, and
+  touches `TEST_SHARD_STATUS_FILE` to tell blaze sharding is supported. Without
+  these variables (e.g. multi-host Borg runs) every target is returned.
+
+  Args:
+    targets: Runnable targets in a deterministic order. Callers should drop
+      targets that will be skipped first, so shards get similar numbers of
+      targets that actually run.
+  """
+  if status_file := os.environ.get(  # PY_ENVIRON_OK=benchmark
+      "TEST_SHARD_STATUS_FILE"
+  ):
+    with open(status_file, "a"):
+      pass
+  shard_index, total_shards = _shard_env()
+  return list(targets[shard_index::total_shards])
 
 
 def _cleanup_distributed_worker_state(
@@ -240,8 +349,17 @@ def _run_single_target_task(
     spec_name: str,
     mode_value: str,
     platform_name: str,
+    skip_reason_file: str | None = None,
 ) -> None:
-  """Worker task executed on each rank/host for a single benchmark target."""
+  """Worker task executed on each rank/host for a single benchmark target.
+
+  Args:
+    spec_name: Registered benchmark name.
+    mode_value: `common.RunMode` value.
+    platform_name: `target_lib.Platform` value.
+    skip_reason_file: If set, rank 0 writes the reason here when the benchmark
+      factory raises `UnsupportedBenchmark`, so the launcher reports a skip.
+  """
   # Required for OSS/GCP: Subprocesses spawned via torch.multiprocessing.spawn
   # bypass app.run() and start with unparsed absl flags.
   multiprocessing.parse_absl_flags()
@@ -349,6 +467,11 @@ def _run_single_target_task(
 
   except target_lib.UnsupportedBenchmark as e:
     logging.info("Skipping unsupported benchmark on rank %s: %s", rank, e)
+    # The ranks exit normally, so tell the launcher this was a skip rather than
+    # a pass. Every rank runs the same factory checks; rank 0 reports for all.
+    if rank == 0 and skip_reason_file:
+      with open(skip_reason_file, "w") as f:
+        f.write(str(e))
   except Exception as e:
     exception_raised = True
     logging.error("FATAL DISTRIBUTED WORKER ERROR: %s: %s", type(e).__name__, e)
@@ -436,38 +559,60 @@ def main(argv: Sequence[str]) -> None:
         f" with filter '{test_filter}'."
     )
 
+  results: list[_TargetResult] = []
+  runnable_targets = []
+  for spec, mode in targets_to_run:
+    skip_reason = _get_skip_reason(spec, mode, target.device_kind)
+    if skip_reason is None:
+      runnable_targets.append((spec, mode))
+      continue
+    target_name = f"{spec.name}_{mode.value}"
+    logging.info(
+        "Skipping benchmark %s on %s: %s",
+        target_name,
+        platform.value,
+        skip_reason,
+    )
+    # Every shard reports the skipped targets, so each shard's summary is
+    # complete on its own.
+    results.append(
+        _TargetResult(target_name, TargetStatus.SKIPPED, skip_reason)
+    )
+
+  # Shard after dropping skipped targets: most distributed benchmarks only run
+  # compiled, so sharding the full (spec x mode) list round-robin could put all
+  # runnable targets on the same shard.
+  shard_targets = _shard_targets(runnable_targets)
+
   logging.info(
-      "Launching %d benchmark target(s) on platform %s with nnodes=%d,"
-      " local_nproc=%d",
-      len(targets_to_run),
+      "Launching %d of %d runnable benchmark target(s) on platform %s with"
+      " nnodes=%d, local_nproc=%d",
+      len(shard_targets),
+      len(runnable_targets),
       platform.value,
       nnodes,
       local_nproc,
   )
 
-  results: list[tuple[str, TargetStatus, str]] = []
-  for idx, (spec, mode) in enumerate(targets_to_run):
+  # `results` so far only holds the targets every shard skips for the platform.
+  num_platform_skips = len(results)
+  # Rank 0 writes a target's skip reason here if its factory raises
+  # `UnsupportedBenchmark` at run time.
+  skip_dir = tempfile.mkdtemp(prefix="distributed_runner_skips_")
+  for idx, (spec, mode) in enumerate(shard_targets):
     target_name = f"{spec.name}_{mode.value}"
-    skip_reason = _get_skip_reason(spec, mode, target.device_kind)
-    if skip_reason is not None:
-      logging.info(
-          "Skipping benchmark %s on %s: %s",
-          target_name,
-          platform.value,
-          skip_reason,
-      )
-      results.append((target_name, TargetStatus.SKIPPED, skip_reason))
-      continue
     logging.info(
         "Executing batched target %d/%d: %s",
         idx + 1,
-        len(targets_to_run),
+        len(shard_targets),
         target_name,
     )
     # Evict shared-memory and on-disk compilation caches between targets so each
     # target measures true cold compilation latency, including after a failed
     # target.
     _clear_persistent_compilation_caches()
+    skip_reason_file = os.path.join(skip_dir, f"{idx}.txt")
+    start = time.monotonic()
     # Isolate failures per target: `mp.spawn` raises `ProcessRaisedException`
     # or `ProcessExitedException` after terminating the surviving ranks, so a
     # broken target must not abort the remaining ones.
@@ -478,10 +623,18 @@ def main(argv: Sequence[str]) -> None:
           spec.name,
           mode.value,
           platform.value,
+          skip_reason_file,
       )
     except Exception as e:  # pylint: disable=broad-exception-caught
       logging.exception("Benchmark target %s FAILED.", target_name)
-      results.append((target_name, TargetStatus.FAILED, _failure_reason(e)))
+      results.append(
+          _TargetResult(
+              target_name,
+              TargetStatus.FAILED,
+              _failure_reason(e),
+              time.monotonic() - start,
+          )
+      )
       # Report from the launcher rather than the worker so failures that never
       # reach the worker's exception handler (e.g. a rank killed by a signal)
       # are still visible on dashboards. Only node 0 exports to avoid duplicate
@@ -498,10 +651,35 @@ def main(argv: Sequence[str]) -> None:
             metrics=metrics_lib.PerformanceMetrics(),
         )
     else:
-      results.append((target_name, TargetStatus.PASSED, ""))
+      duration = time.monotonic() - start
+      if os.path.exists(skip_reason_file):
+        with open(skip_reason_file) as f:
+          reason = f.read()
+        logging.info("Benchmark target %s skipped: %s", target_name, reason)
+        results.append(
+            _TargetResult(target_name, TargetStatus.SKIPPED, reason, duration)
+        )
+      else:
+        results.append(
+            _TargetResult(target_name, TargetStatus.PASSED, "", duration)
+        )
+  shutil.rmtree(skip_dir, ignore_errors=True)
 
   logging.info("%s", _format_summary(platform, results))
-  if any(status == TargetStatus.FAILED for _, status, _ in results):
+  if xml_output_file := os.environ.get(  # PY_ENVIRON_OK=benchmark
+      "XML_OUTPUT_FILE"
+  ):
+    # Sponge merges the reports of all shards, so only the first shard reports
+    # the platform skips every shard repeats; otherwise each would be listed
+    # once per shard.
+    first_shard = _shard_env()[0] == 0
+    _write_test_xml(
+        xml_output_file,
+        platform,
+        (results[:num_platform_skips] if first_shard else [])
+        + results[num_platform_skips:],
+    )
+  if any(r.status == TargetStatus.FAILED for r in results):
     sys.exit(1)
 
 

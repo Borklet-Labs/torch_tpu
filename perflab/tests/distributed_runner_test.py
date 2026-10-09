@@ -20,6 +20,7 @@ import shutil
 import sys
 import types
 from unittest import mock
+from xml.etree import ElementTree
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -50,18 +51,36 @@ def setUpModule():
 class _FakeDistRun:
   """Stateful fake for `distributed_utils.dist_run`.
 
-  Records the spec name of every dispatched target and simulates a worker rank
+  Records the spec name of every dispatched target, simulates a worker rank
   raising (as surfaced by `torch.multiprocessing.spawn`) for specs listed in
-  `failing_specs`.
+  `failing_specs`, and simulates a factory raising `UnsupportedBenchmark` for
+  specs listed in `unsupported_specs`.
   """
 
-  def __init__(self, failing_specs: set[str]):
+  def __init__(
+      self,
+      failing_specs: set[str],
+      unsupported_specs: frozenset[str] = frozenset(),
+  ):
     self._failing_specs = failing_specs
+    self._unsupported_specs = unsupported_specs
     self.ran = []
 
-  def __call__(self, nproc_per_node, fn, spec_name, mode_value, platform_name):
+  def __call__(
+      self,
+      nproc_per_node,
+      fn,
+      spec_name,
+      mode_value,
+      platform_name,
+      skip_reason_file,
+  ):
     del nproc_per_node, fn, mode_value, platform_name
     self.ran.append(spec_name)
+    if spec_name in self._unsupported_specs:
+      # What rank 0 does when the factory raises UnsupportedBenchmark.
+      with open(skip_reason_file, "w") as f:
+        f.write(f"{spec_name} needs more chips")
     if spec_name in self._failing_specs:
       raise mp.ProcessRaisedException(
           f"RuntimeError: factory failed for {spec_name}",
@@ -70,7 +89,28 @@ class _FakeDistRun:
       )
 
 
+def _read_test_xml(path: str) -> dict[str, tuple[str, str]]:
+  """Returns {test case name: (status, message)} from a JUnit XML report."""
+  cases = {}
+  for case in ElementTree.parse(path).getroot().iter("testcase"):
+    status, message = "PASSED", ""
+    for tag in ("failure", "skipped"):
+      if (child := case.find(tag)) is not None:
+        status, message = tag.upper(), child.get("message", "")
+    cases[case.get("name")] = (status, message)
+  return cases
+
+
 class DistributedRunnerTest(seed_test_utils.RepeatableTest):
+
+  def setUp(self):
+    super().setUp()
+    # Under blaze, XML_OUTPUT_FILE is this test's own report; main() must not
+    # overwrite it.
+    self.xml_path = os.path.join(self.create_tempdir().full_path, "test.xml")
+    self.enter_context(
+        mock.patch.dict(os.environ, {"XML_OUTPUT_FILE": self.xml_path})
+    )
 
   @mock.patch.dict(registry_lib.REGISTRY, {}, clear=True)
   def test_resolve_benchmark_targets_deterministic(self):
@@ -351,6 +391,7 @@ class DistributedRunnerTest(seed_test_utils.RepeatableTest):
         "dummy",
         "eager_default",
         "v7_2x2x2",
+        mock.ANY,
     )
 
   @mock.patch.object(export_lib, "export")
@@ -419,6 +460,7 @@ class DistributedRunnerTest(seed_test_utils.RepeatableTest):
         "dummy",
         "eager_default",
         "v7_2x2x1",
+        mock.ANY,
     )
 
   def test_module_imports_without_torch_tpu_module(self):
@@ -461,6 +503,7 @@ class DistributedRunnerTest(seed_test_utils.RepeatableTest):
         "dummy",
         "eager_default",
         "b200_8",
+        mock.ANY,
     )
 
   def test_main_isolates_failed_target_and_exits_nonzero(self):
@@ -596,6 +639,241 @@ class DistributedRunnerTest(seed_test_utils.RepeatableTest):
     self.assertRegex(summary, r"known_bad_eager_default\s+PASSED")
     self.assertRegex(summary, r"healthy_compiled\s+PASSED")
     self.assertIn("2 passed, 0 failed, 1 skipped", summary)
+
+  def _run_main_sharded(
+      self, total_shards: int, shard_index: int, status_file: str
+  ) -> tuple[_FakeDistRun, str]:
+    """Runs main() as one blaze test shard and returns (dist_run, summary)."""
+    fake_dist_run = _FakeDistRun(failing_specs=set())
+    registry = {
+        name: types.SimpleNamespace(name=name, skipped_run_modes=frozenset())
+        for name in ("a", "b", "c")
+    }
+    with (
+        mock.patch.dict(registry_lib.REGISTRY, registry, clear=True),
+        mock.patch.dict(
+            os.environ,
+            {
+                "BENCHMARK_PLATFORM": "b200_8",
+                # eager_optimized is TPU-only, so it is skipped on CUDA and must
+                # not count towards any shard.
+                "TESTBRIDGE_TEST_ONLY": (
+                    "a_eager_optimized a_compiled b_eager_optimized"
+                    " b_compiled c_compiled"
+                ),
+                "TEST_TOTAL_SHARDS": str(total_shards),
+                "TEST_SHARD_INDEX": str(shard_index),
+                "TEST_SHARD_STATUS_FILE": status_file,
+            },
+        ),
+        mock.patch.object(
+            distributed_runner.distributed_utils, "dist_run", fake_dist_run
+        ),
+        self.assertLogs(level="INFO") as logs,
+    ):
+      distributed_runner.main(["distributed_runner"])
+    return fake_dist_run, "\n".join(logs.output)
+
+  @parameterized.named_parameters(
+      ("shard_0", 0, ["a", "c"]),
+      ("shard_1", 1, ["b"]),
+  )
+  def test_main_shards_runnable_targets_round_robin(
+      self, shard_index, expected_ran
+  ):
+    status_file = os.path.join(self.create_tempdir().full_path, "status")
+
+    fake_dist_run, summary = self._run_main_sharded(
+        total_shards=2, shard_index=shard_index, status_file=status_file
+    )
+
+    self.assertEqual(fake_dist_run.ran, expected_ran)
+    # Blaze treats a sharded test that never touches the status file as not
+    # supporting sharding.
+    self.assertTrue(os.path.exists(status_file))
+    # Every shard reports the targets skipped for the platform.
+    self.assertRegex(summary, r"a_eager_optimized\s+SKIPPED")
+    self.assertRegex(summary, r"b_eager_optimized\s+SKIPPED")
+    self.assertIn(f"{len(expected_ran)} passed, 0 failed, 2 skipped", summary)
+
+  def test_main_shard_without_targets_passes(self):
+    status_file = os.path.join(self.create_tempdir().full_path, "status")
+
+    # 3 runnable targets across 4 shards leaves shard 3 empty.
+    fake_dist_run, summary = self._run_main_sharded(
+        total_shards=4, shard_index=3, status_file=status_file
+    )
+
+    self.assertEmpty(fake_dist_run.ran)
+    self.assertTrue(os.path.exists(status_file))
+    self.assertIn("0 passed, 0 failed, 2 skipped", summary)
+
+  def test_main_writes_test_xml_per_target(self):
+    fake_dist_run = _FakeDistRun(failing_specs={"broken"})
+    registry = {
+        name: types.SimpleNamespace(name=name, skipped_run_modes=frozenset())
+        for name in ("broken", "healthy")
+    }
+
+    with (
+        mock.patch.dict(registry_lib.REGISTRY, registry, clear=True),
+        mock.patch.dict(
+            os.environ,
+            {
+                "BENCHMARK_PLATFORM": "b200_8",
+                # eager_optimized is TPU-only, so it is skipped on CUDA.
+                "TESTBRIDGE_TEST_ONLY": (
+                    "broken_compiled healthy_compiled healthy_eager_optimized"
+                ),
+            },
+        ),
+        mock.patch.object(
+            distributed_runner.distributed_utils, "dist_run", fake_dist_run
+        ),
+        mock.patch.object(export_lib, "export"),
+        self.assertRaises(
+            SystemExit
+        ),  # ASSERT_RAISES_OK=Runner must exit non-zero when any target fails.
+    ):
+      distributed_runner.main(["distributed_runner"])
+
+    cases = _read_test_xml(self.xml_path)
+    self.assertEqual(
+        set(cases),
+        {"broken_compiled", "healthy_compiled", "healthy_eager_optimized"},
+    )
+    self.assertEqual(cases["broken_compiled"][0], "FAILURE")
+    self.assertIn("factory failed for broken", cases["broken_compiled"][1])
+    self.assertEqual(cases["healthy_compiled"], ("PASSED", ""))
+    self.assertEqual(
+        cases["healthy_eager_optimized"],
+        ("SKIPPED", "Run mode eager_optimized is not supported on cuda"),
+    )
+    suite = ElementTree.parse(self.xml_path).getroot().find("testsuite")
+    self.assertEqual(suite.get("tests"), "3")
+    self.assertEqual(suite.get("failures"), "1")
+    self.assertEqual(suite.get("skipped"), "1")
+
+  @parameterized.named_parameters(
+      (
+          "shard_0",
+          0,
+          {
+              "a_compiled": "PASSED",
+              "c_compiled": "PASSED",
+              "a_eager_optimized": "SKIPPED",
+              "b_eager_optimized": "SKIPPED",
+          },
+      ),
+      ("shard_1", 1, {"b_compiled": "PASSED"}),
+  )
+  def test_main_test_xml_reports_skipped_targets_on_first_shard_only(
+      self, shard_index, expected_cases
+  ):
+    status_file = os.path.join(self.create_tempdir().full_path, "status")
+
+    self._run_main_sharded(
+        total_shards=2, shard_index=shard_index, status_file=status_file
+    )
+
+    self.assertEqual(
+        {
+            name: status
+            for name, (status, _) in _read_test_xml(self.xml_path).items()
+        },
+        expected_cases,
+    )
+
+  def test_shard_targets_returns_all_targets_without_sharding_env(self):
+    targets = [
+        (types.SimpleNamespace(name=name), common.RunMode.COMPILED)
+        for name in ("a", "b", "c")
+    ]
+    self.enter_context(mock.patch.dict(os.environ))
+    for k in (
+        "TEST_TOTAL_SHARDS",
+        "TEST_SHARD_INDEX",
+        "TEST_SHARD_STATUS_FILE",
+    ):
+      os.environ.pop(k, None)
+
+    self.assertEqual(distributed_runner._shard_targets(targets), targets)
+
+  @parameterized.named_parameters(("negative", "-1"), ("too_large", "2"))
+  def test_shard_env_rejects_out_of_range_index(self, shard_index):
+    self.enter_context(
+        mock.patch.dict(
+            os.environ,
+            {"TEST_TOTAL_SHARDS": "2", "TEST_SHARD_INDEX": shard_index},
+        )
+    )
+
+    with self.assertRaisesRegex(  # ASSERT_RAISES_OK=Shard env validation.
+        ValueError, "out of range"
+    ):
+      distributed_runner._shard_env()
+
+  def test_main_reports_factory_unsupported_benchmark_as_skipped(self):
+    fake_dist_run = _FakeDistRun(
+        failing_specs=set(), unsupported_specs=frozenset({"too_big"})
+    )
+    registry = {
+        name: types.SimpleNamespace(name=name, skipped_run_modes=frozenset())
+        for name in ("too_big", "healthy")
+    }
+
+    with (
+        mock.patch.dict(registry_lib.REGISTRY, registry, clear=True),
+        mock.patch.dict(
+            os.environ,
+            {
+                "BENCHMARK_PLATFORM": "b200_8",
+                "TESTBRIDGE_TEST_ONLY": "too_big_compiled healthy_compiled",
+                # Runtime skips happen on the shard that ran the target, so
+                # even a non-first shard reports them.
+                "TEST_TOTAL_SHARDS": "2",
+                "TEST_SHARD_INDEX": "1",
+            },
+        ),
+        mock.patch.object(
+            distributed_runner.distributed_utils, "dist_run", fake_dist_run
+        ),
+        mock.patch.object(distributed_runner, "_shard_targets", lambda t: t),
+        self.assertLogs(level="INFO") as logs,
+    ):
+      distributed_runner.main(["distributed_runner"])
+
+    self.assertEqual(fake_dist_run.ran, ["too_big", "healthy"])
+    summary = "\n".join(logs.output)
+    self.assertRegex(
+        summary, r"too_big_compiled\s+SKIPPED\s+too_big needs more chips"
+    )
+    self.assertIn("1 passed, 0 failed, 1 skipped", summary)
+    self.assertEqual(
+        _read_test_xml(self.xml_path),
+        {
+            "too_big_compiled": ("SKIPPED", "too_big needs more chips"),
+            "healthy_compiled": ("PASSED", ""),
+        },
+    )
+
+  def test_write_test_xml_strips_invalid_control_characters(self):
+    distributed_runner._write_test_xml(
+        self.xml_path,
+        target_lib.Platform.B200_8,
+        [
+            distributed_runner._TargetResult(
+                "broken_compiled",
+                distributed_runner.TargetStatus.FAILED,
+                "\x1b[31mRuntimeError\x1b[0m: bad\x00 value",
+            )
+        ],
+    )
+
+    self.assertEqual(
+        _read_test_xml(self.xml_path),
+        {"broken_compiled": ("FAILURE", "[31mRuntimeError[0m: bad value")},
+    )
 
   @mock.patch.object(torch.distributed, "barrier")
   @mock.patch.object(torch.distributed, "destroy_process_group")

@@ -584,6 +584,11 @@ genmpm(
 # `distributed_runner` under blaze test on a single TPU host. Select
 # benchmarks with --test_filter (full target names, e.g.
 # `--test_filter=qwen3_8_27b_4_layers_simple_fsdp_training_compiled`).
+# `distributed_runner` splits the runnable targets round-robin across
+# `shard_count` shards, each on its own host.
+# Every shard still holds a full TPU host even when the filter leaves it nothing
+# to run, so add `--test_sharding_strategy=disabled` when filtering to fewer
+# targets than shards.
 _DISTRIBUTED_DEV_BENCHMARKS_ARGS = [
     "--min_warmup_steps=3",
     "--max_warmup_steps=10",
@@ -612,6 +617,7 @@ torch_tpu_py_test(
     main = "distributed_runner.py",
     nolocal = "user requested to run this manually",
     notap = "Development benchmark target; run manually on demand.",
+    shard_count = 8,
     tags = [
         "nofastbuild",
         "nosan",  # *san tests provide no benefit for benchmarks.
@@ -640,6 +646,7 @@ torch_tpu_py_test(
     main = "distributed_runner.py",
     nolocal = "user requested to run this manually",
     notap = "Development benchmark target; run manually on demand.",
+    shard_count = 8,
     tags = [
         "nofastbuild",
         "nosan",  # *san tests provide no benefit for benchmarks.
@@ -666,6 +673,7 @@ torch_tpu_py_test(
     main = "distributed_runner.py",
     nolocal = "user requested to run this manually",
     notap = "Development benchmark target; run manually on demand.",
+    shard_count = 8,
     tags = [
         "nofastbuild",
         "nosan",  # *san tests provide no benefit for benchmarks.
@@ -712,6 +720,7 @@ torch_tpu_py_test(
     nolocal = "user requested to run this manually",
     notap = "Development benchmark target; run manually on demand.",
     platform = "//buildenv/platforms/forge/gpu/b200_full_only:2",
+    shard_count = 4,
     tags = [
         "nofastbuild",
         "nosan",  # *san tests provide no benefit for benchmarks.
