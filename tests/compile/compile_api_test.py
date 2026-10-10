@@ -884,6 +884,68 @@ class CompileApiTest(seed_test_utils.RepeatableTest):
     # The logical values of y should be identical to x.
     utils.assert_close(actual=actual, expected=x)
 
+  def test_make_constant_tensor_slice(self):
+    # Arrange
+    tpu_device = torch.device('tpu')
+    base = torch.arange(16, dtype=torch.float32, device='cpu')  # 64 bytes
+    x = base[4:12]  # 32 bytes, offset=4, contiguous
+    self.assertTrue(x.is_contiguous())
+
+    # Act
+    y = tpu_torch_compile.make_constant_tensor(x)
+    mlir = tpu_torch_compile.build_mlir([y], [])
+    mlir_text = tpu_torch_compile.serialize_mlir_text(mlir)
+    actual = y.cpu()
+
+    # Assert
+    # y has the same shape and dtype as x.
+    self.assertEqual(y.shape, x.shape)
+    self.assertEqual(y.dtype, x.dtype)
+    # y is on the TPU.
+    self.assertEqual(y.device.type, tpu_device.type)
+
+    expected_mlir = """module @tt_jit_make_constant_tensor_torchtpu_internal_constant {
+  func.func @main() -> tensor<8xf32> {
+    %cst = stablehlo.constant dense<[4.000000e+00, 5.000000e+00, 6.000000e+00, 7.000000e+00, 8.000000e+00, 9.000000e+00, 1.000000e+01, 1.100000e+01]> : tensor<8xf32>
+    return %cst : tensor<8xf32>
+  }
+}"""
+    self.assertEqual(mlir_text.strip(), expected_mlir.strip())
+
+    # The logical values of y should be identical to x.
+    utils.assert_close(actual=actual, expected=x)
+
+  def test_make_constant_tensor_strided_slice(self):
+    # Arrange
+    tpu_device = torch.device('tpu')
+    base = torch.arange(16, dtype=torch.float32, device='cpu')  # 64 bytes
+    x = base[::2]  # 32 bytes, offset=0, non-contiguous
+    self.assertFalse(x.is_contiguous())
+
+    # Act
+    y = tpu_torch_compile.make_constant_tensor(x)
+    mlir = tpu_torch_compile.build_mlir([y], [])
+    mlir_text = tpu_torch_compile.serialize_mlir_text(mlir)
+    actual = y.cpu()
+
+    # Assert
+    # y has the same shape and dtype as x.
+    self.assertEqual(y.shape, x.shape)
+    self.assertEqual(y.dtype, x.dtype)
+    # y is on the TPU.
+    self.assertEqual(y.device.type, tpu_device.type)
+
+    expected_mlir = """module @tt_jit_make_constant_tensor_torchtpu_internal_constant {
+  func.func @main() -> tensor<8xf32> {
+    %cst = stablehlo.constant dense<[0.000000e+00, 2.000000e+00, 4.000000e+00, 6.000000e+00, 8.000000e+00, 1.000000e+01, 1.200000e+01, 1.400000e+01]> : tensor<8xf32>
+    return %cst : tensor<8xf32>
+  }
+}"""
+    self.assertEqual(mlir_text.strip(), expected_mlir.strip())
+
+    # The logical values of y should be identical to x.
+    utils.assert_close(actual=actual, expected=x)
+
   def test_assign_constant_tensor(self):
     # Arrange
     tpu_device = torch.device('tpu')

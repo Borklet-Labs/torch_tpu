@@ -31,6 +31,7 @@
 #include <vector>
 
 #include "ATen/core/ATen_fwd.h"
+#include "ATen/ops/clone.h"
 #include "absl/algorithm/container.h"
 #include "absl/base/call_once.h"
 #include "absl/base/nullability.h"
@@ -69,6 +70,7 @@
 #include "mlir/Support/LLVM.h"
 #include "stablehlo/dialect/Serialization.h"
 #include "stablehlo/integrations/cpp/builder/AttrTypeBuilderUtil.h"
+#include "torch/headeronly/core/MemoryFormat.h"
 #include "torch/headeronly/core/ScalarType.h"
 #include "tsl/profiler/lib/traceme.h"
 #include "xla/pjrt/maybe_owning_mlir_module.h"
@@ -705,18 +707,24 @@ std::vector<at::Tensor> ExecuteCompiledModel(
 absl::StatusOr<at::Tensor> MakeConstantTensor(const at::Tensor& cpu_tensor) {
   TT_RET_CHECK(cpu_tensor.is_cpu(), error::kInvalidArgument)
       << "the input to MakeConstantTensor must be a CPU tensor";
-  // Ensure that the input tensor is a contiguous, 1D array of bytes.
-  // If the input tensor is already a 1D array of bytes, this will be a no-op.
-  at::Tensor contiguous_cpu_bytes_tensor =
-      cpu_tensor.flatten().view(at::ScalarType::Byte);
-  if (!contiguous_cpu_bytes_tensor.is_contiguous()) {
-    contiguous_cpu_bytes_tensor = contiguous_cpu_bytes_tensor.contiguous();
+  // Ensure that the input tensor is contiguous with zero offset. This requires
+  // a copy if the tensor has an offset or is not contiguous.
+  at::Tensor contiguous_cpu_bytes_tensor = cpu_tensor;
+  if (!contiguous_cpu_bytes_tensor.is_contiguous() ||
+      contiguous_cpu_bytes_tensor.storage_offset() != 0) {
+    // Use clone(Contiguous) instead of .contiguous() so that contiguous slices
+    // are reset to zero offset.
+    contiguous_cpu_bytes_tensor =
+        at::clone(cpu_tensor, at::MemoryFormat::Contiguous);
   }
 
   // Memcpy the bytes into a vector. We have to do this so that dropping the
   // tensor does not invalidate the DeferredOp we will create.
   const void* const cpu_bytes_ptr = contiguous_cpu_bytes_tensor.data_ptr();
-  const size_t num_bytes = contiguous_cpu_bytes_tensor.storage().nbytes();
+  // Use tensor nbytes, not storage nbytes; if cpu_tensor is a contiguous,
+  // zero-offset slice of a larger tensor, we only want to copy the bytes that
+  // are in the slice, not the entire underlying buffer.
+  const size_t num_bytes = contiguous_cpu_bytes_tensor.nbytes();
   std::vector<char> cpu_bytes_copy(num_bytes);
   // In the case of zero-sized constants both the data_ptr() pointer from the
   // input buffer and the data() pointer on the vector will be null.
@@ -726,7 +734,9 @@ absl::StatusOr<at::Tensor> MakeConstantTensor(const at::Tensor& cpu_tensor) {
     std::memcpy(cpu_bytes_copy.data(), cpu_bytes_ptr, num_bytes);
   }
 
-  // Create a DeferredOp that represents the 1D array of bytes as a constant.
+  // Create a DeferredOp that will interpret the bytes as a constant tensor
+  // of the desired shape and dtype. This does *NOT* preserve the strides or
+  // storage offset of the input tensor.
   Dimensions dimensions = CopyIntVector(cpu_tensor.sizes());
   TT_ASSIGN_OR_RETURN(mlir::ElementType element_type,
                       ConvertTo<mlir::ElementType>(cpu_tensor.scalar_type()));
