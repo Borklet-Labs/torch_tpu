@@ -53,6 +53,7 @@ torch_tpu_cc_library(
     hdrs = ["uniform.h"],
     deps = [
         "//csrc/common:error_utils",
+        "//csrc/common:to_string",
         "//csrc/ops:op_builder_utils",
         "@com_google_absl//absl/status:statusor",
         "@llvm-project//llvm:Support",

@@ -21,6 +21,7 @@
 
 #include "absl/status/statusor.h"
 #include "csrc/common/error_utils.h"
+#include "csrc/common/to_string.h"
 #include "csrc/ops/op_builder_utils.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
@@ -75,7 +76,9 @@ absl::StatusOr<mlir::MlirOp> BitsToUniform(mlir::MlirOp random_bits,
     random_bits_as_float_type = random_bits_type.clone(op_builder.getF16Type());
   } else {
     return TT_ERROR(error::kInvalidArgument)
-           << "unsupported float type for uniform";
+           << "expected the float type to be one of float64, float32, "
+              "bfloat16, or float16, got "
+           << ToString(from_elem_type);
   }
 
   // Float is 1 sign bit, k exponent bits, and n mantissa bits. Exponent is

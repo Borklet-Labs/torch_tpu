@@ -7441,6 +7441,16 @@ Supported combinations for non-constant padding:
     ):
       torch.zeros(5, dtype=torch.int32, device=et.device()).uniform_()
 
+  def test_uniform_float8_unsupported(self):
+    t = torch.empty(2, dtype=torch.float8_e4m3fn, device=et.device())
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""uniform_(): expected the float type to be one of float64, float32, bfloat16, or float16, got f8E4M3FN""",
+        gpu=""""check_uniform_bounds" not implemented for 'Float8_e4m3fn'""",
+    ):
+      t.uniform_()
+      t.cpu()
+
   def test_linalg_inv_ex_1d(self):
     a = torch.ones(5, device=et.device())
 
