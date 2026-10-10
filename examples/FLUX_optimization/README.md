@@ -33,42 +33,63 @@ repository.
 
 ## Benchmark Matrix on Cloud TPU Hardware
 
-Executed on Cloud TPU runner (`batch_size=2`, `seq_len=640`):
+Mean training step time (forward + Flow Matching MSE loss + backward + AdamW
+step) for a single `DoubleStreamBlock`:
 
-| Configuration                    | `use_zero_copy_view` | `use_fused_rope` | `use_splash_attention` | `compile` | Mean Step | Speedup vs | Optimization Details           |
-:                                  :                      :                  :                        :           : Time      : Baseline   :                                :
-| :------------------------------- | :------------------: | :--------------: | :--------------------: | :-------: | :-------: | :--------: | :----------------------------- |
-| **1. Baseline Reference          | ❌ False              | ❌ False          | ❌ False                | ❌ False   | **1576.01 | 1.00x      | Reference baseline             |
-: (Eager)**                        :                      :                  :                        :           : ms**      : (ref)      :                                :
-| [**2. Standalone                 | ❌ False              | ❌ False          | ✅ True                 | ❌ False   | **678.29  | **2.32x**  | [Milestone 4:                  |
-: SplashAttention**](#milestone-4) :                      :                  :                        :           : ms**      :            : SplashAttention](#milestone-4) :
-| [**3. Zero-Copy Views            | ✅ True               | ❌ False          | ❌ False                | ❌ False   | **578.03  | **2.72x**  | [Milestone 1: Zero-Copy        |
-: Only**](#milestone-1)            :                      :                  :                        :           : ms**      :            : Views](#milestone-1)           :
-| [**4. Compile Only (Unoptimized  | ❌ False              | ❌ False          | ❌ False                | ✅ True    | **344.50  | **4.57x**  | [Milestone 3: XLA              |
-: Graph)**](#milestone-3)          :                      :                  :                        :           : ms**      :            : Compilation](#milestone-3)     :
-| [**5. Zero-Copy + Fused RoPE +   | ✅ True               | ✅ True           | ✅ True                 | ❌ False   | **668.00  | **2.36x**  | [Milestones 1](#milestone-1),  |
-: SplashAttention                  :                      :                  :                        :           : ms**      :            : [2](#milestone-2) &            :
-: (Eager)**](#milestone-4)         :                      :                  :                        :           :           :            : [4](#milestone-4)              :
-| [**6. Zero-Copy Views +          | ✅ True               | ❌ False          | ❌ False                | ✅ True    | **113.31  | **13.91x** | [Milestone 1](#milestone-1) +  |
-: Compile**](#milestone-1)         :                      :                  :                        :           : ms**      :            : [Milestone 3](#milestone-3)    :
-| [**7. Zero-Copy + Fused RoPE +   | ✅ True               | ✅ True           | ✅ True                 | ✅ True    | **169.16  | **9.32x**  | [Milestones 1](#milestone-1),  |
-: SplashAttention +                :                      :                  :                        :           : ms**      :            : [2](#milestone-2),             :
-: Compile**](#milestone-4)         :                      :                  :                        :           :           :            : [3](#milestone-3) &            :
-:                                  :                      :                  :                        :           :           :            : [4](#milestone-4)              :
-| [**8. Fully Optimized            | ✅ True               | ✅ True           | ❌ False                | ✅ True    | **69.16   | **22.79x** | [Milestones 1](#milestone-1),  |
-: (Zero-Copy + Fused RoPE +        :                      :                  :                        :           : ms**      :            : [2](#milestone-2) &            :
-: Compile)**](#milestone-2)        :                      :                  :                        :           :           :            : [3](#milestone-3) (Standard    :
-:                                  :                      :                  :                        :           :           :            : SDPA)                          :
+| Configuration             | `use_zero_copy_view` | `use_fused_rope` | `use_splash_attention` | `compile` | Mean     | Speedup   | Optimization Details           |
+:                           :                      :                  :                        :           : Step     : vs        :                                :
+:                           :                      :                  :                        :           : Time     : Baseline  :                                :
+| :------------------------ | :------------------: | :--------------: | :--------------------: | :-------: | -------: | --------: | :----------------------------- |
+| **1. Baseline Reference   | ❌ False              | ❌ False          | ❌ False                | ❌ False   | **178.61 | 1.00x     | Reference baseline             |
+: (Eager)**                 :                      :                  :                        :           : ms**     : (ref)     :                                :
+| [**2. Standalone          | ❌ False              | ❌ False          | ✅ True                 | ❌ False   | **149.81 | **1.19x** | [Milestone 4:                  |
+: SplashAttention           :                      :                  :                        :           : ms**     :           : SplashAttention](#milestone-4) :
+: (Eager)**](#milestone-4)  :                      :                  :                        :           :          :           :                                :
+| [**3. Zero-Copy Views     | ✅ True               | ❌ False          | ❌ False                | ❌ False   | **178.30 | **1.00x** | [Milestone 1: Zero-Copy        |
+: Only                      :                      :                  :                        :           : ms**     :           : Views](#milestone-1)           :
+: (Eager)**](#milestone-1)  :                      :                  :                        :           :          :           :                                :
+| [**4. Compile Only        | ❌ False              | ❌ False          | ❌ False                | ✅ True    | **159.33 | **1.12x** | [Milestone 3: XLA              |
+: (Unoptimized              :                      :                  :                        :           : ms**     :           : Compilation](#milestone-3)     :
+: Graph)**](#milestone-3)   :                      :                  :                        :           :          :           :                                :
+| [**5. Zero-Copy + Fused   | ✅ True               | ✅ True           | ✅ True                 | ❌ False   | **156.73 | **1.14x** | [Milestones 1](#milestone-1),  |
+: RoPE + SplashAttention    :                      :                  :                        :           : ms**     :           : [2](#milestone-2) &            :
+: (Eager)**](#milestone-4)  :                      :                  :                        :           :          :           : [4](#milestone-4)              :
+| [**6. Zero-Copy Views +   | ✅ True               | ❌ False          | ❌ False                | ✅ True    | **159.08 | **1.12x** | [Milestone 1](#milestone-1) +  |
+: Compile**](#milestone-1)  :                      :                  :                        :           : ms**     :           : [Milestone 3](#milestone-3)    :
+| [**7. Fully Optimized     | ✅ True               | ✅ True           | ✅ True                 | ✅ True    | **122.51 | **1.46x** | [Milestones 1](#milestone-1),  |
+: (Zero-Copy + Fused RoPE + :                      :                  :                        :           : ms**     :           : [2](#milestone-2),             :
+: SplashAttention +         :                      :                  :                        :           :          :           : [3](#milestone-3) &            :
+: Compile)**](#milestone-4) :                      :                  :                        :           :          :           : [4](#milestone-4)              :
+| [**8. Zero-Copy + Fused   | ✅ True               | ✅ True           | ❌ False                | ✅ True    | **153.60 | **1.16x** | [Milestones 1](#milestone-1),  |
+: RoPE + Compile (Standard  :                      :                  :                        :           : ms**     :           : [2](#milestone-2) &            :
+: SDPA)**](#milestone-2)    :                      :                  :                        :           :          :           : [3](#milestone-3)              :
 
-> [!NOTE] - **In Eager Mode**: Standalone SplashAttention delivers an immediate
-> **2.32x speedup** over eager baseline (dropping from 1576.01 ms down to 678.29
-> ms) by computing attention in SRAM tiles and bypassing eager quadratic HBM
-> allocations. - **In Compiled Mode**: Standard SDPA lowers to a native XLA HLO
-> dot-product-attention call that fully fuses with surrounding layernorms,
-> modulations, and projections (reaching **69.16 ms**). SplashAttention executes
-> as a Pallas custom kernel call, which preserves custom tiling control and
-> scales to massive context lengths without $O(S^2)$ memory growth, reaching
-> **169.16 ms** under compilation.
+**Measurement setup:**
+
+-   **Hardware:** a single TPU v6e chip (32 GiB HBM).
+-   **Software:** Python 3.14, PyTorch 2.15 (pre-release), JAX 0.12, einops
+    0.8.2, and TorchTPU built from source.
+-   **Model shape:** `batch_size=2`, `hidden_size=1024`, `num_heads=8`
+    (`head_dim=128`), `img_seq_len=32256`, `txt_seq_len=512` (total sequence
+    length 32,768).
+-   **Precision:** bfloat16 block parameters and inputs.
+-   **SplashAttention block sizes:** 2048 for `block_q`, `block_kv`, and the
+    dK/dV backward tiles.
+-   **Timing:** 3 warmup steps followed by 10 timed steps. Each timed step ends
+    with `torch.accelerator.synchronize()` so that it includes device execution,
+    and the profiler is disabled during the timed steps.
+
+> [!NOTE]
+>
+> -   **Sequence length matters**: At this sequence length, attention dominates
+>     the step. At shorter sequence lengths, compilation gives a larger speedup
+>     (for example, about 3x at a sequence length of 640), while the attention
+>     and layout optimizations matter less.
+> -   **SplashAttention needs to be configured for the workload**: Running in
+>     bfloat16 and using larger block sizes is what makes SplashAttention faster
+>     than standard SDPA here. With float32 inputs and the default 512-token
+>     blocks, SplashAttention was slower than standard SDPA at the same sequence
+>     length.
 
 --------------------------------------------------------------------------------
 
@@ -161,9 +182,12 @@ attn = attn.transpose(1, 2).reshape(b, l, -1)
 > `3` dimension at index `2` (`(B, L, 3, H, D)`) preserves contiguous memory
 > blocks of size `H * D` for each head group. Calling `torch.unbind(img_qkv,
 > dim=2)` creates three tensor headers (`img_q`, `img_k`, `img_v`) with adjusted
-> storage offsets and strides without moving a single byte in TPU HBM. Even in
-> eager mode (`compile=False`), this single change speeds up step time from
-> **1576.01 ms to 578.03 ms (2.72x speedup)**.
+> storage offsets and strides without moving a single byte in TPU HBM. The
+> layout copy that `einops.rearrange` introduces in the backward pass is
+> removed. In the benchmark matrix, this is a small fraction of the step:
+> **178.61 ms to 178.30 ms** in eager mode and **159.33 ms to 159.08 ms** under
+> compilation. The benefit grows with the amount of QKV data moved per step,
+> such as in full models with many blocks.
 
 --------------------------------------------------------------------------------
 
@@ -261,8 +285,8 @@ def apply_rope(xq: Tensor, xk: Tensor, freqs_cis: Tensor) -> tuple[Tensor, Tenso
 > 50%, while the algebraic rotation `(x0*cos - x1*sin, x0*sin + x1*cos)` maps
 > directly to native Fused Multiply-Add (FMA) instructions. When compiled, this
 > enables seamless fusion into upstream projection and downstream attention
-> kernels, reducing step time from **113.31 ms to 69.16 ms (an additional 1.64x
-> speedup, reaching 22.79x over the baseline)**.
+> kernels, reducing the compiled step time from **159.08 ms to 153.60 ms (a 3.4%
+> improvement)** in the benchmark matrix.
 
 --------------------------------------------------------------------------------
 
@@ -316,8 +340,10 @@ faster computation.
 > `DoubleStreamBlock` larger XLA computation graph. The XLA compiler fuses
 > sequences of elementwise operations, normalizations, and residual additions.
 > Compilation also enables automatic buffer donation and asynchronous
-> instruction pipelining, slashing execution time from **578.03 ms to 113.31 ms
-> (a 5.10x compiler speedup over eager zero-copy views)**.
+> instruction pipelining, reducing the step time from **178.61 ms to 159.33 ms
+> (1.12x)** in the benchmark matrix. Because attention dominates the step at a
+> sequence length of 32,768, the compiler has less to fuse. At a sequence length
+> of 640, the same change is about 3x faster.
 
 --------------------------------------------------------------------------------
 
@@ -353,8 +379,16 @@ attn = splash_sdpa(q_sdpa, k_sdpa, v_sdpa, is_causal=False)
 > HBM bandwidth. SplashAttention uses Pallas to execute custom on-chip tiling
 > directly on TPU Vector and Tensor processing hardware. This prevents
 > materialization of intermediate attention scores in HBM, reducing memory
-> scaling from O(S^2) to O(S) and outperforming standard SDPA at sequence length
-> 4096 in both eager (1.22x) and compiled (1.11x) modes.
+> scaling from O(S^2) to O(S). At a sequence length of 32,768 in bfloat16 with
+> 2048-token blocks, SplashAttention is faster than standard SDPA in both eager
+> (**182.61 ms to 156.73 ms, 1.17x**) and compiled (**153.60 ms to 122.51 ms,
+> 1.25x**) modes, with zero-copy views and fused RoPE enabled in both cases.
+>
+> **Tuning SplashAttention**: Block sizes and precision have a large effect. At
+> the same sequence length, the default 512-token blocks were about 10% slower
+> than standard SDPA under compilation, and float32 inputs were slower still.
+> Benchmark a few block sizes (for example 512, 1024, and 2048) for your
+> sequence length, and run the kernel in bfloat16.
 >
 > **Note on Pallas & JAX usage**: Although Pallas kernels are defined using the
 > `jax` package DSL (see [`kernels/README.md`](kernels/README.md) for a full
@@ -411,8 +445,9 @@ bazel test \
 ### 2. Run Interactive Benchmarks Across Optimization Milestones
 
 You can run `flux_test` directly on a TPU host and toggle individual
-optimization flags via CLI arguments to reproduce any row in the benchmark
-matrix:
+optimization flags via CLI arguments. The commands below use a sequence length
+of 640 for faster iteration. To match the sequence length used in the benchmark
+matrix, pass `--img_seq_len=32256 --txt_seq_len=512` instead:
 
 ```bash
 # Configuration 1: Unoptimized Baseline (Eager)
