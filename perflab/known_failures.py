@@ -81,6 +81,17 @@ KNOWN_FAILURES: tuple[KnownFailure, ...] = (
             " deferred graph"
         ),
     ),
+    # TODO(b/571695076): Remove once the 4096 parameter training step fits.
+    KnownFailure(
+        benchmark="synthetic_4096_params_training",
+        framework=mode_lib.Framework.TORCH,
+        device_kind=target_lib.DeviceKind.TPU,
+        run_modes=frozenset({common.RunMode.EAGER_OPTIMIZED}),
+        reason=(
+            "the fused forward, backward and AdamW step needs more XLA"
+            " parameters (20486) than supported (16314)"
+        ),
+    ),
     # TODO(b/568037427): Remove the TorchAX entries as their failures are fixed.
     #
     # `torch._grouped_mm`, used by the transformers MoE experts, has no
@@ -233,6 +244,18 @@ KNOWN_FAILURES: tuple[KnownFailure, ...] = (
         reason=(
             "torch.tensor() without device= in scaled_size_sqrt() in"
             " modeling_deberta.py needs a C++ compiler for Inductor CPU codegen"
+        ),
+    ),
+    # TODO(b/571695076): Remove once the 4096 parameter training step compiles
+    # within the subprocess timeout.
+    KnownFailure(
+        benchmark="synthetic_4096_params_training",
+        framework=mode_lib.Framework.TORCH,
+        device_kind=target_lib.DeviceKind.CUDA,
+        run_modes=frozenset({common.RunMode.COMPILED}),
+        reason=(
+            "Inductor compilation of the training step exceeds the 900 s"
+            " subprocess timeout on b200_1"
         ),
     ),
 )
