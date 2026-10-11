@@ -1874,6 +1874,40 @@ class OpsUnitTest(TorchTpuVsCpuTestBase):
 
     self.assert_close_tpu_vs_cpu(test_fn)
 
+  def test_gather_scatter_zero_stride_and_size1_broadcast(self):
+    """Tests eager and compiled gather/scatter_add on expanded broadcast indices."""
+    for dtype in (torch.float32, torch.bfloat16):
+      cpu_x = torch.randn(1, 4, 16, 32, dtype=dtype, requires_grad=True)
+      cpu_base_idx = torch.randint(0, 32, (1, 1, 16, 16), dtype=torch.long)
+      cpu_exp_idx = cpu_base_idx.expand(1, 4, 16, 16)
+      cpu_out = torch.gather(cpu_x, -1, cpu_exp_idx)
+      cpu_grad_out = torch.randn_like(cpu_out)
+      cpu_out.backward(cpu_grad_out)
+
+      tpu_x = cpu_x.detach().to("tpu").requires_grad_(True)
+      tpu_base_idx = cpu_base_idx.to("tpu")
+      tpu_exp_idx = tpu_base_idx.expand(1, 4, 16, 16)
+      self.assertEqual(tpu_exp_idx.stride(1), 0)
+      tpu_out = torch.gather(tpu_x, -1, tpu_exp_idx)
+      tpu_out.backward(cpu_grad_out.to("tpu"))
+      utils.assert_close(actual=tpu_out.cpu(), expected=cpu_out)
+      utils.assert_close(actual=tpu_x.grad.cpu(), expected=cpu_x.grad)
+
+      @torch.compile(dynamic=False)
+      def compiled_fn(x, base_idx, grad_out):
+        idx = base_idx.expand(1, 4, 16, 16)
+        out = torch.gather(x, -1, idx)
+        grad_in = torch.zeros_like(x).scatter_add_(-1, idx, grad_out)
+        return out, grad_in
+
+      comp_out, comp_grad = compiled_fn(
+          cpu_x.detach().to("tpu"),
+          cpu_base_idx.to("tpu"),
+          cpu_grad_out.to("tpu"),
+      )
+      utils.assert_close(actual=comp_out.cpu(), expected=cpu_out)
+      utils.assert_close(actual=comp_grad.cpu(), expected=cpu_x.grad)
+
   @parameterized.product(
       input_dtype=[torch.int32, torch.int64],
       op_fn=[

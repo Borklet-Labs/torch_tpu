@@ -26,6 +26,12 @@
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
+#include "c10/core/DispatchKey.h"
+#include "c10/core/DispatchKeySet.h"
+#include "c10/core/Storage.h"
+#include "c10/core/TensorImpl.h"
+#include "c10/util/intrusive_ptr.h"
+#include "csrc/common/aten_utils.h"
 #include "csrc/common/cache_key.h"
 #include "csrc/common/device_type.h"
 #include "csrc/common/dimension_types.h"
@@ -60,6 +66,21 @@ absl::StatusOr<at::Tensor> ResolveAuxiliaryTensorDevice(
   TT_ASSIGN_OR_RETURN(DeviceBufferRef tpu_buffer,
                       CopyCpuToTpuBuffer(tensor, /*non_blocking=*/false));
   return MakeTensor(std::move(tpu_buffer));
+}
+
+bool HasContiguousUnsqueezedStrides(
+    const at::Tensor& index, absl::Span<const int64_t> unsqueezed_sizes) {
+  const int64_t rank = unsqueezed_sizes.size();
+  Dimensions unsqueezed_strides(rank, 1);
+  for (int64_t d = rank - 2; d >= 0; --d) {
+    unsqueezed_strides[d] = unsqueezed_strides[d + 1] * unsqueezed_sizes[d + 1];
+  }
+  for (int64_t d = 0; d < rank; ++d) {
+    if (unsqueezed_sizes[d] > 1 && index.stride(d) != unsqueezed_strides[d]) {
+      return false;
+    }
+  }
+  return true;
 }
 
 }  // namespace
@@ -207,6 +228,60 @@ absl::StatusOr<int64_t> ValidateIndexInputsAndGetDim(const at::Tensor& self,
     }
   }
   return dim;
+}
+
+std::optional<UnexpandedZeroStrideIndex> TryUnexpandZeroStrideIndex(
+    const at::Tensor& index) {
+  const int64_t rank = index.dim();
+  if (rank <= 0 || index.numel() == 0 || index.is_contiguous() ||
+      index.storage_offset() != 0 || index.is_conj()) {
+    return std::nullopt;
+  }
+  Dimensions unsqueezed_sizes(rank);
+  Dimensions squeezed_sizes;
+  Dimensions bcast_dims;
+  squeezed_sizes.reserve(rank);
+  bcast_dims.reserve(rank);
+  bool has_expanded_dim = false;
+  for (int64_t d = 0; d < rank; ++d) {
+    const int64_t sz = index.size(d);
+    if (sz > 1 && index.stride(d) == 0) {
+      unsqueezed_sizes[d] = 1;
+      has_expanded_dim = true;
+    } else {
+      unsqueezed_sizes[d] = sz;
+      squeezed_sizes.push_back(sz);
+      bcast_dims.push_back(d);
+    }
+  }
+  if (!has_expanded_dim || squeezed_sizes.empty() ||
+      !HasContiguousUnsqueezedStrides(index, unsqueezed_sizes)) {
+    return std::nullopt;
+  }
+
+  const auto base_buf = GetBaseBuffer(index);
+  if (!base_buf.ok()) {
+    return std::nullopt;
+  }
+  const Dimensions* target_sizes = nullptr;
+  if (base_buf->dimensions() == squeezed_sizes) {
+    target_sizes = &squeezed_sizes;
+  } else if (base_buf->dimensions() == unsqueezed_sizes) {
+    target_sizes = &unsqueezed_sizes;
+  } else {
+    return std::nullopt;
+  }
+  at::Tensor view(c10::make_intrusive<c10::TensorImpl>(
+      c10::Storage(index.storage()),
+      c10::DispatchKeySet(c10::DispatchKey::PrivateUse1), index.dtype()));
+  view.unsafeGetTensorImpl()->set_sizes_contiguous(*target_sizes);
+  view.unsafeGetTensorImpl()->set_storage_offset(0);
+  return UnexpandedZeroStrideIndex{
+      .tensor = std::move(view),
+      .squeezed_dims = std::move(squeezed_sizes),
+      .bcast_dims = std::move(bcast_dims),
+      .logical_dims = CopyIntVector(index.sizes()),
+  };
 }
 
 }  // namespace torch_tpu

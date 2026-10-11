@@ -18,14 +18,32 @@
 #define TORCH_TPU_CSRC_OPS_INDEX_UTILS_H_
 
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 #include "ATen/core/ATen_fwd.h"
+#include "ATen/core/TensorBody.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "csrc/common/dimension_types.h"
 
 namespace torch_tpu {
+
+struct UnexpandedZeroStrideIndex {
+  at::Tensor tensor;  // UNINITIALIZED_TENSOR_OK
+  Dimensions squeezed_dims;
+  Dimensions bcast_dims;
+  Dimensions logical_dims;
+};
+
+// When `index` is an expanded view with zero-stride dimensions (such as
+// multi-head `c2p_dynamic_expand` passed across a graph break or in Eager
+// mode), un-expand the zero-stride axes to a contiguous zero-copy view of its
+// backing storage buffer so `DispatchOp` does not launch an ephemeral
+// `tt_jit_execute_as_strided` kernel and `BuildGatherShlo`/`BuildScatterShlo`
+// sees the broadcast.
+std::optional<UnexpandedZeroStrideIndex> TryUnexpandZeroStrideIndex(
+    const at::Tensor& index);
 
 // Resolves negative indices by converting them to positive indices
 absl::Status ResolveNegativeIndices(std::vector<at::Tensor>& indices,

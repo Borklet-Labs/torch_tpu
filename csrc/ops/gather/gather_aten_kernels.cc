@@ -17,6 +17,7 @@
 #include "csrc/ops/gather/gather_aten_kernels.h"
 
 #include <cstdint>
+#include <optional>
 #include <utility>
 
 #include "ATen/core/ATen_fwd.h"
@@ -24,6 +25,12 @@
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
+#include "c10/core/DispatchKey.h"
+#include "c10/core/DispatchKeySet.h"
+#include "c10/core/Storage.h"
+#include "c10/core/TensorImpl.h"
+#include "c10/util/intrusive_ptr.h"
+#include "csrc/common/aten_utils.h"
 #include "csrc/common/cache_key.h"
 #include "csrc/common/dimension_types.h"
 #include "csrc/common/dtype.h"
@@ -35,12 +42,15 @@
 #include "csrc/eager/op_dispatcher.h"
 #include "csrc/eager/tensor_to_buffer.h"
 #include "csrc/ops/gather/gather.h"
+#include "csrc/ops/index_utils.h"
 #include "csrc/ops/macros/kernel.h"
 #include "csrc/ops/op_builder_utils.h"
 #include "csrc/ops/op_names.h"
 #include "csrc/ops/resize/resize_aten_kernels.h"
+#include "mlir/IR/BuiltinTypes.h"
 #include "stablehlo/integrations/cpp/builder/AttrTypeBuilderUtil.h"
 #include "stablehlo/integrations/cpp/builder/MlirBuilder.h"
+#include "stablehlo/integrations/cpp/builder/StablehloBuilder.h"
 
 namespace torch_tpu {
 namespace {
@@ -61,6 +71,36 @@ absl::StatusOr<DeviceBufferRef> Gather(const at::Tensor& self, int64_t dim,
 
   TT_RETURN_IF_ERROR(
       ValidateGatherInputs(self.sizes(), dim, index.sizes(), sparse_grad));
+
+  if (auto unexpanded = TryUnexpandZeroStrideIndex(index)) {
+    Dimensions squeezed_dims = std::move(unexpanded->squeezed_dims);
+    Dimensions bcast_dims = std::move(unexpanded->bcast_dims);
+    Dimensions logical_dims = std::move(unexpanded->logical_dims);
+    TT_ASSIGN_OR_RETURN(
+        auto full_param_keys,
+        TT_MAKE_OP_PARAM_CACHE_KEYS(dim, sparse_grad, squeezed_dims, bcast_dims,
+                                    logical_dims));
+    auto gather_op_builder = [dim, sparse_grad, output_dtype, squeezed_dims,
+                              bcast_dims, logical_dims](
+                                 FixedSizeSpan<mlir::MlirOp, 2> inputs) {
+      auto& [self_op, index_op] = inputs;
+      const auto index_type = GetTensorTypeOrDie(index_op);
+      if (index_type.getRank() != static_cast<int64_t>(squeezed_dims.size())) {
+        index_op = mlir::stablehlo::Reshape(index_op, squeezed_dims);
+      }
+      const auto logical_type = mlir::RankedTensorType::get(
+          logical_dims, index_type.getElementType());
+      mlir::MlirOp expanded_index =
+          mlir::stablehlo::BroadcastInDim(logical_type, index_op, bcast_dims);
+      return BuildGatherShlo(self_op, dim, expanded_index, sparse_grad,
+                             output_dtype);
+    };
+    return DispatchOp<2>(std::move(gather_op_builder),
+                         {self, unexpanded->tensor},
+                         {.out_dtype = output_dtype,
+                          .out_dims = output_dims,
+                          .op_param_cache_keys = std::move(full_param_keys)});
+  }
 
   auto gather_op_builder =
       [dim, sparse_grad, output_dtype](FixedSizeSpan<mlir::MlirOp, 2> inputs) {
@@ -92,6 +132,36 @@ absl::Status GatherOut(const at::Tensor& self, int64_t dim,
   TT_ASSIGN_OR_RETURN(const auto output_dtype,
                       ConvertTo<mlir::ElementType>(self.scalar_type()));
   Dimensions output_dims = CopyIntVector(index.sizes());
+
+  if (auto unexpanded = TryUnexpandZeroStrideIndex(index)) {
+    Dimensions squeezed_dims = std::move(unexpanded->squeezed_dims);
+    Dimensions bcast_dims = std::move(unexpanded->bcast_dims);
+    Dimensions logical_dims = std::move(unexpanded->logical_dims);
+    TT_ASSIGN_OR_RETURN(
+        auto full_param_keys,
+        TT_MAKE_OP_PARAM_CACHE_KEYS(dim, sparse_grad, squeezed_dims, bcast_dims,
+                                    logical_dims));
+    auto gather_op_builder = [dim, sparse_grad, output_dtype, squeezed_dims,
+                              bcast_dims, logical_dims](
+                                 FixedSizeSpan<mlir::MlirOp, 2> inputs) {
+      auto& [self_op, index_op] = inputs;
+      const auto index_type = GetTensorTypeOrDie(index_op);
+      if (index_type.getRank() != static_cast<int64_t>(squeezed_dims.size())) {
+        index_op = mlir::stablehlo::Reshape(index_op, squeezed_dims);
+      }
+      const auto logical_type = mlir::RankedTensorType::get(
+          logical_dims, index_type.getElementType());
+      mlir::MlirOp expanded_index =
+          mlir::stablehlo::BroadcastInDim(logical_type, index_op, bcast_dims);
+      return BuildGatherShlo(self_op, dim, expanded_index, sparse_grad,
+                             output_dtype);
+    };
+    return DispatchOpOut<2, 1>(
+        std::move(gather_op_builder), {self, unexpanded->tensor}, out,
+        {.out_dtype = output_dtype,
+         .out_dims = output_dims,
+         .op_param_cache_keys = std::move(full_param_keys)});
+  }
 
   auto gather_op_builder =
       [dim, sparse_grad, output_dtype](FixedSizeSpan<mlir::MlirOp, 2> inputs) {

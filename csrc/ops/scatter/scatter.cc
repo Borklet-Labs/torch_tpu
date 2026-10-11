@@ -24,6 +24,7 @@
 #include "absl/log/absl_check.h"
 #include "absl/log/absl_log.h"
 #include "absl/status/statusor.h"
+#include "absl/types/span.h"
 #include "csrc/common/dimension_types.h"
 #include "csrc/common/error_utils.h"
 #include "csrc/common/to_string.h"
@@ -104,6 +105,284 @@ std::optional<mlir::MlirOp> GetRowBroadcastIndex(mlir::MlirOp index,
   return mlir::MlirOp(index.getBuilder(), broadcast.getOperand());
 }
 
+bool ReshapeScalarsToRank1(mlir::MlirOp& self,
+                           mlir::RankedTensorType& self_type, mlir::MlirOp& src,
+                           mlir::RankedTensorType& src_type,
+                           mlir::MlirOp& index,
+                           mlir::RankedTensorType& index_type) {
+  const bool are_scalars = self_type.getRank() == 0 ||
+                           src_type.getRank() == 0 || index_type.getRank() == 0;
+  if (!are_scalars) {
+    return false;
+  }
+  if (self_type.getRank() == 0) {
+    self = mlir::stablehlo::Reshape(self, {1});
+    self_type = GetTensorTypeOrDie(self);
+  }
+  if (src_type.getRank() == 0) {
+    src = mlir::stablehlo::Reshape(src, {1});
+    src_type = GetTensorTypeOrDie(src);
+  }
+  if (index_type.getRank() == 0) {
+    index = mlir::stablehlo::Reshape(index, {1});
+    index_type = GetTensorTypeOrDie(index);
+  }
+  return true;
+}
+
+bool ShapesMatchOffScatterDim(mlir::RankedTensorType self_type,
+                              mlir::RankedTensorType src_type, int64_t dim) {
+  for (int64_t d = 0; d < self_type.getRank(); ++d) {
+    if (d != dim && self_type.getDimSize(d) != src_type.getDimSize(d)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+struct BroadcastScatterPlan {
+  mlir::MlirOp base_op;
+  mlir::RankedTensorType base_type;
+  int64_t base_scatter_dim = -1;
+  Dimensions batch_dims;
+  Dimensions rhs_batch_dims;
+  Dimensions free_dims;
+};
+
+bool ParseBroadcastScatterAxes(mlir::RankedTensorType base_type,
+                               mlir::RankedTensorType index_type,
+                               llvm::ArrayRef<int64_t> bcast_dims,
+                               Dimensions& base_pos_for_dim,
+                               Dimensions& squeezed_shape,
+                               bool& has_size1_expand) {
+  const int64_t rank = index_type.getRank();
+  for (int64_t i = 0; i < static_cast<int64_t>(bcast_dims.size()); ++i) {
+    const int64_t d = bcast_dims[i];
+    if (d < 0 || d >= rank || base_pos_for_dim[d] != -1) {
+      return false;
+    }
+    const int64_t base_dim = base_type.getDimSize(i);
+    const int64_t out_dim = index_type.getDimSize(d);
+    if (base_dim == out_dim) {
+      base_pos_for_dim[d] = static_cast<int64_t>(squeezed_shape.size());
+      squeezed_shape.push_back(base_dim);
+    } else if (base_dim == 1 && out_dim > 1) {
+      has_size1_expand = true;
+    } else {
+      return false;
+    }
+  }
+  return true;
+}
+
+void PartitionBroadcastScatterAxes(int64_t rank, int64_t dim,
+                                   absl::Span<const int64_t> base_pos_for_dim,
+                                   BroadcastScatterPlan& plan) {
+  for (int64_t d = 0; d < rank; ++d) {
+    if (d == dim) continue;
+    if (base_pos_for_dim[d] != -1) {
+      plan.batch_dims.push_back(d);
+      plan.rhs_batch_dims.push_back(base_pos_for_dim[d]);
+    } else {
+      plan.free_dims.push_back(d);
+    }
+  }
+}
+
+std::optional<BroadcastScatterPlan> MatchBroadcastScatterIndex(
+    mlir::MlirBuilder& builder, mlir::RankedTensorType self_type, int64_t dim,
+    mlir::MlirOp index, mlir::RankedTensorType index_type) {
+  mlir::Value raw_index_val = index.getValue();
+  while (auto conv = mlir::dyn_cast_or_null<mlir::stablehlo::ConvertOp>(
+             raw_index_val.getDefiningOp())) {
+    raw_index_val = conv.getOperand();
+  }
+  auto broadcast = mlir::dyn_cast_or_null<mlir::stablehlo::BroadcastInDimOp>(
+      raw_index_val.getDefiningOp());
+  if (!broadcast) {
+    return std::nullopt;
+  }
+  auto base_type =
+      mlir::dyn_cast<mlir::RankedTensorType>(broadcast.getOperand().getType());
+  if (!base_type || base_type.getRank() < 2 || !base_type.hasStaticShape() ||
+      base_type.getNumElements() <= 0) {
+    return std::nullopt;
+  }
+  const int64_t rank = self_type.getRank();
+  Dimensions base_pos_for_dim(rank, -1);
+  Dimensions squeezed_shape;
+  bool has_size1_expand = false;
+  if (!ParseBroadcastScatterAxes(
+          base_type, index_type, broadcast.getBroadcastDimensions(),
+          base_pos_for_dim, squeezed_shape, has_size1_expand) ||
+      base_pos_for_dim[dim] == -1) {
+    return std::nullopt;
+  }
+  const int64_t target_len = self_type.getDimSize(dim);
+  const int64_t src_len = index_type.getDimSize(dim);
+  if (target_len <= 0 || src_len <= 0 || target_len > 1024 || src_len > 1024 ||
+      base_type.getNumElements() * target_len > 268435456) {
+    return std::nullopt;
+  }
+  mlir::MlirOp base_op(builder, broadcast.getOperand());
+  if (has_size1_expand) {
+    base_op = mlir::stablehlo::Reshape(base_op, squeezed_shape);
+    base_type = GetTensorTypeOrDie(base_op);
+  }
+  BroadcastScatterPlan plan{
+      .base_op = base_op,
+      .base_type = base_type,
+      .base_scatter_dim = base_pos_for_dim[dim],
+  };
+  PartitionBroadcastScatterAxes(rank, dim, base_pos_for_dim, plan);
+  if (plan.free_dims.empty()) {
+    return std::nullopt;
+  }
+  return plan;
+}
+
+mlir::MlirOp EmitBroadcastScatterDot(mlir::MlirOp self,
+                                     mlir::RankedTensorType self_type,
+                                     int64_t dim, mlir::MlirOp src,
+                                     mlir::RankedTensorType src_type,
+                                     mlir::Type fast_comp_type,
+                                     mlir::Type original_element_type,
+                                     const BroadcastScatterPlan& plan) {
+  mlir::MlirBuilder& fast_builder = self.getBuilder();
+  const int64_t rank = self_type.getRank();
+  const int64_t target_len = self_type.getDimSize(dim);
+  const mlir::Type i32_type =
+      mlir::getElementType(self.getContext(), mlir::ElementType::I32);
+  mlir::MlirOp self_conv =
+      self_type.getElementType() != fast_comp_type
+          ? mlir::stablehlo::ConvertElementType(self, fast_comp_type)
+          : self;
+  mlir::MlirOp src_conv =
+      src_type.getElementType() != fast_comp_type
+          ? mlir::stablehlo::ConvertElementType(src, fast_comp_type)
+          : src;
+  mlir::MlirOp base_i32 =
+      mlir::stablehlo::ConvertElementType(plan.base_op, i32_type);
+  const int64_t base_rank = plan.base_type.getRank();
+  Dimensions ind_shape(plan.base_type.getShape().begin(),
+                       plan.base_type.getShape().end());
+  ind_shape.push_back(target_len);
+  Dimensions bcast_to_ind(base_rank);
+  for (int64_t i = 0; i < base_rank; ++i) {
+    bcast_to_ind[i] = i;
+  }
+  auto ind_i32_type = mlir::RankedTensorType::get(ind_shape, i32_type);
+  mlir::MlirOp idx_expanded =
+      mlir::stablehlo::BroadcastInDim(ind_i32_type, base_i32, bcast_to_ind);
+  mlir::MlirOp iota_p = mlir::stablehlo::Iota(fast_builder, ind_i32_type,
+                                              /*iota_dimension=*/base_rank);
+  mlir::MlirOp mask = mlir::stablehlo::Compare(
+      idx_expanded, iota_p, mlir::stablehlo::ComparisonDirection::EQ);
+  mlir::MlirOp weights =
+      mlir::stablehlo::ConvertElementType(mask, fast_comp_type);
+  auto dot_dims = mlir::stablehlo::DotDimensionNumbersAttr::get(
+      &self.getContext(),
+      /*lhsBatchingDimensions=*/plan.batch_dims,
+      /*rhsBatchingDimensions=*/plan.rhs_batch_dims,
+      /*lhsContractingDimensions=*/{dim},
+      /*rhsContractingDimensions=*/{plan.base_scatter_dim});
+  mlir::ArrayAttr precision_config;
+  if (fast_comp_type.isF32()) {
+    const mlir::stablehlo::Precision precisions[2] = {
+        mlir::stablehlo::Precision::
+            HIGHEST,  // EXPLICIT_PRECISION_OK=f32_scatter
+        mlir::stablehlo::Precision::
+            DEFAULT,  // EXPLICIT_PRECISION_OK=one_hot_rhs
+    };
+    precision_config = mlir::stablehlo::PrecisionConfigAttr::get(
+        &self.getContext(), precisions);
+  }
+  mlir::MlirOp dot_out = mlir::stablehlo::DotGeneral(
+      src_conv, weights, dot_dims, /*precisionConfig=*/precision_config);
+  Dimensions dot_out_axes;
+  dot_out_axes.insert(dot_out_axes.end(), plan.batch_dims.begin(),
+                      plan.batch_dims.end());
+  dot_out_axes.insert(dot_out_axes.end(), plan.free_dims.begin(),
+                      plan.free_dims.end());
+  dot_out_axes.push_back(dim);
+  Dimensions perm(rank);
+  for (int64_t pos = 0; pos < rank; ++pos) {
+    perm[dot_out_axes[pos]] = pos;
+  }
+  mlir::MlirOp delta = mlir::stablehlo::Transpose(dot_out, perm);
+  mlir::MlirOp result = mlir::stablehlo::Add(self_conv, delta);
+  if (GetTensorTypeOrDie(result).getElementType() != original_element_type) {
+    result = mlir::stablehlo::ConvertElementType(result, original_element_type);
+  }
+  return result;
+}
+
+mlir::RegionBuilderCallback BuildScatterRegion(
+    mlir::RankedTensorType block_type, ScatterOp scatter_op) {
+  return [block_type, scatter_op](mlir::RegionBuilder& builder) {
+    auto arg0 = mlir::Argument(builder, block_type);  // current
+    auto arg1 = mlir::Argument(builder, block_type);  // update
+    mlir::MlirOp result;
+    switch (scatter_op) {
+      case ScatterOp::kAdd:
+      case ScatterOp::kSum:
+      case ScatterOp::kMean:  // Compute sum separately first
+        result = mlir::stablehlo::Add(arg0, arg1);
+        break;
+      case ScatterOp::kMul:
+      case ScatterOp::kProd:
+        result = mlir::stablehlo::Mul(arg0, arg1);
+        break;
+      case ScatterOp::kAmax:
+        result = mlir::stablehlo::Max(arg0, arg1);
+        break;
+      case ScatterOp::kAmin:
+        result = mlir::stablehlo::Min(arg0, arg1);
+        break;
+      case ScatterOp::kReplace:
+        result = arg1;
+        break;
+    }
+    mlir::stablehlo::Return(builder, {result});
+  };
+}
+
+mlir::MlirOp ApplyScatterMeanCount(
+    mlir::MlirBuilder& builder, mlir::MlirOp self, mlir::MlirOp sum_result,
+    mlir::MlirOp scatter_indices, mlir::RankedTensorType index_type,
+    mlir::Type computation_type, mlir::RankedTensorType block_type,
+    mlir::stablehlo::ScatterDimensionNumbersAttr scatter_dimension_numbers,
+    ScatterIncludeSelf include_self) {
+  mlir::MlirOp one = MakeScalarConstant(builder, 1.0, computation_type);
+  mlir::MlirOp zero = MakeScalarConstant(builder, 0.0, computation_type);
+
+  auto updates_count_type = index_type.clone(computation_type);
+  mlir::MlirOp ones_updates =
+      mlir::stablehlo::BroadcastInDim(updates_count_type, one, {});
+
+  auto total_count_type = GetTensorTypeOrDie(self).clone(computation_type);
+  mlir::MlirOp initial_count = mlir::stablehlo::BroadcastInDim(
+      total_count_type, include_self == ScatterIncludeSelf::kYes ? one : zero,
+      {});
+
+  auto count_reducer = [block_type](mlir::RegionBuilder& rb) {
+    auto a0 = mlir::Argument(rb, block_type);
+    auto a1 = mlir::Argument(rb, block_type);
+    mlir::stablehlo::Return(rb, {mlir::stablehlo::Add(a0, a1)});
+  };
+  mlir::MlirOp total_count = mlir::stablehlo::Scatter(
+      {initial_count}, scatter_indices, {ones_updates}, count_reducer,
+      scatter_dimension_numbers, /*indices_are_sorted=*/false,
+      /*unique_indices=*/false)[0];
+
+  mlir::MlirOp div_res = mlir::stablehlo::Div(sum_result, total_count);
+  mlir::MlirOp zero_bcast =
+      mlir::stablehlo::BroadcastInDim(total_count_type, zero, {});
+  mlir::MlirOp is_hit = mlir::stablehlo::Compare(
+      total_count, zero_bcast, mlir::stablehlo::ComparisonDirection::GT);
+  return mlir::stablehlo::Select(is_hit, div_res, self);
+}
+
 }  // namespace
 
 absl::StatusOr<mlir::MlirOp> BuildScatterShlo(
@@ -127,22 +406,8 @@ absl::StatusOr<mlir::MlirOp> BuildScatterShlo(
   }
 
   // If arguments are scalars, temporarily reshape them to rank 1.
-  bool are_scalars = self_type.getRank() == 0 || src_type.getRank() == 0 ||
-                     index_type.getRank() == 0;
-  if (are_scalars) {
-    if (self_type.getRank() == 0) {
-      self = mlir::stablehlo::Reshape(self, {1});
-      self_type = GetTensorTypeOrDie(self);
-    }
-    if (src_type.getRank() == 0) {
-      src = mlir::stablehlo::Reshape(src, {1});
-      src_type = GetTensorTypeOrDie(src);
-    }
-    if (index_type.getRank() == 0) {
-      index = mlir::stablehlo::Reshape(index, {1});
-      index_type = GetTensorTypeOrDie(index);
-    }
-  }
+  const bool are_scalars =
+      ReshapeScalarsToRank1(self, self_type, src, src_type, index, index_type);
 
   ABSL_CHECK_EQ(self_type.getRank(),  // CRASH_OK=checked in Scatter()
                 src_type.getRank())
@@ -168,13 +433,8 @@ absl::StatusOr<mlir::MlirOp> BuildScatterShlo(
   // `self` to be larger on those dims (writing only a sub-slice of each row),
   // which index_add cannot express -- so restrict the fast path to the case
   // where the shapes match off the scatter dim.
-  bool self_src_match_off_scatter_dim = true;
-  for (int d = 0; d < self_type.getRank(); ++d) {
-    if (d != dim && self_type.getDimSize(d) != src_type.getDimSize(d)) {
-      self_src_match_off_scatter_dim = false;
-      break;
-    }
-  }
+  const bool self_src_match_off_scatter_dim =
+      ShapesMatchOffScatterDim(self_type, src_type, dim);
 
   // Fast path for a broadcast index (`ids[:, None].expand_as(src)`, the top-k
   // MoE token-combine idiom). When the index is constant along every dim except
@@ -184,10 +444,12 @@ absl::StatusOr<mlir::MlirOp> BuildScatterShlo(
   // tensor. Restricted to what index_add can express: add/sum with include_self
   // and matching shapes.
   const mlir::Type original_element_type = self_type.getElementType();
-  if ((scatter_op == ScatterOp::kAdd || scatter_op == ScatterOp::kSum) &&
+  const bool is_matching_add =
+      (scatter_op == ScatterOp::kAdd || scatter_op == ScatterOp::kSum) &&
       include_self == ScatterIncludeSelf::kYes &&
       self_src_match_off_scatter_dim &&
-      src_type.getShape() == index_type.getShape()) {
+      src_type.getShape() == index_type.getShape();
+  if (is_matching_add) {
     if (std::optional<mlir::MlirOp> index_1d =
             GetRowBroadcastIndex(index, dim)) {
       mlir::MlirBuilder& fast_builder = self.getBuilder();
@@ -207,137 +469,23 @@ absl::StatusOr<mlir::MlirOp> BuildScatterShlo(
     }
   }
 
-  // Fast path for multidimensional broadcast indices (such as multi-head
-  // relative position attention gradients where `[Q, K]` indices are expanded
-  // across `H` heads to `[H, Q, K]`): when `index` is invariant along one or
-  // more non-scatter dimensions `free_dims` and the scatter axis is bounded,
-  // contract `src` with the shared 1-bit indicator matrix on the MXU instead
-  // of flattening all batching dimensions into a 64-bit scalar scatter loop.
-  if ((scatter_op == ScatterOp::kAdd || scatter_op == ScatterOp::kSum) &&
-      include_self == ScatterIncludeSelf::kYes &&
-      self_src_match_off_scatter_dim &&
-      src_type.getShape() == index_type.getShape() &&
-      self_type.hasStaticShape() && index_type.hasStaticShape()) {
+  // Fast path for multidimensional broadcast indices (both rank-expanding
+  // `[Q, K] -> [H, Q, K]` and size-1 axis broadcasts `[B, 1, Q, K] -> [B, H, Q,
+  // K]`): when `index` is invariant along one or more non-scatter dimensions
+  // `free_dims` and the scatter axis is bounded, contract `src` with the shared
+  // 1-bit indicator matrix on the MXU instead of flattening all batching
+  // dimensions into a 64-bit scalar scatter loop.
+  if (is_matching_add && self_type.hasStaticShape() &&
+      index_type.hasStaticShape()) {
     const mlir::Type fast_comp_type =
         mlir::getElementType(self.getContext(), computation_element_type);
-    const int64_t rank = self_type.getRank();
-    mlir::Value raw_index_val = index.getValue();
-    while (auto conv = mlir::dyn_cast_or_null<mlir::stablehlo::ConvertOp>(
-               raw_index_val.getDefiningOp())) {
-      raw_index_val = conv.getOperand();
-    }
-    if ((fast_comp_type.isF32() || fast_comp_type.isBF16()) && rank >= 3) {
-      if (auto broadcast =
-              mlir::dyn_cast_or_null<mlir::stablehlo::BroadcastInDimOp>(
-                  raw_index_val.getDefiningOp())) {
-        auto base_type = mlir::dyn_cast<mlir::RankedTensorType>(
-            broadcast.getOperand().getType());
-        llvm::ArrayRef<int64_t> bcast_dims = broadcast.getBroadcastDimensions();
-        bool exact_bcast = base_type && base_type.getRank() >= 2 &&
-                           base_type.hasStaticShape() &&
-                           base_type.getNumElements() > 0;
-        std::vector<int64_t> base_pos_for_dim(rank, -1);  // INT_VEC_OK
-        for (int64_t i = 0;
-             exact_bcast && i < static_cast<int64_t>(bcast_dims.size()); ++i) {
-          const int64_t d = bcast_dims[i];
-          if (d < 0 || d >= rank || base_pos_for_dim[d] != -1 ||
-              base_type.getDimSize(i) != index_type.getDimSize(d)) {
-            exact_bcast = false;
-            break;
-          }
-          base_pos_for_dim[d] = i;
-        }
-        const int64_t target_len = self_type.getDimSize(dim);
-        const int64_t src_len = index_type.getDimSize(dim);
-        if (exact_bcast && base_pos_for_dim[dim] != -1 && target_len > 0 &&
-            src_len > 0 && target_len <= 1024 && src_len <= 1024 &&
-            base_type.getNumElements() * target_len <= 268435456) {
-          Dimensions batch_dims;
-          Dimensions rhs_batch_dims;
-          Dimensions free_dims;
-          for (int64_t d = 0; d < rank; ++d) {
-            if (d == dim) continue;
-            if (base_pos_for_dim[d] != -1) {
-              batch_dims.push_back(d);
-              rhs_batch_dims.push_back(base_pos_for_dim[d]);
-            } else {
-              free_dims.push_back(d);
-            }
-          }
-          if (!free_dims.empty()) {
-            mlir::MlirBuilder& fast_builder = self.getBuilder();
-            const mlir::Type i32_type =
-                mlir::getElementType(self.getContext(), mlir::ElementType::I32);
-            mlir::MlirOp self_conv =
-                self_type.getElementType() != fast_comp_type
-                    ? mlir::stablehlo::ConvertElementType(self, fast_comp_type)
-                    : self;
-            mlir::MlirOp src_conv =
-                src_type.getElementType() != fast_comp_type
-                    ? mlir::stablehlo::ConvertElementType(src, fast_comp_type)
-                    : src;
-            mlir::MlirOp base_op(fast_builder, broadcast.getOperand());
-            mlir::MlirOp base_i32 =
-                mlir::stablehlo::ConvertElementType(base_op, i32_type);
-            const int64_t base_rank = base_type.getRank();
-            Dimensions ind_shape(base_type.getShape().begin(),
-                                 base_type.getShape().end());
-            ind_shape.push_back(target_len);
-            Dimensions bcast_to_ind(base_rank);
-            for (int64_t i = 0; i < base_rank; ++i) {
-              bcast_to_ind[i] = i;
-            }
-            auto ind_i32_type =
-                mlir::RankedTensorType::get(ind_shape, i32_type);
-            mlir::MlirOp idx_expanded = mlir::stablehlo::BroadcastInDim(
-                ind_i32_type, base_i32, bcast_to_ind);
-            mlir::MlirOp iota_p =
-                mlir::stablehlo::Iota(fast_builder, ind_i32_type,
-                                      /*iota_dimension=*/base_rank);
-            mlir::MlirOp mask = mlir::stablehlo::Compare(
-                idx_expanded, iota_p, mlir::stablehlo::ComparisonDirection::EQ);
-            mlir::MlirOp weights =
-                mlir::stablehlo::ConvertElementType(mask, fast_comp_type);
-            auto dot_dims = mlir::stablehlo::DotDimensionNumbersAttr::get(
-                &self.getContext(),
-                /*lhsBatchingDimensions=*/batch_dims,
-                /*rhsBatchingDimensions=*/rhs_batch_dims,
-                /*lhsContractingDimensions=*/{dim},
-                /*rhsContractingDimensions=*/{base_pos_for_dim[dim]});
-            mlir::ArrayAttr precision_config;
-            if (fast_comp_type.isF32()) {
-              const mlir::stablehlo::Precision precisions[2] = {
-                  mlir::stablehlo::Precision::
-                      HIGHEST,  // EXPLICIT_PRECISION_OK=f32_scatter
-                  mlir::stablehlo::Precision::
-                      HIGHEST,  // EXPLICIT_PRECISION_OK=one_hot_rhs
-              };
-              precision_config = mlir::stablehlo::PrecisionConfigAttr::get(
-                  &self.getContext(), precisions);
-            }
-            mlir::MlirOp dot_out = mlir::stablehlo::DotGeneral(
-                src_conv, weights, dot_dims,
-                /*precisionConfig=*/precision_config);
-            Dimensions dot_out_axes;
-            dot_out_axes.insert(dot_out_axes.end(), batch_dims.begin(),
-                                batch_dims.end());
-            dot_out_axes.insert(dot_out_axes.end(), free_dims.begin(),
-                                free_dims.end());
-            dot_out_axes.push_back(dim);
-            Dimensions perm(rank);
-            for (int64_t pos = 0; pos < rank; ++pos) {
-              perm[dot_out_axes[pos]] = pos;
-            }
-            mlir::MlirOp delta = mlir::stablehlo::Transpose(dot_out, perm);
-            mlir::MlirOp result = mlir::stablehlo::Add(self_conv, delta);
-            if (GetTensorTypeOrDie(result).getElementType() !=
-                original_element_type) {
-              result = mlir::stablehlo::ConvertElementType(
-                  result, original_element_type);
-            }
-            return result;
-          }
-        }
+    if ((fast_comp_type.isF32() || fast_comp_type.isBF16()) &&
+        self_type.getRank() >= 3) {
+      if (std::optional<BroadcastScatterPlan> plan = MatchBroadcastScatterIndex(
+              self.getBuilder(), self_type, dim, index, index_type)) {
+        return EmitBroadcastScatterDot(self, self_type, dim, src, src_type,
+                                       fast_comp_type, original_element_type,
+                                       *plan);
       }
     }
   }
@@ -405,72 +553,17 @@ absl::StatusOr<mlir::MlirOp> BuildScatterShlo(
         /*unique_indices=*/false)[0];
   }
 
-  // Create a region builder callback depending on the scatter op.
-  mlir::RegionBuilderCallback region_builder;
-  region_builder = [block_type, scatter_op](mlir::RegionBuilder& builder) {
-    auto arg0 = mlir::Argument(builder, block_type);  // current
-    auto arg1 = mlir::Argument(builder, block_type);  // update
-    mlir::MlirOp result;
-    switch (scatter_op) {
-      case ScatterOp::kAdd:
-      case ScatterOp::kSum:
-      case ScatterOp::kMean:  // Compute sum separately first
-        result = mlir::stablehlo::Add(arg0, arg1);
-        break;
-      case ScatterOp::kMul:
-      case ScatterOp::kProd:
-        result = mlir::stablehlo::Mul(arg0, arg1);
-        break;
-      case ScatterOp::kAmax:
-        result = mlir::stablehlo::Max(arg0, arg1);
-        break;
-      case ScatterOp::kAmin:
-        result = mlir::stablehlo::Min(arg0, arg1);
-        break;
-      case ScatterOp::kReplace:
-        result = arg1;
-        break;
-    }
-    mlir::stablehlo::Return(builder, {result});
-  };
-
   auto result = mlir::stablehlo::Scatter(
-      {self}, scatter_indices, {src}, region_builder, scatter_dimension_numbers,
-      /*indices_are_sorted=*/false, /*unique_indices=*/false)[0];
+      {self}, scatter_indices, {src},
+      BuildScatterRegion(block_type, scatter_op), scatter_dimension_numbers,
+      /*indices_are_sorted=*/false,
+      /*unique_indices=*/false)[0];
 
   // Handle mean separately as it requires division by the number of updates
   if (scatter_op == ScatterOp::kMean) {
-    mlir::MlirOp one = MakeScalarConstant(builder, 1.0, computation_type);
-    mlir::MlirOp zero = MakeScalarConstant(builder, 0.0, computation_type);
-
-    auto updates_count_type = index_type.clone(computation_type);
-    mlir::MlirOp ones_updates =
-        mlir::stablehlo::BroadcastInDim(updates_count_type, one, {});
-
-    auto total_count_type = GetTensorTypeOrDie(self).clone(computation_type);
-    mlir::MlirOp initial_count = mlir::stablehlo::BroadcastInDim(
-        total_count_type, include_self == ScatterIncludeSelf::kYes ? one : zero,
-        {});
-
-    // Count the number of updates for each element
-    auto count_reducer = [block_type](mlir::RegionBuilder& rb) {
-      auto a0 = mlir::Argument(rb, block_type);
-      auto a1 = mlir::Argument(rb, block_type);
-      mlir::stablehlo::Return(rb, {mlir::stablehlo::Add(a0, a1)});
-    };
-    mlir::MlirOp total_count = mlir::stablehlo::Scatter(
-        {initial_count}, scatter_indices, {ones_updates}, count_reducer,
-        scatter_dimension_numbers, /*indices_are_sorted=*/false,
-        /*unique_indices=*/false)[0];
-
-    // To avoid division by zero (for include_self=false and unindexed
-    // locations), use the original self for selection.
-    mlir::MlirOp div_res = mlir::stablehlo::Div(result, total_count);
-    mlir::MlirOp zero_bcast =
-        mlir::stablehlo::BroadcastInDim(total_count_type, zero, {});
-    mlir::MlirOp is_hit = mlir::stablehlo::Compare(
-        total_count, zero_bcast, mlir::stablehlo::ComparisonDirection::GT);
-    result = mlir::stablehlo::Select(is_hit, div_res, self);
+    result = ApplyScatterMeanCount(builder, self, result, scatter_indices,
+                                   index_type, computation_type, block_type,
+                                   scatter_dimension_numbers, include_self);
   }
 
   const bool is_sliced = GetTensorTypeOrDie(self).getShape() !=

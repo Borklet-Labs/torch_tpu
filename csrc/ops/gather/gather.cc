@@ -17,6 +17,7 @@
 #include "csrc/ops/gather/gather.h"
 
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 #include "absl/log/absl_log.h"
@@ -28,7 +29,6 @@
 #include "csrc/ops/op_builder_utils.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/BuiltinAttributes.h"
-#include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Types.h"
 #include "mlir/IR/Value.h"
@@ -42,6 +42,198 @@
 namespace torch_tpu {
 
 namespace stablehlo = mlir::stablehlo;
+
+namespace {
+
+struct BroadcastGatherPlan {
+  mlir::MlirOp base_op;
+  mlir::RankedTensorType base_type;
+  Dimensions batch_dims;
+  Dimensions rhs_batch_dims;
+  Dimensions free_dims;
+};
+
+mlir::MlirOp HandleScalarGather(mlir::MlirOp self,
+                                mlir::RankedTensorType self_type,
+                                mlir::RankedTensorType index_type) {
+  if (self_type.getRank() == index_type.getRank()) {
+    return self;
+  }
+  if (self_type.getRank() == 0 && index_type.getRank() == 1 &&
+      index_type.getShape()[0] == 0) {
+    // Gathering from a scalar with an empty index results in an empty tensor.
+    mlir::MlirBuilder& builder = self.getBuilder();
+    mlir::Type element_type = self_type.getElementType();
+    auto result_type = mlir::RankedTensorType::get({0}, element_type);
+    auto empty_attr = mlir::DenseElementsAttr::get(
+        result_type, llvm::ArrayRef<mlir::Attribute>());
+    return stablehlo::Constant(builder, empty_attr);
+  }
+  return stablehlo::Reshape(self, index_type.getShape());
+}
+
+bool ParseBroadcastGatherAxes(mlir::RankedTensorType base_type,
+                              mlir::RankedTensorType index_type,
+                              llvm::ArrayRef<int64_t> bcast_dims,
+                              Dimensions& base_pos_for_dim,
+                              Dimensions& squeezed_shape,
+                              bool& has_size1_expand) {
+  const int64_t rank = index_type.getRank();
+  for (int64_t i = 0; i < static_cast<int64_t>(bcast_dims.size()); ++i) {
+    const int64_t d = bcast_dims[i];
+    if (d < 0 || d >= rank || base_pos_for_dim[d] != -1) {
+      return false;
+    }
+    const int64_t base_dim = base_type.getDimSize(i);
+    const int64_t out_dim = index_type.getDimSize(d);
+    if (base_dim == out_dim) {
+      base_pos_for_dim[d] = static_cast<int64_t>(squeezed_shape.size());
+      squeezed_shape.push_back(base_dim);
+    } else if (base_dim == 1 && out_dim > 1) {
+      has_size1_expand = true;
+    } else {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool ShapesMatchOffGatherDim(mlir::RankedTensorType self_type,
+                             mlir::RankedTensorType index_type, int64_t dim) {
+  const int64_t rank = self_type.getRank();
+  for (int64_t d = 0; d < rank; ++d) {
+    if (d != dim && self_type.getDimSize(d) != index_type.getDimSize(d)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+void PartitionBroadcastGatherAxes(int64_t rank, int64_t dim,
+                                  absl::Span<const int64_t> base_pos_for_dim,
+                                  BroadcastGatherPlan& plan) {
+  for (int64_t d = 0; d < rank; ++d) {
+    if (d == dim) continue;
+    if (base_pos_for_dim[d] != -1) {
+      plan.batch_dims.push_back(d);
+      plan.rhs_batch_dims.push_back(base_pos_for_dim[d]);
+    } else {
+      plan.free_dims.push_back(d);
+    }
+  }
+}
+
+std::optional<BroadcastGatherPlan> MatchBroadcastGatherIndex(
+    mlir::MlirBuilder& builder, mlir::RankedTensorType self_type, int64_t dim,
+    mlir::MlirOp index, mlir::RankedTensorType index_type) {
+  mlir::Value raw_index_val = index.getValue();
+  while (auto conv = mlir::dyn_cast_or_null<stablehlo::ConvertOp>(
+             raw_index_val.getDefiningOp())) {
+    raw_index_val = conv.getOperand();
+  }
+  auto broadcast = mlir::dyn_cast_or_null<stablehlo::BroadcastInDimOp>(
+      raw_index_val.getDefiningOp());
+  if (!broadcast) {
+    return std::nullopt;
+  }
+  auto base_type =
+      mlir::dyn_cast<mlir::RankedTensorType>(broadcast.getOperand().getType());
+  if (!base_type || base_type.getRank() < 2 || !base_type.hasStaticShape() ||
+      base_type.getNumElements() <= 0) {
+    return std::nullopt;
+  }
+  const int64_t rank = self_type.getRank();
+  Dimensions base_pos_for_dim(rank, -1);
+  Dimensions squeezed_shape;
+  bool has_size1_expand = false;
+  if (!ParseBroadcastGatherAxes(
+          base_type, index_type, broadcast.getBroadcastDimensions(),
+          base_pos_for_dim, squeezed_shape, has_size1_expand) ||
+      base_pos_for_dim[dim] == -1 ||
+      !ShapesMatchOffGatherDim(self_type, index_type, dim)) {
+    return std::nullopt;
+  }
+  const int64_t vocab_len = self_type.getDimSize(dim);
+  const int64_t out_len = index_type.getDimSize(dim);
+  if (vocab_len <= 0 || out_len <= 0 || vocab_len > 1024 || out_len > 1024 ||
+      base_type.getNumElements() * vocab_len > 268435456) {
+    return std::nullopt;
+  }
+  mlir::MlirOp base_op(builder, broadcast.getOperand());
+  if (has_size1_expand) {
+    base_op = stablehlo::Reshape(base_op, squeezed_shape);
+    base_type = GetTensorTypeOrDie(base_op);
+  }
+  BroadcastGatherPlan plan{
+      .base_op = base_op,
+      .base_type = base_type,
+  };
+  PartitionBroadcastGatherAxes(rank, dim, base_pos_for_dim, plan);
+  if (plan.free_dims.empty()) {
+    return std::nullopt;
+  }
+  return plan;
+}
+
+mlir::MlirOp EmitBroadcastGatherDot(mlir::MlirOp self, int64_t dim,
+                                    int64_t rank, int64_t vocab_len,
+                                    mlir::Type computation_type,
+                                    mlir::Type original_element_type,
+                                    const BroadcastGatherPlan& plan) {
+  mlir::MlirBuilder& builder = self.getBuilder();
+  const mlir::Type i32_type =
+      mlir::getElementType(self.getContext(), mlir::ElementType::I32);
+  mlir::MlirOp base_i32 = stablehlo::ConvertElementType(plan.base_op, i32_type);
+  const int64_t base_rank = plan.base_type.getRank();
+  Dimensions ind_shape(plan.base_type.getShape().begin(),
+                       plan.base_type.getShape().end());
+  ind_shape.push_back(vocab_len);
+  Dimensions bcast_to_ind(base_rank);
+  for (int64_t i = 0; i < base_rank; ++i) {
+    bcast_to_ind[i] = i;
+  }
+  auto ind_i32_type = mlir::RankedTensorType::get(ind_shape, i32_type);
+  mlir::MlirOp idx_expanded =
+      stablehlo::BroadcastInDim(ind_i32_type, base_i32, bcast_to_ind);
+  mlir::MlirOp iota_p =
+      stablehlo::Iota(builder, ind_i32_type, /*iota_dimension=*/base_rank);
+  mlir::MlirOp mask = stablehlo::Compare(idx_expanded, iota_p,
+                                         stablehlo::ComparisonDirection::EQ);
+  mlir::MlirOp weights = stablehlo::ConvertElementType(mask, computation_type);
+  auto dot_dims = stablehlo::DotDimensionNumbersAttr::get(
+      &self.getContext(),
+      /*lhsBatchingDimensions=*/plan.batch_dims,
+      /*rhsBatchingDimensions=*/plan.rhs_batch_dims,
+      /*lhsContractingDimensions=*/{dim},
+      /*rhsContractingDimensions=*/{base_rank});
+  mlir::ArrayAttr precision_config;
+  if (computation_type.isF32()) {
+    const mlir::stablehlo::Precision precisions[2] = {
+        mlir::stablehlo::Precision::
+            HIGHEST,  // EXPLICIT_PRECISION_OK=f32_gather
+        mlir::stablehlo::Precision::
+            DEFAULT,  // EXPLICIT_PRECISION_OK=one_hot_rhs
+    };
+    precision_config =
+        stablehlo::PrecisionConfigAttr::get(&self.getContext(), precisions);
+  }
+  mlir::MlirOp dot_out = stablehlo::DotGeneral(
+      self, weights, dot_dims, /*precisionConfig=*/precision_config);
+  Dimensions dot_out_axes;
+  dot_out_axes.insert(dot_out_axes.end(), plan.batch_dims.begin(),
+                      plan.batch_dims.end());
+  dot_out_axes.insert(dot_out_axes.end(), plan.free_dims.begin(),
+                      plan.free_dims.end());
+  dot_out_axes.push_back(dim);
+  Dimensions perm(rank);
+  for (int64_t pos = 0; pos < rank; ++pos) {
+    perm[dot_out_axes[pos]] = pos;
+  }
+  mlir::MlirOp result = stablehlo::Transpose(dot_out, perm);
+  return stablehlo::ConvertElementType(result, original_element_type);
+}
+
+}  // namespace
 
 absl::Status ValidateGatherInputs(absl::Span<const int64_t> self_dims,
                                   int64_t dim,
@@ -114,23 +306,7 @@ absl::StatusOr<mlir::MlirOp> BuildGatherShlo(
   // self and index should have the same rank, except when one of them is a
   // scalar and the other is a vector.
   if (self_type.getRank() == 0 || index_type.getRank() == 0) {
-    if (self_type.getRank() != index_type.getRank()) {
-      if (self_type.getRank() == 0 && index_type.getRank() == 1 &&
-          index_type.getShape()[0] == 0) {
-        // Gathering from a scalar with an empty index results in an empty
-        // tensor.
-        mlir::MlirBuilder& builder = self.getBuilder();
-        mlir::Type element_type = self_type.getElementType();
-        auto result_type = mlir::RankedTensorType::get({0}, element_type);
-        // Create an empty DenseElementsAttr for the constant.
-        auto empty_attr = mlir::DenseElementsAttr::get(
-            result_type, llvm::ArrayRef<mlir::Attribute>());
-        return stablehlo::Constant(builder, empty_attr);
-      } else {
-        self = stablehlo::Reshape(self, index_type.getShape());
-      }
-    }
-    return self;
+    return HandleScalarGather(self, self_type, index_type);
   }
 
   const mlir::Type original_element_type = self_type.getElementType();
@@ -148,116 +324,18 @@ absl::StatusOr<mlir::MlirOp> BuildGatherShlo(
   const int64_t rank = self_type.getRank();
 
   // Fast path: when `index` is broadcast along one or more non-gather
-  // dimensions `free_dims` (for example multi-head relative position bias
-  // `[H, Q, K]` with shared `[Q, K]` indices) and the gather axis is bounded,
-  // contract `self` against the shared 1-bit indicator matrix on the MXU
-  // instead of materializing a full-rank per-element gather index tensor.
+  // dimensions `free_dims` (either via rank-expanding `BroadcastInDim` or via
+  // size-1 axis broadcast `[B, 1, Q, K] -> [B, H, Q, K]`) and the gather axis
+  // is bounded, contract `self` against the shared 1-bit indicator matrix on
+  // the MXU instead of materializing a full-rank per-element gather index
+  // tensor.
   if ((computation_type.isF32() || computation_type.isBF16()) && rank >= 3 &&
       self_type.hasStaticShape() && index_type.hasStaticShape()) {
-    mlir::Value raw_index_val = index.getValue();
-    while (auto conv = mlir::dyn_cast_or_null<stablehlo::ConvertOp>(
-               raw_index_val.getDefiningOp())) {
-      raw_index_val = conv.getOperand();
-    }
-    if (auto broadcast = mlir::dyn_cast_or_null<stablehlo::BroadcastInDimOp>(
-            raw_index_val.getDefiningOp())) {
-      auto base_type = mlir::dyn_cast<mlir::RankedTensorType>(
-          broadcast.getOperand().getType());
-      llvm::ArrayRef<int64_t> bcast_dims = broadcast.getBroadcastDimensions();
-      bool exact_bcast = base_type && base_type.getRank() >= 2 &&
-                         base_type.hasStaticShape() &&
-                         base_type.getNumElements() > 0;
-      std::vector<int64_t> base_pos_for_dim(rank, -1);  // INT_VEC_OK
-      for (int64_t i = 0;
-           exact_bcast && i < static_cast<int64_t>(bcast_dims.size()); ++i) {
-        const int64_t d = bcast_dims[i];
-        if (d < 0 || d >= rank || base_pos_for_dim[d] != -1 ||
-            base_type.getDimSize(i) != index_type.getDimSize(d)) {
-          exact_bcast = false;
-          break;
-        }
-        base_pos_for_dim[d] = i;
-      }
-      bool match_off_dim = exact_bcast && base_pos_for_dim[dim] != -1;
-      for (int64_t d = 0; match_off_dim && d < rank; ++d) {
-        if (d != dim && self_type.getDimSize(d) != index_type.getDimSize(d)) {
-          match_off_dim = false;
-        }
-      }
-      const int64_t vocab_len = self_type.getDimSize(dim);
-      const int64_t out_len = index_type.getDimSize(dim);
-      if (match_off_dim && vocab_len > 0 && out_len > 0 && vocab_len <= 1024 &&
-          out_len <= 1024 &&
-          base_type.getNumElements() * vocab_len <= 268435456) {
-        Dimensions batch_dims;
-        Dimensions rhs_batch_dims;
-        Dimensions free_dims;
-        for (int64_t d = 0; d < rank; ++d) {
-          if (d == dim) continue;
-          if (base_pos_for_dim[d] != -1) {
-            batch_dims.push_back(d);
-            rhs_batch_dims.push_back(base_pos_for_dim[d]);
-          } else {
-            free_dims.push_back(d);
-          }
-        }
-        if (!free_dims.empty()) {
-          mlir::MlirBuilder& builder = self.getBuilder();
-          const mlir::Type i32_type =
-              mlir::getElementType(self.getContext(), mlir::ElementType::I32);
-          mlir::MlirOp base_op(builder, broadcast.getOperand());
-          mlir::MlirOp base_i32 =
-              stablehlo::ConvertElementType(base_op, i32_type);
-          const int64_t base_rank = base_type.getRank();
-          Dimensions ind_shape(base_type.getShape().begin(),
-                               base_type.getShape().end());
-          ind_shape.push_back(vocab_len);
-          Dimensions bcast_to_ind(base_rank);
-          for (int64_t i = 0; i < base_rank; ++i) {
-            bcast_to_ind[i] = i;
-          }
-          auto ind_i32_type = mlir::RankedTensorType::get(ind_shape, i32_type);
-          mlir::MlirOp idx_expanded =
-              stablehlo::BroadcastInDim(ind_i32_type, base_i32, bcast_to_ind);
-          mlir::MlirOp iota_p = stablehlo::Iota(builder, ind_i32_type,
-                                                /*iota_dimension=*/base_rank);
-          mlir::MlirOp mask = stablehlo::Compare(
-              idx_expanded, iota_p, stablehlo::ComparisonDirection::EQ);
-          mlir::MlirOp weights =
-              stablehlo::ConvertElementType(mask, computation_type);
-          auto dot_dims = stablehlo::DotDimensionNumbersAttr::get(
-              &self.getContext(),
-              /*lhsBatchingDimensions=*/batch_dims,
-              /*rhsBatchingDimensions=*/rhs_batch_dims,
-              /*lhsContractingDimensions=*/{dim},
-              /*rhsContractingDimensions=*/{base_rank});
-          mlir::ArrayAttr precision_config;
-          if (computation_type.isF32()) {
-            const mlir::stablehlo::Precision precisions[2] = {
-                mlir::stablehlo::Precision::
-                    HIGHEST,  // EXPLICIT_PRECISION_OK=f32_gather
-                mlir::stablehlo::Precision::
-                    HIGHEST,  // EXPLICIT_PRECISION_OK=one_hot_rhs
-            };
-            precision_config = stablehlo::PrecisionConfigAttr::get(
-                &self.getContext(), precisions);
-          }
-          mlir::MlirOp dot_out = stablehlo::DotGeneral(
-              self, weights, dot_dims, /*precisionConfig=*/precision_config);
-          Dimensions dot_out_axes;
-          dot_out_axes.insert(dot_out_axes.end(), batch_dims.begin(),
-                              batch_dims.end());
-          dot_out_axes.insert(dot_out_axes.end(), free_dims.begin(),
-                              free_dims.end());
-          dot_out_axes.push_back(dim);
-          Dimensions perm(rank);
-          for (int64_t pos = 0; pos < rank; ++pos) {
-            perm[dot_out_axes[pos]] = pos;
-          }
-          mlir::MlirOp result = stablehlo::Transpose(dot_out, perm);
-          return stablehlo::ConvertElementType(result, original_element_type);
-        }
-      }
+    if (std::optional<BroadcastGatherPlan> plan = MatchBroadcastGatherIndex(
+            self.getBuilder(), self_type, dim, index, index_type)) {
+      return EmitBroadcastGatherDot(self, dim, rank, self_type.getDimSize(dim),
+                                    computation_type, original_element_type,
+                                    *plan);
     }
   }
 
