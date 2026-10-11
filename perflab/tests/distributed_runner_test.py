@@ -145,12 +145,6 @@ class DistributedRunnerTest(seed_test_utils.RepeatableTest):
     self.assertEqual(targets[1][1], common.RunMode.EAGER_DEFAULT)
 
     # pyformat: disable
-    # Wildcard pattern throws ValueError (exact match only)
-    with self.assertRaises(ValueError):  # ASSERT_RAISES_OK=Runner target resolution validation.
-      distributed_runner.resolve_benchmark_targets(
-          test_filter="*llama_8b_inference*"
-      )
-
     # Spec name without mode suffix throws ValueError
     with self.assertRaises(ValueError):  # ASSERT_RAISES_OK=Runner target resolution validation.
       distributed_runner.resolve_benchmark_targets(
@@ -161,6 +155,44 @@ class DistributedRunnerTest(seed_test_utils.RepeatableTest):
     with self.assertRaises(ValueError):  # ASSERT_RAISES_OK=Runner target resolution validation.
       distributed_runner.resolve_benchmark_targets(
           test_filter="invalid_target_xyz"
+      )
+    # pyformat: enable
+
+  @mock.patch.dict(registry_lib.REGISTRY, {}, clear=True)
+  def test_resolve_benchmark_targets_wildcards(self):
+    # Registered out of name order to check that targets are sorted by name
+    for name in ("llama_8b_inference", "gemma_2b_training"):
+      benchmark = mock.MagicMock(spec=registry_lib.BenchmarkSpec)
+      benchmark.name = name
+      registry_lib.REGISTRY[name] = benchmark
+
+    # Targets are in token order, and a wildcard's matches in name order
+    targets = distributed_runner.resolve_benchmark_targets(
+        test_filter="llama_8b_inference_compiled *_eager_default"
+    )
+    self.assertEqual(
+        [(spec.name, mode) for spec, mode in targets],
+        [
+            ("llama_8b_inference", common.RunMode.COMPILED),
+            ("gemma_2b_training", common.RunMode.EAGER_DEFAULT),
+            ("llama_8b_inference", common.RunMode.EAGER_DEFAULT),
+        ],
+    )
+
+    # A wildcard can match every mode of a benchmark, in run mode order
+    targets = distributed_runner.resolve_benchmark_targets(
+        test_filter="gemma_2b_training_*"
+    )
+    self.assertEqual(
+        [(spec.name, mode) for spec, mode in targets],
+        [("gemma_2b_training", mode) for mode in common.RunMode],
+    )
+
+    # pyformat: disable
+    # Wildcard pattern matching no target throws ValueError
+    with self.assertRaises(ValueError):  # ASSERT_RAISES_OK=Runner target resolution validation.
+      distributed_runner.resolve_benchmark_targets(
+          test_filter="*_no_such_mode"
       )
     # pyformat: enable
 

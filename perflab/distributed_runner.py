@@ -19,6 +19,7 @@ Borg executions.
 """
 
 import enum
+import fnmatch
 import gc
 import glob
 import os
@@ -194,13 +195,20 @@ def resolve_benchmark_targets(
   """Resolves benchmark specs and modes deterministically from a filter string.
 
   Args:
-    test_filter: Space-delimited target filter string. Each token must be an
+    test_filter: Space-delimited target filter string. Each token is either an
       explicit target name with run mode suffix (e.g.
-      'llama_8b_inference_eager_default'). If None or empty, returns all
-      registered targets across all modes.
+      'llama_8b_inference_eager_default') or, as absltest accepts in
+      `TESTBRIDGE_TEST_ONLY`, an fnmatch wildcard pattern over target names
+      (e.g. '*_compiled'). If None or empty, returns all registered targets
+      across all modes.
 
   Returns:
-    List of (BenchmarkSpec, RunMode) tuples to execute.
+    List of (BenchmarkSpec, RunMode) tuples to execute, in token order. The
+    targets a wildcard pattern matches are ordered by benchmark name, then by
+    `common.RunMode` order.
+
+  Raises:
+    ValueError: If a token matches no target.
   """
   target_map = {}
   for name, spec in sorted(registry_lib.REGISTRY.items()):
@@ -210,14 +218,20 @@ def resolve_benchmark_targets(
   if not test_filter:
     return list(target_map.values())
 
-  tokens = test_filter.split()
-  if invalid := set(tokens) - target_map.keys():
+  targets = []
+  invalid = set()
+  for token in test_filter.split():
+    matches = [name for name in target_map if fnmatch.fnmatchcase(name, token)]
+    if not matches:
+      invalid.add(token)
+    targets.extend(target_map[name] for name in matches)
+  if invalid:
     raise ValueError(
         f"Could not resolve benchmark target(s): {sorted(invalid)}. "
         f"Valid targets are: {sorted(target_map)}"
     )
 
-  return [target_map[token] for token in tokens]
+  return targets
 
 
 def _shard_env() -> tuple[int, int]:
