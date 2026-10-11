@@ -68,6 +68,7 @@ test = [
 ]
 
 benchmark = [
+    "diffusers>=0.37",
     "fairscale>=0.4",
     "flax>=0.12.3",
     "grain>=0.2.16",
