@@ -25,7 +25,7 @@ load("//shims/build_files:build_defs.bzl", "TT_FRIENDS")
 # limitations under the License.
 load("//shims/py_rules:strict.bzl", "py_library_providing_imports_info")
 
-# copybara:uncomment WHEEL_VERSION = "0.0.0"
+# copybara:uncomment WHEEL_VERSION = "0.2.1"
 
 licenses(["notice"])
 
