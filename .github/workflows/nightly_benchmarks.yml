@@ -63,15 +63,19 @@ jobs:
       pub_sub_gcp_project_id: "ml-oss-benchmarking-production"
       pub_sub_gcp_topic_id: "private-torch-tpu-prod"
       runner: "linux-x86-n4-16"
+      # absltest rejects a TEST_RANDOMIZE_ORDERING_SEED that is not a positive
+      # integer, so the run ID rather than the commit SHA seeds the test order.
       custom_env_vars: |
         TORCH_TPU_WHEEL=${{ needs.build_wheel.outputs.gcs_wheel_path }}
         TORCH_TPU_PYTHON_VERSION=3.12
         TORCH_TPU_BENCHMARK_ORDER_SEED=${{ github.sha }}
-        TEST_RANDOMIZE_ORDERING_SEED=${{ github.sha }}
+        TEST_RANDOMIZE_ORDERING_SEED=${{ github.run_id }}
         TESTBRIDGE_TEST_ONLY=${{ (github.event_name == 'schedule' && github.event.schedule != '0 0 * * *') && '*_compiled' || '' }}
 
   run_gpu_benchmarks:
     name: Run GPU baseline benchmarks
+    # The GPU benchmarks also import torch_tpu, so they need the wheel too.
+    needs: [build_wheel]
     if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 0 * * *'
     permissions:
       contents: read
@@ -85,7 +89,10 @@ jobs:
       pub_sub_gcp_project_id: "ml-oss-benchmarking-production"
       pub_sub_gcp_topic_id: "private-torch-tpu-prod"
       runner: "linux-x86-n4-16"
+      # TEST_RANDOMIZE_ORDERING_SEED must be a positive integer; see
+      # run_tpu_benchmarks.
       custom_env_vars: |
+        TORCH_TPU_WHEEL=${{ needs.build_wheel.outputs.gcs_wheel_path }}
         TORCH_TPU_PYTHON_VERSION=3.12
         TORCH_TPU_BENCHMARK_ORDER_SEED=${{ github.sha }}
-        TEST_RANDOMIZE_ORDERING_SEED=${{ github.sha }}
+        TEST_RANDOMIZE_ORDERING_SEED=${{ github.run_id }}
