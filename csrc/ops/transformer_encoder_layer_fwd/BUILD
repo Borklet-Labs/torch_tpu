@@ -35,6 +35,7 @@ torch_tpu_cc_library(
         "//csrc/eager:tensor_to_buffer",
         "//csrc/ops:op_builder_utils",
         "//csrc/ops:op_names",
+        "//csrc/ops:precision_context",
         "//csrc/ops/gelu",
         "//csrc/ops/layer_norm",
         "//csrc/ops/macros:kernel",

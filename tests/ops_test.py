@@ -246,9 +246,9 @@ ACCURACY_OVERRIDES_VS_GPU = {
         torch.float16: {"atol": 5.9e-4},
     },
     "_transformer_encoder_layer_fwd": {
-        torch.bfloat16: {"rtol": 8.9, "atol": 9.9},
-        torch.float16: {"rtol": 9, "atol": 9.9},
-        torch.float32: {"rtol": 6.9e-2, "atol": 2.3e-1},
+        torch.bfloat16: {"rtol": 4.5e-2, "atol": 1.1e-1},
+        torch.float16: {"rtol": 7.6e-2, "atol": 1.8e-1},
+        torch.float32: {"rtol": 7.0e-2, "atol": 2.1e-1},
     },
     "abs": {
         torch.complex64: {"rtol": 2.0e-6, "atol": 2.0e-6},

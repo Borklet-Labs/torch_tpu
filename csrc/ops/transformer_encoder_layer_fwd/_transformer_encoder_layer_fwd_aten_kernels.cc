@@ -18,6 +18,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -40,8 +41,8 @@
 #include "csrc/ops/macros/kernel.h"
 #include "csrc/ops/op_builder_utils.h"
 #include "csrc/ops/op_names.h"
+#include "csrc/ops/precision_context.h"
 #include "csrc/ops/softmax/softmax.h"
-#include "mlir/IR/Attributes.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/MLIRContext.h"
@@ -205,34 +206,26 @@ absl::StatusOr<mlir::MlirOp> ReshapeMaskTo4DShlo(
 
 absl::StatusOr<mlir::MlirOp> ApplyAttentionMaskShlo(
     mlir::MlirOp attn_logits, mlir::MlirOp mask_op,
-    const std::optional<int64_t> mask_type, const mlir::Type elem_type,
-    const int64_t B_dummy, const int64_t T_dummy, const int64_t nH,
-    mlir::MlirBuilder& builder) {
+    const std::optional<int64_t> mask_type, const int64_t B_dummy,
+    const int64_t T_dummy, const int64_t nH) {
   TT_ASSIGN_OR_RETURN(
       mlir::MlirOp mask_val,
       ReshapeMaskTo4DShlo(mask_op, mask_type, B_dummy, T_dummy, nH));
 
   const mlir::RankedTensorType mask_t = GetTensorTypeOrDie(mask_val);
   const mlir::Type mask_elem_type = mask_t.getElementType();
-  if (mask_elem_type.isInteger(1)) {
-    const mlir::Attribute min_attr =
-        GetMinFiniteValueAttr(elem_type, builder.getOpBuilder());
-    mlir::MlirOp min_val = mlir::MlirOp(
-        builder, mlir::stablehlo::ConstantOp::create(
-                     builder.getOpBuilder(), builder.getLoc(), min_attr));
-    TT_ASSIGN_OR_RETURN(mlir::MlirOp neg_inf_bcast,
-                        BroadcastIfNeeded(min_val, attn_logits));
-    TT_ASSIGN_OR_RETURN(mlir::MlirOp mask_bcast,
-                        BroadcastIfNeeded(mask_val, attn_logits));
-    return mlir::stablehlo::Select(mask_bcast, neg_inf_bcast, attn_logits);
+  mlir::MlirOp mask_bool = mask_val;
+  if (!mask_elem_type.isInteger(1)) {
+    mlir::MlirOp zero_mask_elem = MakeConstantLike(mask_val, 0.0);
+    mask_bool = mlir::stablehlo::Compare(
+        mask_val, zero_mask_elem, mlir::stablehlo::ComparisonDirection::NE);
   }
 
-  TT_ASSIGN_OR_RETURN(const auto target_elem_type,
-                      ConvertTo<mlir::ElementType>(elem_type));
-  TT_ASSIGN_OR_RETURN(mask_val, CastIfNeeded(mask_val, target_elem_type));
+  mlir::MlirOp neg_inf =
+      MakeConstantLike(attn_logits, -std::numeric_limits<double>::infinity());
   TT_ASSIGN_OR_RETURN(mlir::MlirOp mask_bcast,
-                      BroadcastIfNeeded(mask_val, attn_logits));
-  return mlir::stablehlo::Add(attn_logits, mask_bcast);
+                      BroadcastIfNeeded(mask_bool, attn_logits));
+  return mlir::stablehlo::Select(mask_bcast, neg_inf, attn_logits);
 }
 
 absl::StatusOr<mlir::MlirOp> BuildMultiheadAttentionShlo(
@@ -241,8 +234,11 @@ absl::StatusOr<mlir::MlirOp> BuildMultiheadAttentionShlo(
     const std::optional<mlir::MlirOp>& mask_op,
     const std::optional<int64_t> mask_type, const int64_t B, const int64_t T,
     const int64_t D, const int64_t nH, const int64_t d_k,
-    mlir::MlirBuilder& builder) {
+    const mlir::ElementType comp_dtype,
+    const mlir::stablehlo::Precision precision, mlir::MlirBuilder& builder) {
   mlir::MLIRContext& ctx = builder.getContext();
+  const auto precision_config =
+      mlir::stablehlo::PrecisionConfigAttr::get(&ctx, {precision, precision});
 
   // 1. QKV Linear Projection: x_op @ qkv_weight_op.T + qkv_bias_op
   const auto qkv_dot_dims = mlir::stablehlo::DotDimensionNumbersAttr::get(
@@ -250,8 +246,8 @@ absl::StatusOr<mlir::MlirOp> BuildMultiheadAttentionShlo(
       /*rhs_batching_dimensions=*/{},
       /*lhs_contracting_dimensions=*/{2},
       /*rhs_contracting_dimensions=*/{1});
-  mlir::MlirOp qkv_mat =
-      mlir::stablehlo::DotGeneral(x_op, qkv_weight_op, qkv_dot_dims);
+  mlir::MlirOp qkv_mat = mlir::stablehlo::DotGeneral(
+      x_op, qkv_weight_op, qkv_dot_dims, precision_config, comp_dtype);
   TT_ASSIGN_OR_RETURN(mlir::MlirOp qkv_bias_bcast,
                       BroadcastIfNeeded(qkv_bias_op, qkv_mat));
   mlir::MlirOp qkv_op = mlir::stablehlo::Add(qkv_mat, qkv_bias_bcast);
@@ -307,11 +303,9 @@ absl::StatusOr<mlir::MlirOp> BuildMultiheadAttentionShlo(
   mlir::MlirOp k_trans = mlir::stablehlo::Transpose(k_4d, {0, 2, 1, 3});
   mlir::MlirOp v_trans = mlir::stablehlo::Transpose(v_4d, {0, 2, 1, 3});
 
-  // Scale Q by 1 / sqrt(d_k)
-  const mlir::RankedTensorType src_type = GetTensorTypeOrDie(x_op);
-  const auto elem_type = mlir::cast<mlir::FloatType>(src_type.getElementType());
+  // Scale Q by 1 / sqrt(d_k) in comp_dtype
   const double scale_val = 1.0 / std::sqrt(static_cast<double>(d_k));
-  mlir::MlirOp scale_const = MakeScalarConstant(builder, scale_val, elem_type);
+  mlir::MlirOp scale_const = MakeScalarConstant(builder, scale_val, comp_dtype);
   TT_ASSIGN_OR_RETURN(mlir::MlirOp scale_bcast,
                       BroadcastIfNeeded(scale_const, q_trans));
   mlir::MlirOp q_scaled = mlir::stablehlo::Mul(q_trans, scale_bcast);
@@ -322,18 +316,17 @@ absl::StatusOr<mlir::MlirOp> BuildMultiheadAttentionShlo(
       /*rhs_batching_dimensions=*/{0, 1},
       /*lhs_contracting_dimensions=*/{3},
       /*rhs_contracting_dimensions=*/{3});
-  mlir::MlirOp attn_logits =
-      mlir::stablehlo::DotGeneral(q_scaled, k_trans, attn_dot_dims);
+  mlir::MlirOp attn_logits = mlir::stablehlo::DotGeneral(
+      q_scaled, k_trans, attn_dot_dims, precision_config, comp_dtype);
 
   // Mask handling
   if (mask_op.has_value()) {
-    TT_ASSIGN_OR_RETURN(
-        attn_logits,
-        ApplyAttentionMaskShlo(attn_logits, *mask_op, mask_type, elem_type,
-                               B_dummy, T_dummy, nH, builder));
+    TT_ASSIGN_OR_RETURN(attn_logits,
+                        ApplyAttentionMaskShlo(attn_logits, *mask_op, mask_type,
+                                               B_dummy, T_dummy, nH));
   }
 
-  // Softmax along last dim (-1)
+  // Softmax along last dim (-1) in comp_dtype
   TT_ASSIGN_OR_RETURN(mlir::MlirOp attn_weights,
                       BuildSoftmaxShlo(attn_logits, -1, SoftmaxMode::kSoftmax));
 
@@ -343,8 +336,8 @@ absl::StatusOr<mlir::MlirOp> BuildMultiheadAttentionShlo(
       /*rhs_batching_dimensions=*/{0, 1},
       /*lhs_contracting_dimensions=*/{3},
       /*rhs_contracting_dimensions=*/{2});
-  mlir::MlirOp attn_out_4d =
-      mlir::stablehlo::DotGeneral(attn_weights, v_trans, v_dot_dims);
+  mlir::MlirOp attn_out_4d = mlir::stablehlo::DotGeneral(
+      attn_weights, v_trans, v_dot_dims, precision_config, comp_dtype);
 
   // 5. Reshape & Permute back: [B, nH, T, d_k] -> [B, T, nH, d_k] -> [B, T, D]
   mlir::MlirOp attn_out_perm =
@@ -360,8 +353,8 @@ absl::StatusOr<mlir::MlirOp> BuildMultiheadAttentionShlo(
       /*rhs_batching_dimensions=*/{},
       /*lhs_contracting_dimensions=*/{2},
       /*rhs_contracting_dimensions=*/{1});
-  mlir::MlirOp proj_mat =
-      mlir::stablehlo::DotGeneral(attn_out_3d, proj_weight_op, proj_dot_dims);
+  mlir::MlirOp proj_mat = mlir::stablehlo::DotGeneral(
+      attn_out_3d, proj_weight_op, proj_dot_dims, precision_config, comp_dtype);
   TT_ASSIGN_OR_RETURN(mlir::MlirOp proj_bias_bcast,
                       BroadcastIfNeeded(proj_bias_op, proj_mat));
   mlir::MlirOp proj_out = mlir::stablehlo::Add(proj_mat, proj_bias_bcast);
@@ -374,9 +367,11 @@ enum class Activation { kRelu, kGelu };
 absl::StatusOr<mlir::MlirOp> BuildFeedForwardShlo(
     mlir::MlirOp x_op, mlir::MlirOp ffn_weight_1_op, mlir::MlirOp ffn_bias_1_op,
     mlir::MlirOp ffn_weight_2_op, mlir::MlirOp ffn_bias_2_op,
-    const Activation activation, const mlir::ElementType out_dtype,
-    mlir::MlirBuilder& builder) {
+    const Activation activation, const mlir::ElementType comp_dtype,
+    const mlir::stablehlo::Precision precision, mlir::MlirBuilder& builder) {
   mlir::MLIRContext& ctx = builder.getContext();
+  const auto precision_config =
+      mlir::stablehlo::PrecisionConfigAttr::get(&ctx, {precision, precision});
 
   // 1. FFN Linear 1: x_op @ ffn_weight_1_op.T + ffn_bias_1_op
   const auto ffn1_dot_dims = mlir::stablehlo::DotDimensionNumbersAttr::get(
@@ -384,16 +379,17 @@ absl::StatusOr<mlir::MlirOp> BuildFeedForwardShlo(
       /*rhs_batching_dimensions=*/{},
       /*lhs_contracting_dimensions=*/{2},
       /*rhs_contracting_dimensions=*/{1});
-  mlir::MlirOp ffn1_mat =
-      mlir::stablehlo::DotGeneral(x_op, ffn_weight_1_op, ffn1_dot_dims);
+  mlir::MlirOp ffn1_mat = mlir::stablehlo::DotGeneral(
+      x_op, ffn_weight_1_op, ffn1_dot_dims, precision_config, comp_dtype);
   TT_ASSIGN_OR_RETURN(mlir::MlirOp ffn1_bias_bcast,
                       BroadcastIfNeeded(ffn_bias_1_op, ffn1_mat));
   mlir::MlirOp ffn1_out = mlir::stablehlo::Add(ffn1_mat, ffn1_bias_bcast);
 
-  // 2. FFN Activation: GELU / RELU
+  // 2. FFN Activation: GELU (tanh approximation matching CUDA
+  // _addmm_activation) / RELU
   mlir::MlirOp ffn1_act;
   if (activation == Activation::kGelu) {
-    TT_ASSIGN_OR_RETURN(ffn1_act, BuildGeluShlo(ffn1_out, "none", out_dtype));
+    TT_ASSIGN_OR_RETURN(ffn1_act, BuildGeluShlo(ffn1_out, "tanh", comp_dtype));
   } else {
     mlir::MlirOp zero_const = MakeConstantLike(ffn1_out, 0.0);
     ffn1_act = mlir::stablehlo::Max(ffn1_out, zero_const);
@@ -405,8 +401,8 @@ absl::StatusOr<mlir::MlirOp> BuildFeedForwardShlo(
       /*rhs_batching_dimensions=*/{},
       /*lhs_contracting_dimensions=*/{2},
       /*rhs_contracting_dimensions=*/{1});
-  mlir::MlirOp ffn2_mat =
-      mlir::stablehlo::DotGeneral(ffn1_act, ffn_weight_2_op, ffn2_dot_dims);
+  mlir::MlirOp ffn2_mat = mlir::stablehlo::DotGeneral(
+      ffn1_act, ffn_weight_2_op, ffn2_dot_dims, precision_config, comp_dtype);
   TT_ASSIGN_OR_RETURN(mlir::MlirOp ffn2_bias_bcast,
                       BroadcastIfNeeded(ffn_bias_2_op, ffn2_mat));
   mlir::MlirOp ffn2_out = mlir::stablehlo::Add(ffn2_mat, ffn2_bias_bcast);
@@ -460,25 +456,41 @@ at::Tensor AtenTransformerEncoderLayerFwd(
         TT_ASSIGN_OR_THROW(const auto out_dtype,
                            ConvertTo<mlir::ElementType>(out_type));
         const Dimensions output_shape = CopyIntVector(src.sizes());
+        const auto precision = GetAndAddPrecisionTo(param_keys);
 
         auto op_builder =
             [embed_dim, num_heads, use_gelu, norm_first, eps, has_mask,
-             mask_type, out_dtype](
+             mask_type, out_dtype, precision](
                 absl::Span<mlir::MlirOp> builder_inputs,
                 mlir::MlirBuilder& builder) -> absl::StatusOr<mlir::MlirOp> {
-          mlir::MlirOp src_op = builder_inputs[0];
-          mlir::MlirOp qkv_weight_op = builder_inputs[1];
-          mlir::MlirOp qkv_bias_op = builder_inputs[2];
-          mlir::MlirOp proj_weight_op = builder_inputs[3];
-          mlir::MlirOp proj_bias_op = builder_inputs[4];
-          mlir::MlirOp norm_weight_1_op = builder_inputs[5];
-          mlir::MlirOp norm_bias_1_op = builder_inputs[6];
-          mlir::MlirOp norm_weight_2_op = builder_inputs[7];
-          mlir::MlirOp norm_bias_2_op = builder_inputs[8];
-          mlir::MlirOp ffn_weight_1_op = builder_inputs[9];
-          mlir::MlirOp ffn_bias_1_op = builder_inputs[10];
-          mlir::MlirOp ffn_weight_2_op = builder_inputs[11];
-          mlir::MlirOp ffn_bias_2_op = builder_inputs[12];
+          TT_ASSIGN_OR_RETURN(const mlir::ElementType comp_dtype,
+                              InferComputationDtype(out_dtype));
+          TT_ASSIGN_OR_RETURN(mlir::MlirOp src_op,
+                              CastIfNeeded(builder_inputs[0], comp_dtype));
+          TT_ASSIGN_OR_RETURN(mlir::MlirOp qkv_weight_op,
+                              CastIfNeeded(builder_inputs[1], comp_dtype));
+          TT_ASSIGN_OR_RETURN(mlir::MlirOp qkv_bias_op,
+                              CastIfNeeded(builder_inputs[2], comp_dtype));
+          TT_ASSIGN_OR_RETURN(mlir::MlirOp proj_weight_op,
+                              CastIfNeeded(builder_inputs[3], comp_dtype));
+          TT_ASSIGN_OR_RETURN(mlir::MlirOp proj_bias_op,
+                              CastIfNeeded(builder_inputs[4], comp_dtype));
+          TT_ASSIGN_OR_RETURN(mlir::MlirOp norm_weight_1_op,
+                              CastIfNeeded(builder_inputs[5], comp_dtype));
+          TT_ASSIGN_OR_RETURN(mlir::MlirOp norm_bias_1_op,
+                              CastIfNeeded(builder_inputs[6], comp_dtype));
+          TT_ASSIGN_OR_RETURN(mlir::MlirOp norm_weight_2_op,
+                              CastIfNeeded(builder_inputs[7], comp_dtype));
+          TT_ASSIGN_OR_RETURN(mlir::MlirOp norm_bias_2_op,
+                              CastIfNeeded(builder_inputs[8], comp_dtype));
+          TT_ASSIGN_OR_RETURN(mlir::MlirOp ffn_weight_1_op,
+                              CastIfNeeded(builder_inputs[9], comp_dtype));
+          TT_ASSIGN_OR_RETURN(mlir::MlirOp ffn_bias_1_op,
+                              CastIfNeeded(builder_inputs[10], comp_dtype));
+          TT_ASSIGN_OR_RETURN(mlir::MlirOp ffn_weight_2_op,
+                              CastIfNeeded(builder_inputs[11], comp_dtype));
+          TT_ASSIGN_OR_RETURN(mlir::MlirOp ffn_bias_2_op,
+                              CastIfNeeded(builder_inputs[12], comp_dtype));
           std::optional<mlir::MlirOp> mask_op;
           if (has_mask) {
             mask_op = builder_inputs[13];
@@ -506,9 +518,10 @@ at::Tensor AtenTransformerEncoderLayerFwd(
           // 2. Multihead Attention
           TT_ASSIGN_OR_RETURN(
               mlir::MlirOp proj_out,
-              BuildMultiheadAttentionShlo(
-                  x_op, qkv_weight_op, qkv_bias_op, proj_weight_op,
-                  proj_bias_op, mask_op, mask_type, B, T, D, nH, d_k, builder));
+              BuildMultiheadAttentionShlo(x_op, qkv_weight_op, qkv_bias_op,
+                                          proj_weight_op, proj_bias_op, mask_op,
+                                          mask_type, B, T, D, nH, d_k,
+                                          comp_dtype, precision, builder));
 
           // 3. First residual connection & optional Post-LN 1
           x_op = mlir::stablehlo::Add(src_op, proj_out);
@@ -536,8 +549,8 @@ at::Tensor AtenTransformerEncoderLayerFwd(
               BuildFeedForwardShlo(
                   x_op, ffn_weight_1_op, ffn_bias_1_op, ffn_weight_2_op,
                   ffn_bias_2_op,
-                  use_gelu ? Activation::kGelu : Activation::kRelu, out_dtype,
-                  builder));
+                  use_gelu ? Activation::kGelu : Activation::kRelu, comp_dtype,
+                  precision, builder));
 
           // 6. Second residual connection & optional Post-LN 2
           x_op = mlir::stablehlo::Add(pre_ffn_res, ffn2_out);
@@ -549,7 +562,7 @@ at::Tensor AtenTransformerEncoderLayerFwd(
             x_op = norm2_res.normalized_values;
           }
 
-          return x_op;
+          return CastIfNeeded(x_op, out_dtype);
         };
 
         TT_ASSIGN_OR_THROW(DeviceBufferRef result,
