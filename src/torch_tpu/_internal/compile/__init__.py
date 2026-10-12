@@ -14,6 +14,8 @@
 
 """Public API for torch_tpu._internal.compile."""
 
+import weakref
+
 import torch
 from torch._dynamo.backends import registry
 from torch._functorch._aot_autograd import utils as aot_utils
@@ -100,6 +102,35 @@ def _patch_flex_attention() -> None:
 
   original_flex_attention = flex_attention.flex_attention
 
+  _causal_mask_cache = weakref.WeakKeyDictionary()
+
+  @torch.compiler.assume_constant_result
+  def _is_causal_block_mask(
+      block_mask: flex_attention.BlockMask,
+      q_len: int,
+      kv_len: int,
+      device: torch.device,
+  ) -> bool:
+    """Returns True if `block_mask` represents a pure lower-triangular causal mask."""
+    cache = _causal_mask_cache.setdefault(block_mask, {})
+    key = (q_len, kv_len)
+    if key in cache:
+      return cache[key]
+
+    b_mask, h_mask = block_mask.kv_num_blocks.shape[:2]
+    is_causal = False
+    if q_len == kv_len and b_mask == 1 and h_mask == 1:
+      bool_mask = flex_attention.create_mask(
+          block_mask.mask_mod, 1, 1, q_len, kv_len, device=device
+      )
+      expected = torch.ones(
+          (q_len, kv_len), dtype=torch.bool, device=device
+      ).tril_()
+      is_causal = torch.equal(bool_mask[0, 0], expected)
+
+    cache[key] = is_causal
+    return is_causal
+
   def _get_sdpa_attn_bias(
       block_mask: flex_attention.BlockMask,
       q_len: int,
@@ -171,15 +202,24 @@ def _patch_flex_attention() -> None:
               f" ({q_len}, {kv_len})."
           )
         num_docs = q_len // doc_len
+
+      doc_q_len = q_len // num_docs
+      doc_kv_len = kv_len // num_docs
+      is_causal = (
+          _is_causal_block_mask(block_mask, doc_q_len, doc_kv_len, query.device)
+          if block_mask is not None
+          else False
+      )
+
       attn_bias = (
           _get_sdpa_attn_bias(
               block_mask,
-              q_len // num_docs,
-              kv_len // num_docs,
+              doc_q_len,
+              doc_kv_len,
               query.dtype,
               query.device,
           )
-          if block_mask is not None
+          if block_mask is not None and not is_causal
           else None
       )
       if num_docs > 1:
@@ -198,7 +238,7 @@ def _patch_flex_attention() -> None:
           value,
           attn_mask=attn_bias,
           dropout_p=0.0,
-          is_causal=False,
+          is_causal=is_causal,
           scale=scale,
           enable_gqa=enable_gqa,
       )

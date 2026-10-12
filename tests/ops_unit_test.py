@@ -37,6 +37,7 @@ from scipy import stats
 import torch
 from torch._subclasses import fake_tensor
 from torch.fx.experimental import symbolic_shapes
+from torch.nn.attention import flex_attention
 from torch.testing._internal import common_methods_invocations
 from torch_tpu._internal import dynamism
 from torch_tpu._internal import execution_mode
@@ -17883,6 +17884,40 @@ class OpsGradUnitTest(TorchTpuVsCpuTestBase):
             atol=1e-1,
             preamble=f"close check failed for {name}",
         )
+
+  @parameterized.parameters(True, False)
+  def test_flex_attention_causal(self, is_causal: bool):
+    q, k, v = (
+        torch.randn(1, 2, 512, 128, device="tpu", dtype=torch.bfloat16)
+        for _ in range(3)
+    )
+
+    # Causal mask when is_causal=True, otherwise full unmasked attention.
+    mask_mod = (
+        (lambda b, h, q_i, kv_i: q_i >= kv_i)
+        if is_causal
+        else flex_attention.noop_mask
+    )
+    bm = flex_attention.create_block_mask(
+        mask_mod, None, None, 512, 512, device="tpu"
+    )
+
+    with mock.patch.object(
+        torch.nn.functional,
+        "scaled_dot_product_attention",
+        wraps=torch.nn.functional.scaled_dot_product_attention,
+    ) as sdpa_mock:
+      out = flex_attention.flex_attention(q, k, v, block_mask=bm)
+      self.assertEqual(sdpa_mock.call_args.kwargs["is_causal"], is_causal)
+      self.assertEqual(
+          sdpa_mock.call_args.kwargs["attn_mask"] is None, is_causal
+      )
+
+    mask_2d = flex_attention.create_mask(mask_mod, 1, 1, 512, 512, device="tpu")
+    expected = torch.nn.functional.scaled_dot_product_attention(
+        q, k, v, attn_mask=mask_2d
+    )
+    utils.assert_close(out, expected)
 
   def test_pointwise_op_dtype_promotion(self):
     """Ensure that pointwise ops promote as expected.
