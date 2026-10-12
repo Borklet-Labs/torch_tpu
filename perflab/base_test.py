@@ -49,7 +49,7 @@ from multiprocessing import connection as mp_connection
 import os
 import sys
 import traceback
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Mapping, Sequence
 import unittest
 
 from absl import flags
@@ -63,6 +63,7 @@ from perflab import flags as flags_lib
 from perflab import metrics as metrics_lib
 from perflab import mode as mode_lib
 from perflab import registry as registry_lib
+from perflab import step_lib
 from perflab import target as target_lib
 
 _DRY_RUN_OUTPUT_FILE = "test_targets.txt"
@@ -76,7 +77,7 @@ _EXIT_GRACE_SECONDS = 60.0
 SUBPROCESS_TIMEOUT_SECONDS = 900.0
 
 
-CaseParams = tuple[registry_lib.BenchmarkSpec, common.RunMode]
+CaseParams = cases.CaseParams
 
 
 class Outcome(enum.Enum):
@@ -235,21 +236,9 @@ def _get_output_dir(key: str) -> str:
     )
 
 
-def case_params(
-    cases: Iterable[tuple[str, registry_lib.BenchmarkSpec, common.RunMode]],
-    method_name: str = "test_benchmark",
-) -> Mapping[str, CaseParams]:
-  """Maps the names parameterized.named_parameters generates to (spec, mode).
-
-  Args:
-    cases: The (name, spec, mode) triples passed to named_parameters.
-    method_name: The decorated method; the generated name is <method_name>_<case
-      name>.
-
-  Returns:
-    A mapping from generated test method name to its (spec, mode).
-  """
-  return {f"{method_name}_{name}": (spec, mode) for name, spec, mode in cases}
+case_params = cases.case_params
+normalize_randomize_ordering_seed = cases.normalize_randomize_ordering_seed
+BenchmarkTestLoader = cases.BenchmarkTestLoader
 
 
 class BaseBenchmarkTest(
@@ -303,6 +292,11 @@ class BaseBenchmarkTest(
     if params is None:
       return None
     spec, mode = params
+    if (
+        self.framework == mode_lib.Framework.TORCHAX
+        and spec.stepper == step_lib.StepperType.DECODER_ONLY_DECODE
+    ):
+      return f"TorchAx benchmark does not support stepper {spec.stepper}"
     skip_reason = cases.get_skip_reason(
         spec,
         mode,

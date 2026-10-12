@@ -222,6 +222,7 @@ torch_tpu_py_test(
         "//perflab:registry",
         "//perflab:step_lib",
         "//perflab:target",
+        "//shims/absl_py/flags",
         "//shims/absl_py/testing:absltest",
         "//src/torch_tpu",
         "//tests:seed_test_utils",

@@ -22,6 +22,7 @@ Environment & Flags:
   --run_scope          full | presubmit         (default: full)
 """
 
+from typing import Any
 import unittest
 
 from absl import logging
@@ -186,5 +187,9 @@ class TorchaxBenchmarkTest(
       self.assertGreater(metrics.post_warmup_step_time_seconds, 0.0)
 
 
+def _test_main(*args: Any, **kwargs: Any) -> None:
+  absltest.main(*args, testLoader=base_test.BenchmarkTestLoader(), **kwargs)
+
+
 if __name__ == "__main__":
-  multiprocessing.handle_test_main(absltest.main)
+  multiprocessing.handle_test_main(_test_main)
