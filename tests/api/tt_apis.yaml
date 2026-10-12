@@ -55,6 +55,7 @@ torch.tpu.Event.query: {category: Public Python API, defined_in: runtime, stage:
 torch.tpu.Event.record: {category: Public Python API, defined_in: runtime, stage: Experimental}
 torch.tpu.Event.synchronize: {category: Public Python API, defined_in: runtime, stage: Experimental}
 torch.tpu.Event.wait: {category: Public Python API, defined_in: runtime, stage: Experimental}
+torch.tpu.LayoutContext: {category: Public Python API, defined_in: runtime, stage: Experimental}
 torch.tpu.Precision: {category: Public Python API, defined_in: runtime, stage: Experimental}
 torch.tpu.Precision.DEFAULT: {category: Public Python API, defined_in: runtime, stage: Experimental}
 torch.tpu.Precision.HIGH: {category: Public Python API, defined_in: runtime, stage: Experimental}
@@ -68,6 +69,8 @@ torch.tpu.Stream.record_event: {category: Public Python API, defined_in: runtime
 torch.tpu.Stream.synchronize: {category: Public Python API, defined_in: runtime, stage: Experimental}
 torch.tpu.Stream.wait_event: {category: Public Python API, defined_in: runtime, stage: Experimental}
 torch.tpu.Stream.wait_stream: {category: Public Python API, defined_in: runtime, stage: Experimental}
+torch.tpu.TpuLayout: {category: Public Python API, defined_in: runtime, stage: Experimental}
+torch.tpu.TpuLayout.element_size_in_bits: {category: Public Python API, defined_in: runtime, stage: Experimental}
 torch.tpu.allow_excess_precision getter: {category: Public Python API, defined_in: runtime, stage: Experimental}
 torch.tpu.allow_excess_precision setter: {category: Public Python API, defined_in: runtime, stage: Experimental}
 torch.tpu.compiler.custom_compiler_options: {category: Public Python API, defined_in: runtime, stage: Experimental}
@@ -88,6 +91,7 @@ torch.tpu.distributed.window_stripe_chunk_mb setter: {category: Public Python AP
 torch.tpu.eager_mode getter: {category: Public Python API, defined_in: runtime, stage: Experimental}
 torch.tpu.eager_mode setter: {category: Public Python API, defined_in: runtime, stage: Experimental}
 torch.tpu.get_amp_supported_dtype: {category: Public Python API, defined_in: runtime, stage: Experimental}
+torch.tpu.get_device_layout_if_materialized: {category: Public Python API, defined_in: runtime, stage: Experimental}
 torch.tpu.get_device_name: {category: Public Python API, defined_in: runtime, stage: Experimental}
 torch.tpu.get_device_properties: {category: Public Python API, defined_in: runtime, stage: Experimental}
 torch.tpu.get_device_properties.multi_processor_count: {category: Public Python API, defined_in: runtime, stage: Experimental}

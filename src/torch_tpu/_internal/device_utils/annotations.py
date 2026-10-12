@@ -16,6 +16,7 @@
 
 import dataclasses
 from typing import List
+import torch
 from torch_tpu._internal.device_utils import annotations_py
 from torch_tpu._internal.utils import annotations as api_annotations
 
@@ -23,6 +24,7 @@ field = dataclasses.field
 dataclass = dataclasses.dataclass
 
 
+@api_annotations.experimental("On-device layout of TPU tensors.")
 @dataclass
 class TpuLayout:
   """Mimics layout class from xla/layout.h.
@@ -39,10 +41,20 @@ class TpuLayout:
   tiles: List[List[int]] = field(default_factory=list)
   element_size_in_bits: int = 0
 
+  __tt_api_stages__ = {
+      "element_size_in_bits": api_annotations.ApiStageInfo(
+          stage=api_annotations.Stage.EXPERIMENTAL,
+          reason="Element size in bits, for sub-byte types.",
+      ),
+  }
+
 
 @api_annotations.forbid_in_torch_compile(
     "The layout hint only applies to eager host-to-device copies, which never "
     "occur inside a compiled graph."
+)
+@api_annotations.experimental(
+    "Context manager for setting the layout hint for TPU tensors."
 )
 class LayoutContext:
   """Context manager to set the layout hint for TPU tensors.
@@ -78,3 +90,22 @@ class LayoutContext:
 
   def __exit__(self, *args):
     annotations_py.exit_layout_context()
+
+
+@api_annotations.experimental("Getter for the on-device layout of TPU tensors.")
+def get_device_layout_if_materialized(
+    tensor: torch.Tensor,
+) -> tuple[list[int], list[list[int]], int] | None:
+  """Returns the fields of the `TpuLayout` of a TPU tensor's device buffer.
+
+  Args:
+    tensor: A TPU tensor.
+
+  Returns:
+    The `(minor_to_major, tiles, element_size_in_bits)` fields of the tensor's
+    `TpuLayout`, or None if the tensor has no device buffer yet, e.g. because
+    the computation that produces it hasn't started.
+  """
+  from torch_tpu._internal.compile import tpu_torch_compile  # pylint: disable=g-import-not-at-top
+
+  return tpu_torch_compile.get_device_layout_if_materialized(tensor)

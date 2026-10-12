@@ -142,6 +142,7 @@ torch_tpu_py_test(
         "//src/torch_tpu",
         "//src/torch_tpu:_loader",
         "//src/torch_tpu/_internal/compiler_options",
+        "//src/torch_tpu/_internal/device_utils:annotations",
         "//src/torch_tpu/_internal/distributed",
         "//src/torch_tpu/_internal/execution_mode",
         "//src/torch_tpu/_internal/ops:ops_lib",

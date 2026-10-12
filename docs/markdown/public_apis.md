@@ -96,6 +96,7 @@ process. Use it at your own risk. Using it triggers a one-time warning.
 *   `torch.tpu.Event.record`
 *   `torch.tpu.Event.synchronize`
 *   `torch.tpu.Event.wait`
+*   `torch.tpu.LayoutContext`
 *   `torch.tpu.Precision`
 *   `torch.tpu.Precision.DEFAULT`
 *   `torch.tpu.Precision.HIGH`
@@ -109,6 +110,8 @@ process. Use it at your own risk. Using it triggers a one-time warning.
 *   `torch.tpu.Stream.synchronize`
 *   `torch.tpu.Stream.wait_event`
 *   `torch.tpu.Stream.wait_stream`
+*   `torch.tpu.TpuLayout`
+*   `torch.tpu.TpuLayout.element_size_in_bits`
 *   `torch.tpu.allow_excess_precision` (getter)
 *   `torch.tpu.allow_excess_precision` (setter)
 *   `torch.tpu.compiler.custom_compiler_options`
@@ -125,6 +128,7 @@ process. Use it at your own risk. Using it triggers a one-time warning.
 *   `torch.tpu.eager_mode` (getter)
 *   `torch.tpu.eager_mode` (setter)
 *   `torch.tpu.get_amp_supported_dtype`
+*   `torch.tpu.get_device_layout_if_materialized`
 *   `torch.tpu.get_device_name`
 *   `torch.tpu.get_device_properties`
 *   `torch.tpu.get_device_properties.multi_processor_count`

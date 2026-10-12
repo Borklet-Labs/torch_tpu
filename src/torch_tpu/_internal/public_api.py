@@ -133,8 +133,10 @@ _PUBLIC_MODULES: Mapping[str, ModuleSpec] = {
             # go/keep-sorted start
             "EagerMode": _tpu_attr("EagerMode"),
             "Event": _tpu_attr("Event"),
+            "LayoutContext": _tpu_attr("LayoutContext"),
             "Precision": _tpu_attr("Precision"),
             "Stream": _tpu_attr("Stream"),
+            "TpuLayout": _tpu_attr("TpuLayout"),
             "allow_excess_precision": Property(
                 f"{_DEVICE_MODULE}:_DeviceModuleMeta.allow_excess_precision"
             ),
@@ -149,6 +151,9 @@ _PUBLIC_MODULES: Mapping[str, ModuleSpec] = {
                 f"{_DEVICE_MODULE}:_DeviceModuleMeta.eager_mode"
             ),
             "get_amp_supported_dtype": _tpu_attr("get_amp_supported_dtype"),
+            "get_device_layout_if_materialized": _tpu_attr(
+                "get_device_layout_if_materialized"
+            ),
             "get_device_name": _tpu_attr("get_device_name"),
             "get_device_properties": _tpu_attr("get_device_properties"),
             "get_rng_state": _tpu_attr("get_rng_state"),

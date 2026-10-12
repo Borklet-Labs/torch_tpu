@@ -29,6 +29,7 @@ from torch._dynamo.device_interface import DeviceInterface
 from torch_tpu._internal import env
 from torch_tpu._internal import execution_mode
 from torch_tpu._internal.device import _device_ops_backend
+import torch_tpu._internal.device_utils.annotations as _layout_module
 import torch_tpu._internal.execution_mode as _execution_mode_module
 import torch_tpu._internal.precision as _precision_module
 from torch_tpu._internal.stream import streams
@@ -143,10 +144,20 @@ __tt_api_stages__: dict[str, annotations.ApiStageInfo] = {
         reason="TPU eager execution mode configuration.",
         value=_execution_mode_module.EagerMode,
     ),
+    "LayoutContext": annotations.ApiStageInfo(
+        stage=annotations.Stage.EXPERIMENTAL,
+        reason="Context manager for setting the layout hint for TPU tensors.",
+        value=_layout_module.LayoutContext,
+    ),
     "Precision": annotations.ApiStageInfo(
         stage=annotations.Stage.EXPERIMENTAL,
         reason="StableHLO precision configuration.",
         value=_precision_module.Precision,
+    ),
+    "TpuLayout": annotations.ApiStageInfo(
+        stage=annotations.Stage.EXPERIMENTAL,
+        reason="On-device layout of TPU tensors.",
+        value=_layout_module.TpuLayout,
     ),
 }
 
@@ -395,6 +406,9 @@ class _DeviceModule(abc.ABC, metaclass=_DeviceModuleMeta):
 
   device = _DeviceContext  # pylint: disable=invalid-name
   device_of = _DeviceOfContext  # pylint: disable=invalid-name
+  get_device_layout_if_materialized = (
+      _layout_module.get_device_layout_if_materialized
+  )
   precision = _precision_module.precision
   set_eager_mode = _execution_mode_module.set_eager_mode
 

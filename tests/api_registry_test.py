@@ -26,6 +26,7 @@ import torch_tpu
 from torch_tpu import _loader  # build_cleaner: keep
 from torch_tpu._internal import compiler_options as internal_compiler_options
 from torch_tpu._internal import execution_mode as _internal_execution_mode
+from torch_tpu._internal.device_utils import annotations as tpu_annotations
 from torch_tpu._internal.distributed.distributed import (
     set_tpu_launch_env as internal_set_tpu_launch_env,
 )
@@ -352,6 +353,27 @@ class ApiRegistryTest(seed_test_utils.RepeatableTest):
       )
     finally:
       torch.tpu.eager_mode = prev_mode
+
+  def test_layout_registry(self):
+    """Verifies exposure, identity and stage metadata for the layout API."""
+    # 1. Symbol identity
+    self.assertIs(torch.tpu.TpuLayout, tpu_annotations.TpuLayout)
+    self.assertIs(torch.tpu.LayoutContext, tpu_annotations.LayoutContext)
+    self.assertIs(
+        torch.tpu.get_device_layout_if_materialized,
+        tpu_annotations.get_device_layout_if_materialized,
+    )
+
+    # 2. Lifecycle stage metadata
+    for api in (
+        torch.tpu.TpuLayout,
+        torch.tpu.LayoutContext,
+        torch.tpu.get_device_layout_if_materialized,
+    ):
+      self.assertEqual(
+          getattr(api, annotations.TT_API_STAGE, None),
+          annotations.Stage.EXPERIMENTAL.value,
+      )
 
   def test_compiler_api_registry(self):
     """Verifies public exposure, identity, metadata, and proxy behavior for compiler."""
