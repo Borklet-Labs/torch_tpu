@@ -29,6 +29,7 @@
 #include "csrc/ops/scaled_dot_product_attention/util.h"
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Arith/IR/ArithAttributes.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -99,9 +100,10 @@ SharedBwdResult ComputeSharedBackwardLogic(
     sij = AddFOp::create(fn_builder, sij, user_bias);
   }
 
-  sij = ApplyStructuredMask(fn_builder, sij, row_block_idx, col_block_idx, qt,
-                            kt, config.q_sequence_length,
-                            config.kv_sequence_length, config.is_causal);
+  sij = ApplyStructuredMask(
+      fn_builder, sij, row_block_idx, col_block_idx, qt, kt,
+      config.q_sequence_length, config.kv_sequence_length, config.is_causal,
+      /*row_offset=*/0, /*col_offset=*/0, config.sliding_window_size);
 
   Value lse_broadcast =
       BroadcastOp::create(fn_builder, vector_type_qt_kt, lse_tile);
@@ -298,7 +300,8 @@ func::FuncOp buildBackwardDkvModule(ImplicitLocOpBuilder& module_builder,
 
   std::optional<IfOp> causal_if;
   if (config.is_causal) {
-    causal_if = CreateCausalIfOp(fn_builder, q_tile_idx, kv_tile_idx, qt, kt);
+    causal_if = CreateCausalIfOp(fn_builder, q_tile_idx, kv_tile_idx, qt, kt,
+                                 config.sliding_window_size);
     fn_builder.setInsertionPointToStart(causal_if->thenBlock());
   }
 
@@ -666,8 +669,9 @@ func::FuncOp buildBackwardDqModule(ImplicitLocOpBuilder& module_builder,
 
   std::optional<IfOp> causal_if;
   if (config.is_causal) {
-    causal_if = CreateCausalIfOp(fn_builder, fn.getArgument(2),
-                                 fn.getArgument(3), qt, kt);
+    causal_if =
+        CreateCausalIfOp(fn_builder, fn.getArgument(2), fn.getArgument(3), qt,
+                         kt, config.sliding_window_size);
     fn_builder.setInsertionPointToStart(causal_if->thenBlock());
   }
 

@@ -372,8 +372,8 @@ absl::StatusOr<mlir::torch_tpu::FlashAttnConfig> CreateFlashAttnConfig(
     mlir::MlirOp query, mlir::MlirOp key, mlir::MlirOp value,
     const std::optional<mlir::MlirOp>& attn_bias, bool is_causal,
     std::optional<double> scale, double dropout_p, bool return_lse,
-    const mlir::torch_tpu::Tiling& tiling,
-    mlir::stablehlo::Precision precision) {
+    const mlir::torch_tpu::Tiling& tiling, mlir::stablehlo::Precision precision,
+    std::optional<int64_t> sliding_window_size) {
   if (is_causal && attn_bias.has_value()) {
     return TT_ERROR(error::kInvalidArgument)
            << "Causal mask and attn bias are mutually exclusive.";
@@ -404,6 +404,11 @@ absl::StatusOr<mlir::torch_tpu::FlashAttnConfig> CreateFlashAttnConfig(
            << "num_heads must be divisible by kv_num_heads for MQA/GQA";
   }
 
+  TT_RET_CHECK(!sliding_window_size.has_value() || *sliding_window_size > 0,
+               error::kInvalidArgument)
+      << "expected sliding_window_size to be positive, got "
+      << *sliding_window_size;
+
   mlir::torch_tpu::FlashAttnConfig config;
   config.return_lse = return_lse;
   TT_ASSIGN_OR_RETURN(config.element_type, GetElementType(query));
@@ -431,6 +436,7 @@ absl::StatusOr<mlir::torch_tpu::FlashAttnConfig> CreateFlashAttnConfig(
   config.scale = scale.value_or(1.0 / std::sqrt(head_dim));
   config.dropout_rate = static_cast<float>(dropout_p);
   config.has_attn_bias = attn_bias.has_value();
+  config.sliding_window_size = sliding_window_size;
 
   if (config.has_attn_bias) {
     llvm::ArrayRef<int64_t> shape = GetTensorTypeOrDie(*attn_bias).getShape();
@@ -467,15 +473,31 @@ mlir::MlirOp ReshapeMask(mlir::MlirOp mask_mlir, int batch_size) {
   return mask_mlir;
 }
 
+// Repurpose a 1D `attn_bias` of shape `(W,)` to pass `sliding_window_size = W`,
+// to avoid duplicating kernel entry points.
+std::optional<int64_t> GetSlidingWindowSize(
+    std::optional<at::Tensor>& attn_bias, bool& is_causal) {
+  if (!IsDefined(attn_bias) || attn_bias->dim() != 1) {
+    return std::nullopt;
+  }
+
+  int64_t window_size = attn_bias->size(0);
+  attn_bias = std::nullopt;
+  is_causal = true;
+  return window_size;
+}
+
 absl::StatusOr<std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor>>
 CreateFlashAttentionKernelImpl(const at::Tensor& query, const at::Tensor& key,
                                const at::Tensor& value,
-                               const std::optional<at::Tensor>& attn_bias,
+                               std::optional<at::Tensor> attn_bias,
                                bool is_causal, std::optional<double> scale,
                                double dropout_p, bool return_lse) {
   TT_RETURN_IF_ERROR(ValidateDtype(query.scalar_type()));
 
   int rank = query.ndimension();
+  const std::optional<int64_t> sliding_window_size =
+      GetSlidingWindowSize(attn_bias, is_causal);
   const bool has_attn_bias = IsDefined(attn_bias);
   const bool has_dropout = dropout_p > 0.0;
 
@@ -490,6 +512,7 @@ CreateFlashAttentionKernelImpl(const at::Tensor& query, const at::Tensor& key,
   TT_ASSIGN_OR_RETURN(auto param_keys,
                       *OpParamCacheKeysBuilder()
                            .SetParam("is_causal", is_causal)
+                           .SetParam("sliding_window_size", sliding_window_size)
                            .SetParam("scale", scale)
                            .SetParam("dropout_p", dropout_p)
                            .SetParam("attn_bias", attn_bias)
@@ -497,8 +520,8 @@ CreateFlashAttentionKernelImpl(const at::Tensor& query, const at::Tensor& key,
   const mlir::stablehlo::Precision precision = GetAndAddPrecisionTo(param_keys);
 
   auto op_builder =
-      [rank, out_dims, lse_dims, is_causal, scale, dropout_p, return_lse,
-       has_attn_bias, has_dropout, precision](
+      [rank, out_dims, lse_dims, is_causal, sliding_window_size, scale,
+       dropout_p, return_lse, has_attn_bias, has_dropout, precision](
           absl::Span<mlir::MlirOp> inputs,
           mlir::MlirBuilder& builder) -> absl::StatusOr<DynamicMlirOpResults> {
     size_t idx = 0;
@@ -521,7 +544,7 @@ CreateFlashAttentionKernelImpl(const at::Tensor& query, const at::Tensor& key,
         mlir::torch_tpu::FlashAttnConfig config,
         CreateFlashAttnConfig(query_mlir, key_mlir, value_mlir, attn_bias_mlir,
                               is_causal, scale, dropout_p, return_lse, tiling,
-                              precision));
+                              precision, sliding_window_size));
 
     mlir::MlirOp mask_mlir =
         attn_bias_mlir.has_value()
@@ -708,22 +731,26 @@ CreateFlashAttentionBackwardKernel(
   TT_RETURN_IF_ERROR(ValidateDtype(query.scalar_type()));
 
   int rank = query.ndimension();
+  const std::optional<int64_t> sliding_window_size =
+      GetSlidingWindowSize(attn_bias, is_causal);
   const bool has_attn_bias = IsDefined(attn_bias);
   const bool has_dropout = dropout_p > 0.0;
 
   TT_ASSIGN_OR_RETURN(const auto out_dtype,
                       ConvertTo<mlir::ElementType>(query.scalar_type()));
 
-  TT_ASSIGN_OR_RETURN(auto param_keys, *OpParamCacheKeysBuilder()
-                                            .SetParam("is_causal", is_causal)
-                                            .SetParam("scale", scale)
-                                            .SetParam("dropout_p", dropout_p)
-                                            .SetParam("attn_bias", attn_bias));
+  TT_ASSIGN_OR_RETURN(auto param_keys,
+                      *OpParamCacheKeysBuilder()
+                           .SetParam("is_causal", is_causal)
+                           .SetParam("sliding_window_size", sliding_window_size)
+                           .SetParam("scale", scale)
+                           .SetParam("dropout_p", dropout_p)
+                           .SetParam("attn_bias", attn_bias));
   const mlir::stablehlo::Precision precision = GetAndAddPrecisionTo(param_keys);
 
   auto op_builder =
-      [rank, is_causal, scale, dropout_p, has_attn_bias, has_dropout,
-       precision](
+      [rank, is_causal, sliding_window_size, scale, dropout_p, has_attn_bias,
+       has_dropout, precision](
           absl::Span<mlir::MlirOp> inputs,
           mlir::MlirBuilder& builder) -> absl::StatusOr<MlirOpResults<3>> {
     size_t idx = 0;
@@ -751,7 +778,8 @@ CreateFlashAttentionBackwardKernel(
         mlir::torch_tpu::FlashAttnConfig config,
         CreateFlashAttnConfig(query_mlir, key_mlir, value_mlir, attn_bias_mlir,
                               is_causal, scale, dropout_p,
-                              /*return_lse=*/false, tiling, precision));
+                              /*return_lse=*/false, tiling, precision,
+                              sliding_window_size));
 
     // Compute di in SHLO
     mlir::Type f32_type = builder.getOpBuilder().getF32Type();
