@@ -36,6 +36,21 @@ torch_tpu_cc_library(
 )
 
 torch_tpu_cc_library(
+    name = "fold_concat_softmax",
+    srcs = ["fold_concat_softmax.cc"],
+    hdrs = ["fold_concat_softmax.h"],
+    deps = [
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Pass",
+        "@llvm-project//mlir:SideEffectInterfaces",
+        "@llvm-project//mlir:Support",
+        "@stablehlo//:stablehlo_ops",
+    ],
+)
+
+torch_tpu_cc_library(
     name = "reassociate_norm_weights",
     srcs = ["reassociate_norm_weights.cc"],
     hdrs = ["reassociate_norm_weights.h"],
