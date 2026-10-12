@@ -32,9 +32,15 @@ exports_files([
 ])
 
 bzl_library(
+    name = "rbe_bzl",
+    srcs = ["rbe.bzl"],
+)
+
+bzl_library(
     name = "build_defs_bzl",
     srcs = ["build_defs.bzl"],
     deps = [
+        ":rbe_bzl",
         "//bazel:supported_python_versions_bzl",
         "//shims/build_cleaner:build_defs_lib",
         "//shims/build_files:build_defs_bzl",
@@ -81,6 +87,7 @@ bzl_library(
     visibility = ["//visibility:private"],
     deps = [
         ":build_defs_bzl",
+        ":rbe_bzl",
         "@rules_testing//lib:analysis_test_bzl",
         "@rules_testing//lib:test_suite_bzl",
     ],
