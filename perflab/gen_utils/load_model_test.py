@@ -57,6 +57,42 @@ def _fake_registry(model: nn.Module, inputs: dict[str, Any]) -> Any:
   )
 
 
+class _FakeTimeSeriesModel(nn.Module):
+  """Stand-in for a HuggingFace time series model such as TimesFM."""
+
+  def __init__(self, config: types.SimpleNamespace):
+    super().__init__()
+    self.config = config
+
+
+def _fake_time_series_registry(config: types.SimpleNamespace) -> Any:
+  """Returns a module registry that sizes inputs by `context_length`.
+
+  Like the TimesFM input builder, its inputs ignore the requested sequence
+  length, and it applies the config hook of the caller.
+
+  Args:
+    config: The model config, passed to the config hook.
+  """
+
+  def get_module_spec(*args, modify_config_hook, **kwargs):
+    del args, kwargs  # Unused.
+    hooked_config = modify_config_hook(config)
+    return types.SimpleNamespace(
+        module_factory=lambda: _FakeTimeSeriesModel(hooked_config),
+        sample_inputs_factory=lambda shape, device: (
+            None,
+            {
+                "past_values": torch.randn(
+                    shape[0], hooked_config.context_length
+                )
+            },
+        ),
+    )
+
+  return types.SimpleNamespace(get_module_spec=get_module_spec)
+
+
 class LoadModelTest(seed_test_utils.RepeatableTest):
 
   def setUp(self):
@@ -121,6 +157,35 @@ class LoadModelTest(seed_test_utils.RepeatableTest):
 
     self.assertIsNone(model.config.problem_type)
     self.assertNotIn("labels", inputs)
+
+  def _load_time_series(
+      self, context_length: int
+  ) -> tuple[nn.Module, dict[str, Any]]:
+    ctx = context_lib.Context(
+        target=target_lib.make_target(platform=target_lib.Platform.CPU),
+        run_scope=context_lib.RunScope.FULL,
+    )
+    config = types.SimpleNamespace(context_length=context_length)
+    with mock.patch.object(
+        model_helpers,
+        "get_module_registry",
+        return_value=_fake_time_series_registry(config),
+    ):
+      return load_model.default_load_model(
+          ctx, "fake/time_series_model", is_training=False
+      )
+
+  def test_context_length_capped_at_seq_len(self):
+    model, inputs = self._load_time_series(context_length=16384)
+
+    self.assertEqual(model.config.context_length, 2048)
+    self.assertEqual(inputs["past_values"].shape, (1, 2048))
+
+  def test_shorter_context_length_kept(self):
+    model, inputs = self._load_time_series(context_length=512)
+
+    self.assertEqual(model.config.context_length, 512)
+    self.assertEqual(inputs["past_values"].shape, (1, 512))
 
 
 if __name__ == "__main__":

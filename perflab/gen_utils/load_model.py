@@ -43,6 +43,12 @@ def default_load_model(
   registry = model_helpers.get_module_registry()
 
   def modify_config_hook(config):
+    # Time series models such as TimesFM pad or truncate every series to
+    # `context_length` rather than taking the length of the generated inputs.
+    # Cap it so that they run on seq_len steps like the other benchmarks.
+    context_length = getattr(config, "context_length", None)
+    if isinstance(context_length, int) and context_length > seq_len:
+      config.context_length = seq_len
     if ctx.run_scope == context_lib.RunScope.PRESUBMIT:
       if hasattr(config, "num_hidden_layers"):
         config.num_hidden_layers = 2
