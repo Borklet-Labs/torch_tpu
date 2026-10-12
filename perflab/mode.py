@@ -19,7 +19,9 @@ import enum
 from typing import Iterator
 
 import torch
+from torch._subclasses import fake_tensor
 from perflab import common
+from perflab import flags as flags_lib
 from perflab import target as target_lib
 
 
@@ -134,3 +136,41 @@ def run_mode_context(
   finally:
     # Revert back to the original execution mode.
     execution_mode.eager_mode = original_eager_mode
+
+
+@contextlib.contextmanager
+def fake_tensor_context() -> Iterator[None]:
+  """Enters FakeTensorMode for the FakeTensorMode CPU presubmit smoke.
+
+  Callers enter it only if `fake_tensor_smoke_enabled()`; `--fake_tensor_mode`
+  is validated at flag-parse time to be set only with BENCHMARK_PLATFORM=cpu and
+  `--run_scope=presubmit`.
+
+  While active, this disables FakeTensor memoization.
+
+  Yields:
+    None.
+  """
+  mode = fake_tensor.FakeTensorMode(allow_non_fake_inputs=True)
+  # `nn.Module._apply` (e.g. `model.to(dtype)`) always replaces FakeTensor
+  # parameters with `torch.utils.swap_tensors`, whatever the `torch.__future__`
+  # conversion flags, and `swap_tensors` refuses tensors that have weakrefs. The
+  # converter keeps weakrefs to every fake it makes in its tensor memo (a
+  # WeakValueDictionary). Dropping the memo and keeping fakes strongly instead
+  # lets the swap succeed. The cost, fine for a one-step smoke: a real tensor
+  # converted twice yields two unrelated fakes, and converted fakes live as long
+  # as the mode.
+  mode.fake_tensor_converter.set_tensor_memo = lambda t, v: None
+  mode.fake_tensor_converter.meta_converter.tensor_memo = {}  # pytype: disable=annotation-type-mismatch
+
+  with mode:
+    yield
+
+
+def fake_tensor_smoke_enabled() -> bool:
+  """Returns whether this run is the FakeTensorMode CPU presubmit smoke.
+
+  That is, whether `--fake_tensor_mode` is set; flag parsing fails unless it is
+  set with BENCHMARK_PLATFORM=cpu and `--run_scope=presubmit`.
+  """
+  return flags_lib.FAKE_TENSOR_MODE.value

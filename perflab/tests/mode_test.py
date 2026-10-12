@@ -15,6 +15,8 @@
 """Tests for harness/mode.py."""
 
 from absl.testing import absltest
+import torch
+from torch._subclasses import fake_tensor
 from perflab import common
 from perflab import mode as mode_lib
 from perflab import target as target_lib
@@ -152,6 +154,26 @@ class RunModeContextTest(seed_test_utils.RepeatableTest):
       with mode_lib.run_mode_context(common.RunMode.COMPILED, target):
         pass
     mock_prec.assert_called_once_with("high")
+
+
+class FakeTensorContextTest(seed_test_utils.RepeatableTest):
+
+  def test_enters_fake_tensor_mode(self):
+    with mode_lib.fake_tensor_context():
+      layer = torch.nn.Linear(8, 4)
+      layer = layer.to(dtype=torch.bfloat16)
+      x = torch.randn(4, 8, dtype=torch.bfloat16, requires_grad=True)
+      y = layer(x).sum()
+      y.backward()
+      self.assertIsInstance(x, fake_tensor.FakeTensor)
+      self.assertIsInstance(x.grad, fake_tensor.FakeTensor)
+      self.assertEqual(x.grad.dtype, torch.bfloat16)
+      self.assertEqual(layer.weight.dtype, torch.bfloat16)
+
+  def test_restores_real_tensors_on_exit(self):
+    with mode_lib.fake_tensor_context():
+      pass
+    self.assertNotIsInstance(torch.zeros(4, 4), fake_tensor.FakeTensor)
 
 
 if __name__ == "__main__":

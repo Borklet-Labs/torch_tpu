@@ -20,6 +20,7 @@ import typing
 from typing import Any
 
 import torch
+from perflab import mode as mode_lib
 
 if typing.TYPE_CHECKING:
   from tests import module_registry
@@ -58,12 +59,22 @@ def get_vocab_size(config: Any, default: int = 128256) -> int:
 
 @functools.cache
 def get_module_registry() -> "module_registry.ModuleRegistry":
-  """Returns a cached ModuleRegistry instance."""
+  """Returns a cached ModuleRegistry instance.
+
+  Under `--fake_tensor_mode`, the registry has no weights cache directory: it
+  reads model configs from the in-tree resources and otherwise falls back to
+  GCS as usual.
+  """
   # Imported lazily rather than at module scope. Importing module_registry
   # is likely to probe the CUDA driver at import time and thereby
   # poisons fork() for CUDA.
   from tests import module_registry  # pylint: disable=g-import-not-at-top
 
+  if mode_lib.fake_tensor_smoke_enabled():
+    # FakeTensorMode never loads weights, and reading the weights cache
+    # directory made the CPU smoke shards time out: the registry falls back only
+    # on a clean miss, not on a timeout, and raises if the directory is missing.
+    return module_registry.ModuleRegistry(base_path="")
   return module_registry.ModuleRegistry()
 
 

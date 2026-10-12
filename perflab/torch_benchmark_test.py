@@ -23,8 +23,13 @@ Environment & Flags:
   BENCHMARK_PLATFORM   cpu | b200_1 | b200_8 | v6e_1x1 | ...   (default: cpu)
   --run_scope          full | presubmit                        (default: full)
   --run_in_subprocess  isolate each case in a child process    (default: true)
+  --fake_tensor_mode   build and run each case under FakeTensorMode; only
+                       valid with BENCHMARK_PLATFORM=cpu and
+                       --run_scope=presubmit; also skips the
+                       weights cache dir                       (default: false)
 """
 
+import contextlib
 import unittest
 from absl import logging
 from absl.testing import absltest
@@ -169,7 +174,14 @@ class BenchmarkTest(
       self, spec, mode, target, device_ops, ctx
   ) -> metrics_lib.PerformanceMetrics:
     try:
-      with mode_lib.run_mode_context(mode, target):
+      with (
+          mode_lib.run_mode_context(mode, target),
+          (
+              mode_lib.fake_tensor_context()
+              if mode_lib.fake_tensor_smoke_enabled()
+              else contextlib.nullcontext()
+          ),
+      ):
         run_step = _make_run_step(spec, ctx, mode)
         metrics = measure_lib.measure(
             run_step,

@@ -41,6 +41,22 @@ torch_tpu_py_test(
 )
 
 torch_tpu_py_test(
+    name = "flags_test",
+    srcs = ["flags_test.py"],
+    deps = [
+        "//perflab:context",
+        "//perflab:flags",
+        "//perflab:target",
+        "//shims/absl_py/flags",
+        "//shims/absl_py/testing:absltest",
+        "//shims/absl_py/testing:flagsaver",
+        "//shims/absl_py/testing:parameterized",
+        "//src/torch_tpu",
+        "//tests:seed_test_utils",
+    ],
+)
+
+torch_tpu_py_test(
     name = "measure_test",
     srcs = ["measure_test.py"],
     deps = [
@@ -61,6 +77,7 @@ torch_tpu_py_test(
         "//perflab:mode",
         "//perflab:target",
         "//shims/absl_py/testing:absltest",
+        "//shims/torch:pytorch",
         "//src/torch_tpu",
         "//src/torch_tpu/_internal/execution_mode",
         "//tests:seed_test_utils",
