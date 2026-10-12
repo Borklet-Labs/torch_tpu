@@ -264,6 +264,19 @@ torch_tpu_cc_library(
     ],
 )
 
+torch_tpu_cc_test(
+    name = "device_buffer_test",
+    srcs = ["device_buffer_test.cc"],
+    requires_libtpu = True,
+    deps = [
+        ":device_buffer",
+        "//csrc/common:dimension_types",
+        "//csrc/common:oss_test_main",
+        "//csrc/common:status_test_utils",
+        "@stablehlo//stablehlo/integrations/cpp/builder:attr_type_builder_util",
+    ],
+)
+
 torch_tpu_cc_library(
     name = "tensor_to_buffer",
     srcs = ["tensor_to_buffer.cc"],

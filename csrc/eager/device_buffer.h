@@ -345,6 +345,37 @@ class DeviceBufferRef {
   // Returns the stream ID of the referenced buffer.
   [[nodiscard]] torch_tpu::StreamId stream_id() const;
 
+  // A DeviceBufferRef::Weak is a weak pointer to a DeviceBufferList and an
+  // index into it. If the weak_ptr is not expired, the index is valid.
+  class Weak {
+   public:
+    // Degrades a DeviceBufferRef to a weak reference.
+    explicit Weak(const DeviceBufferRef& device_buffer_ref)
+        : device_buffer_list_(device_buffer_ref.device_buffer_list()),
+          index_(device_buffer_ref.index()) {}
+
+    // Returns true if the DeviceBufferList has been freed.
+    [[nodiscard]] bool expired() const { return device_buffer_list_.expired(); }
+
+    // Returns a DeviceBufferRef to the referenced buffer, if the
+    // DeviceBufferList has not been freed. Otherwise, returns std::nullopt.
+    [[nodiscard]] std::optional<DeviceBufferRef> lock() const {
+      absl_nullable std::shared_ptr<DeviceBufferList> maybe_list =
+          device_buffer_list_.lock();
+      if (!maybe_list) {
+        return std::nullopt;
+      }
+      return DeviceBufferRef(std::move(maybe_list), index_);
+    }
+
+   private:
+    std::weak_ptr<DeviceBufferList> device_buffer_list_;
+    int64_t index_;
+  };
+
+  // Degrades a DeviceBufferRef to a weak reference.
+  [[nodiscard]] Weak weak() const { return Weak(*this); }
+
  private:
   // DeviceBufferRefs can only be constructed by DeviceBufferList::Create*
   // functions, to ensure the reference and referent are created simultaneously.
