@@ -37,6 +37,10 @@ at::Tensor AtenCopyFrom(const at::Tensor& src, const at::Tensor& self_dest,
 // Copies `src` tensor contents to `self_dest` tensor.
 // Handles CPU<->TPU transfers, shape broadcasting, and dtype casting.
 //
+// Naming: "self_dest" is the naming convention in AtenCopyFrom, indicating
+// that the right-hand operand is either the "self" term from Tensor::copy_()
+// or an empty "dest" tensor created to Tensor::to_copy().
+//
 // Constraints & Assumptions:
 // - At least one tensor must be on a TPU device. CPU-to-CPU is unsupported.
 // - Resizing is NOT supported; `self_dest` must be pre-allocated.

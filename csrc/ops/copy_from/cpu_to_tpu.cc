@@ -35,6 +35,9 @@
 
 namespace torch_tpu {
 
+namespace {
+// Copies the value out of the source CPU tensor to a materialized
+// DeviceBufferRef.
 absl::StatusOr<DeviceBufferRef> CopyCpuToTpuBuffer(const at::Tensor& src,
                                                    bool non_blocking) {
   at::Tensor contiguous_src_for_tpu = src.contiguous();
@@ -52,11 +55,16 @@ absl::StatusOr<DeviceBufferRef> CopyCpuToTpuBuffer(const at::Tensor& src,
                                          tpu_layout.element_type);
   }
 
+  // NOTE: we are intentionally using Tensor::data_ptr() here,
+  // and **not** Tensor::storage().data_ptr().get().
+  // On CPU, Tensor::data_ptr() will account for the storage offset, while
+  // Tensor::storage().data_ptr().get() will not.
   return TpuMallocAndMemcpyHtoD(
       contiguous_src_for_tpu.data_ptr(), tpu_layout.element_type,
       tpu_layout.sizes,
       non_blocking ? std::make_optional(contiguous_src_for_tpu) : std::nullopt);
 }
+}  // namespace
 
 absl::Status CopyCpuToTpu(const at::Tensor& src, const at::Tensor& dest,
                           bool non_blocking) {

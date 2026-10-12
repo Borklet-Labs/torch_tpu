@@ -29,13 +29,20 @@ torch_tpu_cc_library(
     hdrs = ["to_copy_aten_kernels.h"],
     deps = [
         "//csrc/common:cache_key",
+        "//csrc/common:device_type",
+        "//csrc/common:error_utils",
+        "//csrc/eager:current_stream",
+        "//csrc/eager:tensor_to_buffer",
         "//csrc/ops:op_names",
+        "//csrc/ops/as_strided:as_strided_aten_kernels",
         "//csrc/ops/copy_from:copy_from_aten_kernels",
         "//csrc/ops/macros:kernel",
         "//csrc/ops/sparse_coo:sparse_coo_aten_kernels",
         "//shims/torch:aten_headers",
         "//shims/torch/c10/core:base_headers",
+        "//shims/torch/c10/util:base_headers",
         "//shims/torch/torch/headeronly:torch_headeronly",
+        "@com_google_absl//absl/status:statusor",
     ],
 )
 

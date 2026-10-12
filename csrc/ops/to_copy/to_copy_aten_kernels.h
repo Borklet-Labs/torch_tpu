@@ -20,12 +20,26 @@
 #include <optional>
 
 #include "ATen/core/TensorBody.h"
+#include "absl/status/statusor.h"
 #include "c10/core/Device.h"
 #include "torch/headeronly/core/Layout.h"
 #include "torch/headeronly/core/MemoryFormat.h"
 #include "torch/headeronly/core/ScalarType.h"
 
 namespace torch_tpu {
+
+// Copies self into a new TPU tensor.
+//
+// If memory_format is Preserve, the strides and storage offset
+// are preserved if self is non-overlapping and dense. If memory_format is
+// Preserve but self is overlapping or non-dense, the returned tensor will have
+// the same dimensions as self, but the stride pattern will be dense and
+// non-overlapping, and the offset will be 0.
+absl::StatusOr<at::Tensor> CopyToTpuTensor(
+    const at::Tensor& self, std::optional<at::ScalarType> dtype = std::nullopt,
+    bool non_blocking = false,
+    std::optional<at::MemoryFormat> memory_format = std::nullopt,
+    std::optional<c10::DeviceIndex> tpu_device_index = std::nullopt);
 
 at::Tensor AtenToCopy(const at::Tensor& self,
                       std::optional<at::ScalarType> dtype,

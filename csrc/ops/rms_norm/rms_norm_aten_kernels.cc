@@ -50,12 +50,12 @@
 #include "csrc/eager/device_buffer.h"
 #include "csrc/eager/op_dispatcher.h"
 #include "csrc/eager/tensor_to_buffer.h"
-#include "csrc/ops/copy_from/cpu_to_tpu.h"
 #include "csrc/ops/layer_norm/layer_norm.h"
 #include "csrc/ops/macros/kernel.h"
 #include "csrc/ops/op_builder_utils.h"
 #include "csrc/ops/op_names.h"
 #include "csrc/ops/rms_norm/rms_norm.h"
+#include "csrc/ops/to_copy/to_copy_aten_kernels.h"
 #include "stablehlo/integrations/cpp/builder/AttrTypeBuilderUtil.h"
 #include "stablehlo/integrations/cpp/builder/MlirBuilder.h"
 #include "torch/headeronly/core/DeviceType.h"
@@ -471,9 +471,10 @@ std::tuple<at::Tensor, at::Tensor> AtenFusedRmsNormBackward(
                 at::zeros(weight_dims,
                           at::TensorOptions().dtype(w_dtype).device(at::kCPU));
             TT_ASSIGN_OR_THROW(
-                DeviceBufferRef tpu_buf,
-                CopyCpuToTpuBuffer(cpu_zeros, /*non_blocking=*/false));
-            grad_w = MakeTensor(std::move(tpu_buf));
+                grad_w, CopyToTpuTensor(cpu_zeros, /*dtype=*/std::nullopt,
+                                        /*non_blocking=*/false,
+                                        /*memory_format=*/
+                                        c10::MemoryFormat::Contiguous));
           }
           return std::make_tuple(std::move(grad_in), std::move(grad_w));
         }

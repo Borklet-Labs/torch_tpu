@@ -26,6 +26,7 @@
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
+#include "c10/core/Device.h"
 #include "c10/core/ScalarType.h"
 #include "c10/util/Optional.h"
 #include "c10/util/string_view.h"
@@ -41,12 +42,12 @@
 #include "csrc/eager/device_buffer_utils.h"
 #include "csrc/eager/op_dispatcher.h"
 #include "csrc/eager/tensor_to_buffer.h"
-#include "csrc/ops/copy_from/cpu_to_tpu.h"
 #include "csrc/ops/gather/gather.h"
 #include "csrc/ops/macros/kernel.h"
 #include "csrc/ops/op_builder_utils.h"
 #include "csrc/ops/op_names.h"
 #include "csrc/ops/resize/resize_aten_kernels.h"
+#include "csrc/ops/to_copy/to_copy_aten_kernels.h"
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypes.h"
@@ -54,6 +55,7 @@
 #include "stablehlo/integrations/cpp/builder/AttrTypeBuilderUtil.h"
 #include "stablehlo/integrations/cpp/builder/MlirBuilder.h"
 #include "stablehlo/integrations/cpp/builder/StablehloBuilder.h"
+#include "torch/headeronly/core/MemoryFormat.h"
 #include "torch/headeronly/core/ScalarType.h"
 
 namespace torch_tpu {
@@ -63,7 +65,7 @@ namespace {
 
 // PyTorch's dispatcher bypasses backend device guards for auxiliary keyword
 // arguments (e.g. sorter) during out-variant and composite execution, allowing
-// them to arrive on CPU. We use CopyCpuToTpuBuffer instead of ATen's .to() to
+// them to arrive on CPU. We use CopyToTpuTensor instead of ATen's .to() to
 // transfer CPU tensors to TPU without triggering dispatcher re-entry or
 // CompositeOpCheck failures during tracing.
 absl::StatusOr<at::Tensor> ResolveAuxiliaryTensorDevice(
@@ -72,9 +74,9 @@ absl::StatusOr<at::Tensor> ResolveAuxiliaryTensorDevice(
       tensor.device().type() == GetPrivateUse1DeviceType()) {
     return tensor;
   }
-  TT_ASSIGN_OR_RETURN(DeviceBufferRef tpu_buffer,
-                      CopyCpuToTpuBuffer(tensor, /*non_blocking=*/false));
-  return MakeTensor(std::move(tpu_buffer));
+  return CopyToTpuTensor(tensor, /*dtype=*/std::nullopt,
+                         /*non_blocking=*/false,
+                         /*memory_format=*/c10::MemoryFormat::Contiguous);
 }
 
 absl::StatusOr<c10::optional<at::Tensor>> ResolveAuxiliaryTensorDevice(

@@ -18,6 +18,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -26,12 +27,12 @@
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
+#include "c10/core/Device.h"
 #include "c10/core/DispatchKey.h"
 #include "c10/core/DispatchKeySet.h"
 #include "c10/core/Storage.h"
 #include "c10/core/TensorImpl.h"
 #include "c10/util/intrusive_ptr.h"
-#include "csrc/common/aten_utils.h"
 #include "csrc/common/cache_key.h"
 #include "csrc/common/device_type.h"
 #include "csrc/common/dimension_types.h"
@@ -41,12 +42,13 @@
 #include "csrc/eager/op_dispatcher.h"
 #include "csrc/eager/tensor_to_buffer.h"
 #include "csrc/ops/binary.h"
-#include "csrc/ops/copy_from/cpu_to_tpu.h"
 #include "csrc/ops/op_builder_utils.h"
 #include "csrc/ops/op_names.h"
+#include "csrc/ops/to_copy/to_copy_aten_kernels.h"
 #include "csrc/ops/where/where.h"
 #include "stablehlo/integrations/cpp/builder/AttrTypeBuilderUtil.h"
 #include "stablehlo/integrations/cpp/builder/MlirBuilder.h"
+#include "torch/headeronly/core/MemoryFormat.h"
 #include "torch/headeronly/core/ScalarType.h"
 
 namespace torch_tpu {
@@ -54,7 +56,7 @@ namespace {
 
 // PyTorch's dispatcher bypasses backend device guards for index tensors
 // during indexing out-variant and composite execution, allowing them to arrive
-// on CPU. We use CopyCpuToTpuBuffer instead of ATen's .to() to transfer CPU
+// on CPU. We use CopyToTpuTensor instead of ATen's .to() to transfer CPU
 // tensors to TPU without triggering dispatcher re-entry or CompositeOpCheck
 // failures during tracing.
 absl::StatusOr<at::Tensor> ResolveAuxiliaryTensorDevice(
@@ -63,9 +65,9 @@ absl::StatusOr<at::Tensor> ResolveAuxiliaryTensorDevice(
       tensor.device().type() == GetPrivateUse1DeviceType()) {
     return tensor;
   }
-  TT_ASSIGN_OR_RETURN(DeviceBufferRef tpu_buffer,
-                      CopyCpuToTpuBuffer(tensor, /*non_blocking=*/false));
-  return MakeTensor(std::move(tpu_buffer));
+  return CopyToTpuTensor(tensor, /*dtype=*/std::nullopt,
+                         /*non_blocking=*/false,
+                         /*memory_format=*/c10::MemoryFormat::Contiguous);
 }
 
 bool HasContiguousUnsqueezedStrides(

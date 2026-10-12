@@ -270,6 +270,10 @@ at::Tensor& AtenCopy_(at::Tensor& self, const at::Tensor& src,
   TT_KERNEL(OpName::kCopy_, _,
             (self, src, IgnoreInCacheKey(non_blocking, "Doesn't affect SHLO")),
             {
+              // NOTE: argument order is intentionally reversed.
+              // copy_ uses "self" as the first argument to be consistent with
+              // the Python method: `def copy_(self, src):`.
+              // CopyTensor instead is a src -> dest copy, not as a method.
               CopyTensor(src, self, non_blocking);
               return self;
             });

@@ -19,15 +19,8 @@
 
 #include "ATen/core/TensorBody.h"
 #include "absl/status/status.h"
-#include "absl/status/statusor.h"
-#include "csrc/eager/device_buffer.h"
 
 namespace torch_tpu {
-
-// Copies the value out of the source CPU tensor to a materialized
-// DeviceBufferRef.
-absl::StatusOr<DeviceBufferRef> CopyCpuToTpuBuffer(const at::Tensor& src,
-                                                   bool non_blocking);
 
 // Copies the value out of the source CPU tensor and assigns it to the
 // destination TPU tensor.
