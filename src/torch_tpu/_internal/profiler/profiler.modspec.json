@@ -10,5 +10,9 @@
   {
     "name": "torch_tpu._internal.profiler._impl",
     "type": "MODULE"
+  },
+  {
+    "name": "torch_tpu._internal.profiler._profiler_backend",
+    "type": "MODULE"
   }
 ]
