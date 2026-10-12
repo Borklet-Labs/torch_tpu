@@ -24,7 +24,8 @@ required dependencies, environment variables etc. See also tests/torch/BUILD.
 
 It takes no command-line arguments and requires following environment variables:
   1. TORCH_TPU_INTERNAL_PYTORCH_TEST_DIR: The path to the test/ directory of a
-     PyTorch checkout supplied via --test_env at runtime.
+     PyTorch source tree, set by the Bazel rule or supplied via --test_env at
+     runtime. Relative paths are resolved against the initial working directory.
   2. TORCH_TPU_INTERNAL_TORCH_TEST_MODULE: The name of the test module to run
      set by the Bazel rule.
 
@@ -104,7 +105,10 @@ def _parse_test_env_vars() -> tuple[pathlib.Path, pathlib.Path]:
         f"--test_env={_TORCH_TEST_DIR_ENV_VAR}=/path/to/pytorch/test"
     )
 
-  test_dir_path = pathlib.Path(test_dir)
+  # Absolute paths stay valid even if the working directory changes later,
+  # e.g. when the test module is run by a test framework that changes it.
+  # Unlike resolve(), absolute() does not follow symlinks out of the runfiles.
+  test_dir_path = pathlib.Path(test_dir).absolute()
   test_module_path = test_dir_path / f"{test_module}.py"
   if not test_module_path.is_file():
     raise FileNotFoundError(
@@ -179,8 +183,9 @@ def main(argv: Sequence[str]) -> None:
   # remove API warning suppression.
   annotations._internal_apis_allowed_for_testing = True  # pylint: disable=protected-access
 
-  # Execute the test module as a program via absltest. Each test module has its
-  # own entry point invoking `run_tests()` from its own namespace.
+  # Execute the test module as a program. Each test module has its own entry
+  # point invoking `run_tests()` from its own namespace. Google-internal build
+  # patches `run_tests()` to run with pytest.
   _use_absltest_main()
   runpy.run_path(str(test_module_path), run_name="__main__")
 

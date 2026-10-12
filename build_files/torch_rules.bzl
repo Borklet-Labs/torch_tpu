@@ -31,6 +31,8 @@ visibility(
 def torch_tpu_torch_test(
         name,
         torch_test_module,
+        nolocal = "The test execution is not hermetic.",
+        extra_deps = None,
         tags = None,
         **kwargs):
     """Creates a Python test target to run an upstream PyTorch test suite with TorchTPU.
@@ -43,6 +45,9 @@ def torch_tpu_torch_test(
         name: Name of the test target.
         torch_test_module: Name of a test module under https://github.com/pytorch/pytorch/tree/main/test,
             without the .py extension, e.g. "test_torch".
+        nolocal: Optional reason to exclude the test from local execution. To enable local
+            execution, set to None.
+        extra_deps: Optional additional dependencies.
         tags: Optional additional tags.
         **kwargs: Additional arguments passed to `torch_tpu_py_test`.
     """
@@ -65,7 +70,7 @@ def torch_tpu_torch_test(
         srcs = ["//tests/torch:torch_test_runner.py"],
         main = "//tests/torch:torch_test_runner.py",
         env = env,
-        nolocal = "The test execution is not hermetic.",
+        nolocal = nolocal,
         nonightly_oss = "Test in development. To be enabled to nightly once stable.",
         nopresubmit_oss = "Presubmits do not set up a PyTorch checkout to keep lightweight.",
         # Upstream tests parse sys.argv with unittest,
@@ -75,6 +80,8 @@ def torch_tpu_torch_test(
         timeout = kwargs.pop("timeout", "long"),
         deps = [
             # go/keep-sorted start
+            "//shims/absl_py/testing:absltest",
+            "//shims/absl_py:app",
             "@pypi//dill",
             "@pypi//hypothesis",
             "@pypi//jax",
@@ -83,9 +90,10 @@ def torch_tpu_torch_test(
             "@pypi//scipy",
             "//shims/torch:testing_internal",
             "//src/torch_tpu",
+            "//src/torch_tpu/_internal/utils:annotations",
             "@pypi//pyyaml",
             # go/keep-sorted end
-        ],
+        ] + (extra_deps or []),
         **kwargs
     )
 
