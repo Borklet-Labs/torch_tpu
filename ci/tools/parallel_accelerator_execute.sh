@@ -115,6 +115,9 @@ run_test() {
     for fd in "${LOCK_FDS[@]}"; do
       eval "exec $fd>&-"
     done
+    if [ -z "${TORCHINDUCTOR_CACHE_DIR:-}" ] && [ -n "${TEST_TMPDIR:-}" ]; then
+      export TORCHINDUCTOR_CACHE_DIR="${TEST_TMPDIR}/torchinductor"
+    fi
     exec "$TEST_BINARY" "$@"
   ) &
   TEST_PID=$!
