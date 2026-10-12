@@ -17,6 +17,7 @@
 import operator
 
 from absl.testing import absltest
+from absl.testing import parameterized
 import torch
 import torch.distributed as dist
 import torch.distributed._functional_collectives as fc
@@ -378,6 +379,10 @@ class ProcessGroupIdTest(seed_test_utils.RepeatableTest):
     self.assertNotEqual(pg1, pg3)
     self.assertEqual(hash(pg1), hash(pg2))
     self.assertEqual({pg1: "val"}[pg2], "val")
+    # Contiguous groups take an O(1) equality path.
+    self.assertEqual(ProcessGroupId(range(4)), ProcessGroupId([0, 1, 2, 3]))
+    self.assertNotEqual(ProcessGroupId(range(4)), ProcessGroupId(range(1, 5)))
+    self.assertNotEqual(ProcessGroupId(range(4)), ProcessGroupId([0, 1, 2, 4]))
 
   def test_iteration_len_indexing(self) -> None:
     pg = ProcessGroupId([0, 1, 3])
@@ -386,6 +391,33 @@ class ProcessGroupIdTest(seed_test_utils.RepeatableTest):
     self.assertEqual(pg[0], 0)
     self.assertEqual(pg[1], 1)
     self.assertEqual(pg[2], 3)
+
+  def test_contains(self) -> None:
+    pg = ProcessGroupId([1, 4, 7])
+    self.assertIn(4, pg)
+    self.assertNotIn(5, pg)
+    self.assertNotIn(0, pg)
+    self.assertNotIn(8, pg)
+
+  def test_is_contiguous(self) -> None:
+    self.assertTrue(ProcessGroupId(range(3, 9)).is_contiguous())
+    self.assertFalse(ProcessGroupId([0, 2]).is_contiguous())
+
+  @parameterized.parameters(([3, 4, 5, 6],), ([0, 2, 5],), ([7],))
+  def test_to_wire_and_from_wire(self, ranks: list[int]) -> None:
+    pg = ProcessGroupId(ranks)
+    self.assertEqual(ProcessGroupId.from_wire(pg.to_wire()), pg)
+
+  def test_to_wire_contiguous_is_constant_size(self) -> None:
+    self.assertEqual(
+        ProcessGroupId(range(4096)).to_wire(), {"start": 0, "stop": 4096}
+    )
+
+  def test_from_wire_shares_instances(self) -> None:
+    wire = ProcessGroupId(range(16)).to_wire()
+    self.assertIs(
+        ProcessGroupId.from_wire(wire), ProcessGroupId.from_wire(wire)
+    )
 
 
 if __name__ == "__main__":

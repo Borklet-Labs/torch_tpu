@@ -129,6 +129,15 @@ class RankCollectiveCountsTest(seed_test_utils.RepeatableTest):
 class CollectiveHandshakeRequestTest(seed_test_utils.RepeatableTest):
   """Unit tests for CollectiveHandshakeRequest error handling."""
 
+  def setUp(self) -> None:
+    super().setUp()
+    # Participating-rank validation only runs in debug mode.
+    self.enter_context(
+        mock.patch.object(
+            handshake, "_is_torch_tpu_debug_mode", return_value=True
+        )
+    )
+
   def test_invalid_participating_ranks_empty(self) -> None:
     with self.assertRaisesRegex(
         ValueError, "participating_ranks cannot be empty"

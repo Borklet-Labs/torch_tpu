@@ -76,6 +76,17 @@ def _get_handshake_timeout_s() -> int:
   return timeout_s
 
 
+def _is_torch_tpu_debug_mode() -> bool:
+  """Returns whether expensive debug-only checks are enabled.
+
+  Controlled by the `TORCH_TPU_ENABLE_DEBUG_CHECKS` environment variable.
+  Defaults to False.
+  """
+  return env.get_bool_env_once(
+      "TORCH_TPU_ENABLE_DEBUG_CHECKS", default_value=False
+  )
+
+
 class ProcessGroupCollectiveCount:
   """Holds collective counts for a process group.
 
@@ -398,32 +409,44 @@ class CollectiveHandshakeRequest:
     self.executable_fingerprint = executable_fingerprint
     self.rank = rank
 
-    if not self.participating_ranks:
-      raise ValueError("participating_ranks cannot be empty.")
+    # These checks are O(world_size) and the coordinator constructs
+    # world_size - 1 requests per handshake round (one per incoming message),
+    # so running them unconditionally makes every round O(world_size^2) on the
+    # coordinator's critical path. Requests are produced by
+    # `split_compiler._submit_handshake` from validated ProcessGroupIds, so only
+    # run them when debugging.
+    if _is_torch_tpu_debug_mode():
+      if not self.participating_ranks:
+        raise ValueError("participating_ranks cannot be empty.")
 
-    if any(r < 0 for r in self.participating_ranks):
-      raise ValueError(
-          "All elements in participating_ranks must be non-negative, got"
-          f" {self.participating_ranks}."
-      )
-
-    if rank not in self.participating_ranks:
-      raise ValueError(
-          f"rank ({rank}) must be present in participating_ranks"
-          f" ({self.participating_ranks})."
-      )
+      if rank not in self.participating_ranks:
+        raise ValueError(
+            f"rank ({rank}) must be present in participating_ranks"
+            f" ({self.participating_ranks})."
+        )
 
   @functools.cached_property
   def participating_ranks(self) -> list[int]:
     """Ranks participating in the handshake.
 
-    This is a sorted list containing unique rank integers derived from the
-    process groups in pg_collective_counts.
+    This is a sorted list containing unique rank integers of the process groups
+    in pg_collective_counts that have collectives in this compiled graph.
+    Process groups without collectives in the graph are tracked only to keep
+    their counts progressing and do not participate.
     """
-    return sorted(set().union(*self.pg_collective_counts.keys()))
+    pgs = [
+        pg
+        for pg, count in self.pg_collective_counts.items()
+        if count.num_collectives_in_graph > 0
+    ]
+    if len(pgs) == 1:
+      return list(pgs[0].ranks)
+    return sorted(set().union(*pgs))
 
   def to_bytes(self) -> bytes:
     """Serializes CollectiveHandshakeRequest to JSON UTF-8 encoded bytes.
+
+    `participating_ranks` is derived from the process groups and is not sent.
 
     Note: The serialized format is not guaranteed to be stable across different
     versions of TorchTPU and should not be persisted or used across different
@@ -434,8 +457,14 @@ class CollectiveHandshakeRequest:
     """
     return json.dumps({
         "executable_fingerprint": self.executable_fingerprint,
-        "participating_ranks": self.participating_ranks,
-        "pg_collective_counts": self.pg_collective_counts.to_json(),
+        "pg_collective_counts": [
+            [
+                pg.to_wire(),
+                count.collective_count_before,
+                count.num_collectives_in_graph,
+            ]
+            for pg, count in self.pg_collective_counts.items()
+        ],
         "rank": self.rank,
     }).encode("utf-8")
 
@@ -458,10 +487,16 @@ class CollectiveHandshakeRequest:
         __init__.
     """
     obj = json.loads(data.decode("utf-8"))
+    pg_to_count = {}
+    for wire_pg, before, num_in_graph in obj["pg_collective_counts"]:
+      pg_to_count[ProcessGroupId.from_wire(wire_pg)] = (
+          ProcessGroupCollectiveCount(
+              collective_count_before=before,
+              num_collectives_in_graph=num_in_graph,
+          )
+      )
     return cls(
-        pg_collective_counts=RankCollectiveCounts.from_json(
-            obj["pg_collective_counts"]
-        ),
+        pg_collective_counts=RankCollectiveCounts(pg_to_count),
         executable_fingerprint=obj["executable_fingerprint"],
         rank=obj["rank"],
     )

@@ -350,6 +350,79 @@ class CollectiveHandshakeRequestTest(seed_test_utils.RepeatableTest):
     )
     self.assertEqual(request.participating_ranks, [0, 1, 2])
 
+  def test_to_bytes_size_does_not_grow_with_world_size(self) -> None:
+    def serialized_len(world_size: int) -> int:
+      pg_counts = RankCollectiveCounts()
+      pg_counts.increment_pg_collective_counts(
+          {ProcessGroupId(range(world_size)): 1}
+      )
+      return len(
+          CollectiveHandshakeRequest(
+              pg_collective_counts=pg_counts,
+              executable_fingerprint="fp",
+              rank=0,
+          ).to_bytes()
+      )
+
+    # Only the number of digits in the range bound may differ.
+    self.assertLess(serialized_len(10000) - serialized_len(10), 4)
+
+  def test_to_bytes_and_from_bytes_non_contiguous_process_group(self) -> None:
+    pg = ProcessGroupId([0, 2, 5])
+    pg_counts = RankCollectiveCounts()
+    pg_counts.increment_pg_collective_counts({pg: 4})
+    request = CollectiveHandshakeRequest(
+        pg_collective_counts=pg_counts, executable_fingerprint="fp", rank=5
+    )
+
+    deserialized = CollectiveHandshakeRequest.from_bytes(request.to_bytes())
+
+    self.assertEqual(deserialized.participating_ranks, [0, 2, 5])
+    self.assertEqual(deserialized.pg_collective_counts, pg_counts)
+
+  def test_from_bytes_shares_process_group_instances(self) -> None:
+    pg_counts = RankCollectiveCounts()
+    pg_counts.increment_pg_collective_counts({ProcessGroupId(range(16)): 1})
+    data = CollectiveHandshakeRequest(
+        pg_collective_counts=pg_counts, executable_fingerprint="fp", rank=3
+    ).to_bytes()
+
+    first = CollectiveHandshakeRequest.from_bytes(data)
+    second = CollectiveHandshakeRequest.from_bytes(data)
+
+    (first_pg,) = first.pg_collective_counts.keys()
+    (second_pg,) = second.pg_collective_counts.keys()
+    self.assertIs(first_pg, second_pg)
+    self.assertEqual(first.pg_collective_counts, second.pg_collective_counts)
+
+  def test_validation_skipped_outside_debug_mode(self) -> None:
+    pg_counts = RankCollectiveCounts()
+    pg_counts.increment_pg_collective_counts({ProcessGroupId([0, 1]): 1})
+    with mock.patch.object(
+        handshake, "_is_torch_tpu_debug_mode", return_value=False
+    ):
+      request = CollectiveHandshakeRequest(
+          pg_collective_counts=pg_counts, executable_fingerprint="fp", rank=2
+      )
+    self.assertEqual(request.rank, 2)
+
+  def test_participating_ranks_exclude_groups_without_collectives(
+      self,
+  ) -> None:
+    pg_with = ProcessGroupId([0, 1])
+    pg_without = ProcessGroupId([2, 3])
+    pg_counts = RankCollectiveCounts()
+    pg_counts.increment_pg_collective_counts({pg_with: 1, pg_without: 2})
+    # pg_without has no collectives in the next graph.
+    pg_counts.increment_pg_collective_counts({pg_with: 1})
+    self.assertEqual(pg_counts[pg_without].num_collectives_in_graph, 0)
+
+    request = CollectiveHandshakeRequest(
+        pg_collective_counts=pg_counts, executable_fingerprint="fp", rank=0
+    )
+
+    self.assertEqual(request.participating_ranks, [0, 1])
+
 
 class CollectiveHandshakeResponseTest(seed_test_utils.RepeatableTest):
   """Unit tests for CollectiveHandshakeResponse class and serialization."""

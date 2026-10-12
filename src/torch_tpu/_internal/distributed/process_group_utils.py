@@ -14,8 +14,10 @@
 
 """Utilities for extracting and manipulating process group information from FX graphs."""
 
+import bisect
 import collections
 import collections.abc
+import functools
 from typing import Any
 
 import torch
@@ -66,9 +68,25 @@ class ProcessGroupId:
     return hash(self.ranks)
 
   def __eq__(self, other: object) -> bool:
-    if isinstance(other, ProcessGroupId):
-      return self.ranks == other.ranks
-    return False
+    if self is other:
+      return True
+    if not isinstance(other, ProcessGroupId):
+      return False
+    if len(self.ranks) != len(other.ranks):
+      return False
+    if self.is_contiguous() and other.is_contiguous():
+      # Sorted, unique and contiguous: equal iff same start and same length.
+      # The handshake coordinator compares one group per incoming request, so
+      # an O(len(ranks)) comparison would make each round O(world_size^2).
+      return self.ranks[0] == other.ranks[0]
+    return self.ranks == other.ranks
+
+  def __contains__(self, rank: object) -> bool:
+    """Returns whether `rank` is a member, in O(log(len(ranks)))."""
+    if not isinstance(rank, int):
+      return False
+    i = bisect.bisect_left(self.ranks, rank)
+    return i < len(self.ranks) and self.ranks[i] == rank
 
   def __iter__(self) -> collections.abc.Iterator[int]:
     return iter(self.ranks)
@@ -78,6 +96,61 @@ class ProcessGroupId:
 
   def __getitem__(self, index: int) -> int:
     return self.ranks[index]
+
+  def is_contiguous(self) -> bool:
+    """Returns whether ranks are exactly range(ranks[0], ranks[-1] + 1)."""
+    # Ranks are sorted and unique, so this is an O(1) check.
+    return self.ranks[-1] - self.ranks[0] + 1 == len(self.ranks)
+
+  def to_wire(self) -> dict[str, Any]:
+    """Returns a compact, JSON-serializable encoding of this process group.
+
+    Contiguous groups (e.g. the global group) are encoded as a half-open
+    `{"start": ..., "stop": ...}` range, so the encoding size does not grow with
+    the number of ranks. Other groups are encoded as `{"ranks": [...]}`.
+
+    Note: The encoding is not guaranteed to be stable across TorchTPU versions.
+    """
+    if self.is_contiguous():
+      return {"start": self.ranks[0], "stop": self.ranks[-1] + 1}
+    return {"ranks": list(self.ranks)}
+
+  @classmethod
+  def from_wire(cls, wire: dict[str, Any]) -> "ProcessGroupId":
+    """Decodes a ProcessGroupId produced by `to_wire`.
+
+    Decoded groups are cached and shared between calls, so the O(len(ranks))
+    validation in `__init__` runs once per distinct group rather than once per
+    decoded message.
+
+    Args:
+      wire: The encoding returned by `to_wire`.
+
+    Returns:
+      The (possibly shared) decoded ProcessGroupId. Callers must not mutate it.
+    """
+    if "ranks" in wire:
+      return _cached_process_group_from_ranks(tuple(wire["ranks"]))
+    return _cached_process_group_from_range(wire["start"], wire["stop"])
+
+
+# Upper bound on the number of distinct decoded process groups kept alive by
+# `ProcessGroupId.from_wire`. Each entry holds an O(len(ranks)) tuple, so the
+# bound caps memory if a job keeps creating ad-hoc groups. 1024 covers every
+# subgroup of a device-mesh axis whose groups have at least world_size / 1024
+# ranks (e.g. all 512 pairs of a 1024-rank job). A cache miss only costs
+# re-validating that group, never correctness.
+_MAX_CACHED_WIRE_PROCESS_GROUPS = 1024
+
+
+@functools.lru_cache(maxsize=_MAX_CACHED_WIRE_PROCESS_GROUPS)
+def _cached_process_group_from_range(start: int, stop: int) -> ProcessGroupId:
+  return ProcessGroupId(range(start, stop))
+
+
+@functools.lru_cache(maxsize=_MAX_CACHED_WIRE_PROCESS_GROUPS)
+def _cached_process_group_from_ranks(ranks: tuple[int, ...]) -> ProcessGroupId:
+  return ProcessGroupId(ranks)
 
 
 def _get_collective_op(node: torch.fx.Node) -> Any | None:
