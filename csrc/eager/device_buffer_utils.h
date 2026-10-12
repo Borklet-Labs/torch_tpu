@@ -62,6 +62,8 @@ struct DeferredOpParams {
   Indices donated_indices = {};
   // Device assignment for the operation (e.g. rank-to-device mapping).
   std::vector<int64_t> device_assignment = {};  // INT_VEC_OK
+  // Whether to allow materialization of the operation.
+  bool allow_materialization = true;
 };
 
 // Don't use this directly when defining ops. Use DispatchOp<kNumInputs,

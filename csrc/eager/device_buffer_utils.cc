@@ -144,12 +144,18 @@ void ApplyComputationDtype(internal::DeferredOpParams& params) {
 // Handles post-op creation events for the kDeferNever and
 // kDeferNeverAndLaunchBlocking eager modes.
 absl::Status DeferNeverDispatch(absl::Span<const DeviceBufferRef> results,
-                                const OpName op_name, const bool block) {
+                                const OpName op_name, const bool block,
+                                const bool allow_materialization) {
   const auto& device_buffer_list = results[0].device_buffer_list();
   if (IsMetadataOnly(op_name)) {
     // Don't eagerly materialize metadata-only ops.
     return absl::OkStatus();
   }
+
+  if (!allow_materialization) {
+    return absl::OkStatus();
+  }
+
   // materialize.cc and events_queue.h will respect OpSplitMode, even with
   // MaterializationMode::kFullGraph.
   // In DeferNever, we don't block on materialization, we initiate and continue.
@@ -188,13 +194,16 @@ MaterializationMode GetRepeatedOpsMaterializationMode() {
 }
 
 // Handles post-op creation events for the kDeferAndFuse eager mode.
-absl::Status DeferAndFuseDispatch(absl::Span<const DeviceBufferRef> results) {
+absl::Status DeferAndFuseDispatch(absl::Span<const DeviceBufferRef> results,
+                                  const bool allow_materialization) {
   const auto& device_buffer_list = results[0].device_buffer_list();
 
   if (MustApplyRepeatedOpsHeuristic()) {
     // Record the deferred op and detect any repetitions.
-    // If a repetition is detected, materialize the current stream.
-    if (RecordDeferredOpAndDetectRepetition(device_buffer_list)) {
+    // If a repetition is detected, materialize the current stream (unless
+    // materialization is disabled).
+    if (RecordDeferredOpAndDetectRepetition(device_buffer_list) &&
+        allow_materialization) {
       // Start a background materialization of the current stream; don't
       // wait for it to complete.
       MaterializeCurrentStream(MaterializationReason::kRepeatedOpDetection,
@@ -227,15 +236,18 @@ absl::StatusOr<std::vector<DeviceBufferRef>> CreateDeferredDeviceBufferList(
     case EagerMode::kDeferNever:
       RecordDeferredOpCreated(results[0].device_buffer_list());
       TT_RETURN_IF_ERROR(DeferNeverDispatch(results, params.op_name,
-                                            /*block=*/false));
+                                            /*block=*/false,
+                                            params.allow_materialization));
       break;
     case EagerMode::kDeferNeverAndLaunchBlocking:
       RecordDeferredOpCreated(results[0].device_buffer_list());
       TT_RETURN_IF_ERROR(DeferNeverDispatch(results, params.op_name,
-                                            /*block=*/true));
+                                            /*block=*/true,
+                                            params.allow_materialization));
       break;
     case EagerMode::kDeferAndFuse:
-      TT_RETURN_IF_ERROR(DeferAndFuseDispatch(results));
+      TT_RETURN_IF_ERROR(
+          DeferAndFuseDispatch(results, params.allow_materialization));
       break;
     case EagerMode::kInternalDeferAll:
       // Record the deferred op, but leave it deferred.
