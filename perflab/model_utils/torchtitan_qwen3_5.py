@@ -59,7 +59,7 @@ def _install_attn_gym_stub() -> None:
   for name in ("attn_gym", "attn_gym.linear"):
     module = types.ModuleType(name)
     module.__path__ = []  # Makes it a package so submodules resolve.
-    module.__getattr__ = _getattr  # pytype: disable=not-writable
+    module.__getattr__ = _getattr  # pyrefly: ignore[bad-assignment]
     sys.modules[name] = module
 
 
