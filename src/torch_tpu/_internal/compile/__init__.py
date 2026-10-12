@@ -14,6 +14,7 @@
 
 """Public API for torch_tpu._internal.compile."""
 
+import typing
 import weakref
 
 import torch
@@ -105,31 +106,42 @@ def _patch_flex_attention() -> None:
   _causal_mask_cache = weakref.WeakKeyDictionary()
 
   @torch.compiler.assume_constant_result
-  def _is_causal_block_mask(
+  def _get_causal_window_size(
       block_mask: flex_attention.BlockMask,
       q_len: int,
       kv_len: int,
       device: torch.device,
-  ) -> bool:
-    """Returns True if `block_mask` represents a pure lower-triangular causal mask."""
+  ) -> int | None:
+    """Returns the causal window size in [1, q_len] for `block_mask`, or None."""
     cache = _causal_mask_cache.setdefault(block_mask, {})
     key = (q_len, kv_len)
     if key in cache:
       return cache[key]
 
     b_mask, h_mask = block_mask.kv_num_blocks.shape[:2]
-    is_causal = False
-    if q_len == kv_len and b_mask == 1 and h_mask == 1:
-      bool_mask = flex_attention.create_mask(
-          block_mask.mask_mod, 1, 1, q_len, kv_len, device=device
-      )
-      expected = torch.ones(
-          (q_len, kv_len), dtype=torch.bool, device=device
-      ).tril_()
-      is_causal = torch.equal(bool_mask[0, 0], expected)
+    if q_len <= 0 or q_len != kv_len or b_mask != 1 or h_mask != 1:
+      return cache.setdefault(key, None)
 
-    cache[key] = is_causal
-    return is_causal
+    bool_mask = flex_attention.create_mask(
+        block_mask.mask_mod, 1, 1, q_len, kv_len, device=device
+    )
+    # In a causal mask, the last query row attends to the last
+    # `candidate_window` keys (`q_len` for full causal, `< q_len` for sliding
+    # window).
+    candidate_window = int(bool_mask[0, 0, -1].sum().item())
+    if candidate_window <= 0:
+      return cache.setdefault(key, None)
+
+    # Reference causal band mask (`0 <= row - col < candidate_window`).
+    expected = (
+        torch.ones((q_len, kv_len), dtype=torch.bool, device=device)
+        .tril_()
+        .triu_(1 - candidate_window)
+    )
+    window_size = (
+        candidate_window if torch.equal(bool_mask[0, 0], expected) else None
+    )
+    return cache.setdefault(key, window_size)
 
   def _get_sdpa_attn_bias(
       block_mask: flex_attention.BlockMask,
@@ -159,6 +171,36 @@ def _patch_flex_attention() -> None:
         ).masked_fill_(~bool_mask, float("-inf"))
       cache[key] = attn_bias
     return cache[key]
+
+  class _SdpaMaskArgs(typing.NamedTuple):
+    attn_mask: torch.Tensor | None = None
+    is_causal: bool = False
+
+  def _block_mask_to_sdpa_args(
+      block_mask: flex_attention.BlockMask | None,
+      q_len: int,
+      kv_len: int,
+      dtype: torch.dtype,
+      device: torch.device,
+  ) -> _SdpaMaskArgs:
+    """Returns SDPA mask arguments for lowering `block_mask`."""
+    if block_mask is None:
+      return _SdpaMaskArgs()
+
+    window_size = _get_causal_window_size(block_mask, q_len, kv_len, device)
+    if window_size is None:
+      return _SdpaMaskArgs(
+          attn_mask=_get_sdpa_attn_bias(
+              block_mask, q_len, kv_len, dtype, device
+          )
+      )
+
+    if window_size == q_len:
+      return _SdpaMaskArgs(is_causal=True)
+
+    return _SdpaMaskArgs(
+        attn_mask=torch.empty((window_size,), dtype=dtype, device=device)
+    )
 
   def _flex_attention_tpu(
       query: torch.Tensor,
@@ -203,24 +245,12 @@ def _patch_flex_attention() -> None:
           )
         num_docs = q_len // doc_len
 
-      doc_q_len = q_len // num_docs
-      doc_kv_len = kv_len // num_docs
-      is_causal = (
-          _is_causal_block_mask(block_mask, doc_q_len, doc_kv_len, query.device)
-          if block_mask is not None
-          else False
-      )
-
-      attn_bias = (
-          _get_sdpa_attn_bias(
-              block_mask,
-              doc_q_len,
-              doc_kv_len,
-              query.dtype,
-              query.device,
-          )
-          if block_mask is not None and not is_causal
-          else None
+      mask_args = _block_mask_to_sdpa_args(
+          block_mask,
+          q_len // num_docs,
+          kv_len // num_docs,
+          query.dtype,
+          query.device,
       )
       if num_docs > 1:
 
@@ -236,9 +266,9 @@ def _patch_flex_attention() -> None:
           query,
           key,
           value,
-          attn_mask=attn_bias,
+          attn_mask=mask_args.attn_mask,
           dropout_p=0.0,
-          is_causal=is_causal,
+          is_causal=mask_args.is_causal,
           scale=scale,
           enable_gqa=enable_gqa,
       )
