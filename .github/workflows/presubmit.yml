@@ -164,6 +164,7 @@ jobs:
 
       - name: Select RBE Region
         id: rbe_region
+        shell: bash
         env:
           RBE_REGION: ${{ inputs.rbe_region || 'auto' }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
