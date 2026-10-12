@@ -20,6 +20,7 @@
 #include <kineto/Config.h>
 #include <kineto/GenericTraceActivity.h>
 #include <kineto/IActivityProfiler.h>
+#include <kineto/libkineto.h>
 #include <kineto/output_base.h>
 #include <time.h>
 #include <unistd.h>
@@ -63,14 +64,14 @@
 #include "xla/tsl/platform/env.h"
 
 // Forward declarations of PrivateUse1ProfilerRegistry marked as weak.
-// This allows compilation against Torch 2.10 (where these don't exist)
-// and safe dynamic loading on Torch 2.10 runtimes (where symbols resolve to
+// This allows compilation against Torch < 2.12 (where these don't exist)
+// and safe dynamic loading on Torch < 2.12 runtimes (where symbols resolve to
 // null), enabling runtime dispatch without custom compile-time flags.
 //
 // TODO(b/499296481): Remove this weak-linking workaround and revert to
 // including the privateuse1_profiler.h header and using
-// REGISTER_PRIVATEUSE1_PROFILER(TpuProfiler) once PyTorch 2.10 support is
-// dropped and 2.12 is the minimum required version.
+// REGISTER_PRIVATEUSE1_PROFILER(TpuProfiler) once PyTorch 2.12 is the minimum
+// required version.
 namespace torch::profiler::impl {  // NON_TORCH_TPU_OK=weak-linked PyTorch decl
 using PrivateUse1ProfilerFactory = std::function<  // STD_FUNCTION_OK
     std::unique_ptr<libkineto::IActivityProfiler>()>;
@@ -787,19 +788,27 @@ void TpuKinetoProfilerSession::processTrace(libkineto::ActivityLogger& logger) {
 
 namespace {
 
+std::unique_ptr<libkineto::IActivityProfiler> MakeTpuProfiler() {
+  return std::make_unique<TpuProfiler>();
+}
+
+// Registers `TpuProfiler` as the Kineto activity profiler for PrivateUse1.
 struct TpuProfilerRegisterer {
   TpuProfilerRegisterer() {
     if (torch::profiler::impl::PrivateUse1ProfilerRegistry::instance !=
         nullptr) {
+      // PyTorch >= 2.12: Use PyTorch's official registry, which only attaches
+      // TpuProfiler to Kineto when a session includes PrivateUse1 activity.
       torch::profiler::impl::PrivateUse1ProfilerRegistry::instance()
-          .registerFactory(
-              []() -> std::unique_ptr<libkineto::IActivityProfiler> {
-                return std::make_unique<TpuProfiler>();
-              });
+          .registerFactory(MakeTpuProfiler);
     } else {
-      ABSL_LOG(INFO) << "PyTorch PrivateUse1ProfilerRegistry not found. "
-                        "Native TPU profiling will be disabled (this is "
-                        "expected on PyTorch < 2.12).";
+      // PyTorch < 2.12 fallback: Register with Kineto directly. Unlike the
+      // registry, this attaches TpuProfiler eagerly at load time (so even
+      // CPU-only profiles start an XProf session).
+      ABSL_LOG(INFO) << "PyTorch PrivateUse1ProfilerRegistry not found "
+                        "(expected on PyTorch < 2.12); registering the TPU "
+                        "profiler with Kineto directly.";
+      libkineto::api().registerProfilerFactory(MakeTpuProfiler);
     }
   }
 };

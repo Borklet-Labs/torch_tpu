@@ -260,6 +260,14 @@ def _init_device_impl(device: str) -> torch.device:
   # `device.type == "{device}"` works but the convenience attrs are absent.
   # Storage methods are not generated (default `for_storage=False`).
   torch.utils.generate_methods_for_privateuse1_backend()
+  # torch >= 2.13 mirrors the rename into `ProfilerActivity` (so users can
+  # write `ProfilerActivity.TPU`); older releases only expose `PrivateUse1`.
+  # Backport the alias so the documented spelling works on every supported
+  # torch release.
+  profiler_activity = torch.profiler.ProfilerActivity
+  if not hasattr(profiler_activity, device.upper()):
+    setattr(profiler_activity, device.upper(), profiler_activity.PrivateUse1)
+
   device_d = torch.device(device)
   if device_d is None:
     raise RuntimeError("Failed to set privateuse1_backend in torch")

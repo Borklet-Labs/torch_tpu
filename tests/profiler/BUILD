@@ -136,7 +136,6 @@ torch_tpu_py_test(
         "//src/torch_tpu",
         "//src/torch_tpu/_internal/profiler:profiler_config",
         "//src/torch_tpu/_internal/sync",
-        "//src/torch_tpu/_internal/utils:test_utils",
         "//tests:seed_test_utils",
         "@tsl//tsl/profiler/protobuf:profiler_options_proto_py_proto",
         "@tsl//tsl/profiler/protobuf:xplane_proto_py_proto",
