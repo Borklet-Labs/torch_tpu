@@ -260,7 +260,13 @@ class SingleProcessMultiDeviceTest(_BaseRngTest):
       self.assertTrue(torch.equal(exp, act))
 
   def test_multithread_eager_cross_device_isolation(self):
-    """Verifies threads on distinct devices produce deterministic outputs."""
+    """Verifies threads on distinct devices produce deterministic outputs.
+
+    Each thread switches to its own device index, seeds that device's default
+    generator and draws random numbers concurrently with the other threads.
+    The per-device RNG streams must be independent of each other and of thread
+    scheduling.
+    """
     num_devices = self.num_devices
 
     def run_trial() -> list[torch.Tensor]:
@@ -270,7 +276,7 @@ class SingleProcessMultiDeviceTest(_BaseRngTest):
         List of generated tensors per device, ordered by device index.
       """
       results = {}
-      errors = []
+      errors = {}
 
       def thread_worker(thread_id):
         try:
@@ -283,7 +289,7 @@ class SingleProcessMultiDeviceTest(_BaseRngTest):
             tensors = [torch.rand(10, device=dev) for _ in range(5)]
             results[thread_id] = torch.stack(tensors).cpu()
         except Exception as e:  # pylint: disable=broad-exception-caught
-          errors.append(e)
+          errors[thread_id] = e
 
       threads = [
           threading.Thread(target=thread_worker, args=(i,))
@@ -295,7 +301,12 @@ class SingleProcessMultiDeviceTest(_BaseRngTest):
         t.join()
 
       if errors:
-        raise errors[0]
+        failed = ", ".join(
+            f"device {i}: {e!r}" for i, e in sorted(errors.items())
+        )
+        raise AssertionError(
+            f"{len(errors)} of {num_devices} threads failed: {failed}"
+        ) from next(iter(errors.values()))
 
       return [results[i] for i in range(num_devices)]
 

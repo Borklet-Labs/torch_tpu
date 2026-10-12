@@ -320,7 +320,6 @@ torch_tpu_cc_library(
         "@stablehlo//stablehlo/integrations/cpp/builder:attr_type_builder_util",
         "@tsl//tsl/profiler/lib:traceme",
         "@xla//xla/pjrt:host_memory_allocator",
-        "@xla//xla/pjrt:pjrt_client",
     ],
 )
 

@@ -203,6 +203,37 @@ class AcceleratorDeviceTest(seed_test_utils.RepeatableTest):
           with torch.accelerator.device_index(bad_index):
             pass
 
+  def test_tensor_device_index_matches_requested_device(self):
+    """Verifies tensors created on tpu:N report device index N.
+
+    Regression test: the TPU allocator and MakeTensor used to tag every tensor
+    as device 0 regardless of the device it was created on. PyTorch's structured
+    kernels set a device guard from the output tensor's device, so a mis-tagged
+    tensor caused subsequent ops to be recorded on device 0's events queue while
+    their inputs lived on device N's queue, which raced during materialization.
+    """
+    num_devices = torch.accelerator.device_count()
+    if num_devices < 2:
+      self.skipTest(
+          "Requires multiple devices to verify device index metadata."
+      )
+    idx = num_devices - 1
+    dev = torch.device("tpu", idx)
+    with torch.accelerator.device_index(idx):
+      empty = torch.empty(10, device=dev)
+      ones = torch.ones(10, device=dev)
+      rand = torch.rand(10, device=dev)
+      scaled = ones * 2
+      stacked = torch.stack([ones, rand])
+    for name, t in [
+        ("empty", empty),
+        ("ones", ones),
+        ("rand", rand),
+        ("mul", scaled),
+        ("stack", stacked),
+    ]:
+      self.assertEqual(t.device.index, idx, msg=f"{name}.device = {t.device}")
+
   def test_device_index_context_manager_torch_compile(self):
     # Dynamo fullgraph support for torch.accelerator.device_index was added in
     # PyTorch 2.14 (AcceleratorDeviceIndexVariable); older PyTorch versions

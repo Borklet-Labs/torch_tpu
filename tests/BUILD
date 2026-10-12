@@ -2095,7 +2095,7 @@ torch_tpu_py_test(
     name = "accelerator_api_test",
     srcs = ["accelerator_api_test.py"],
     main = "accelerator_api_test.py",
-    tags = ["requires-tpu-v5lite"],
+    tags = ["requires-tpu-v5lite:8"],
     deps = [
         ":oss_utils",
         ":seed_test_utils",

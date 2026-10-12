@@ -18,6 +18,7 @@
 #define TORCH_TPU_CSRC_EAGER_TENSOR_TO_BUFFER_H_
 
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 #include "ATen/core/ATen_fwd.h"
@@ -75,7 +76,7 @@ namespace torch_tpu {
 // Creates a c10::DataPtr to hold the given DeviceBufferRef on the given
 // PrivateUse1 device index.
 [[nodiscard]] c10::DataPtr MakeDataPtr(DeviceBufferRef buffer_ref,
-                                       int device_idx);
+                                       c10::DeviceIndex device_idx);
 
 // Returns the device buffer for the given tensor's base tensor.
 //
@@ -139,7 +140,12 @@ absl::StatusOr<std::vector<DeviceBufferRef>> GetBuffers(
 // The nbytes of the c10::StorageImpl will be set to the size
 // of the DeviceBufferRef.
 // The DeviceBufferRef must be in a valid state.
-c10::Storage MakeStorage(DeviceBufferRef buffer_ref, int device_idx = 0);
+// If device_idx is not provided, the device index of the DeviceBufferRef is
+// used, so that the tensor's device metadata matches the device (and events
+// queue) the buffer actually belongs to.
+c10::Storage MakeStorage(
+    DeviceBufferRef buffer_ref,
+    std::optional<c10::DeviceIndex> device_idx = std::nullopt);
 
 // Returns an ATen tensor with the given DeviceBufferRef.
 //
@@ -149,7 +155,11 @@ c10::Storage MakeStorage(DeviceBufferRef buffer_ref, int device_idx = 0);
 // The resulting tensor will have the same sizes and dtype as the
 // DeviceBufferRef (converting from mlir::ElementType to ScalarType) and will
 // be contiguous.
-at::Tensor MakeTensor(DeviceBufferRef device_buffer_ref, int device_idx = 0);
+// If device_idx is not provided, the device index of the DeviceBufferRef is
+// used (see MakeStorage).
+at::Tensor MakeTensor(
+    DeviceBufferRef device_buffer_ref,
+    std::optional<c10::DeviceIndex> device_idx = std::nullopt);
 
 // Assigns the given DeviceBufferRef to the given ATen tensor.
 //

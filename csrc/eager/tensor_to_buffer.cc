@@ -19,6 +19,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -78,7 +79,6 @@
 #include "torch/headeronly/core/ScalarType.h"
 #include "tsl/profiler/lib/traceme.h"
 #include "xla/pjrt/host_memory_allocator.h"
-#include "xla/pjrt/pjrt_client.h"
 
 namespace torch_tpu {
 
@@ -403,11 +403,14 @@ absl::StatusOr<std::vector<DeviceBufferRef>> GetBuffers(
   return GetBuffers(tensors, {});
 }
 
-c10::Storage MakeStorage(DeviceBufferRef buffer_ref, int device_idx) {
+c10::Storage MakeStorage(DeviceBufferRef buffer_ref,
+                         std::optional<c10::DeviceIndex> device_idx_opt) {
+  const c10::DeviceIndex device_idx =
+      device_idx_opt.value_or(buffer_ref.device_index());
   ABSL_VLOG(1) << "[MakeStorage] Received DeviceBufferRef with dims: ["
                << absl::StrJoin(buffer_ref.dimensions(), ",") << "]"
                << " and dtype: " << ToString(buffer_ref.element_type())
-               << " on device_idx: " << device_idx;
+               << " on device_idx: " << static_cast<int>(device_idx);
   const auto size = buffer_ref.size_bytes();
   return c10::Storage(c10::make_intrusive<c10::StorageImpl>(
       c10::StorageImpl::use_byte_size_t(), size,
@@ -415,9 +418,13 @@ c10::Storage MakeStorage(DeviceBufferRef buffer_ref, int device_idx) {
       /*resizable=*/true));
 }
 
-at::Tensor MakeTensor(DeviceBufferRef buffer_ref, int device_idx) {
+at::Tensor MakeTensor(DeviceBufferRef buffer_ref,
+                      std::optional<c10::DeviceIndex> device_idx_opt) {
+  const c10::DeviceIndex device_idx =
+      device_idx_opt.value_or(buffer_ref.device_index());
   ABSL_VLOG(1) << "[MakeTensor] Creating new ATen tensor for "
-               << buffer_ref.DebugString() << " on device_idx: " << device_idx;
+               << buffer_ref.DebugString()
+               << " on device_idx: " << static_cast<int>(device_idx);
 
   const auto dtype = ConvertTo<at::ScalarType>(buffer_ref.element_type());
   auto caffe2_type_meta = c10::scalarTypeToTypeMeta(dtype);
@@ -464,10 +471,7 @@ class TpuAllocator final : public c10::DeviceAllocator {
     ScopedPythonContextCapturer _(OpName::kTorchTpuStorageAllocate);
     // Propagate the initialization error (e.g. VFIO collision) instead of a
     // generic one.
-    TT_ASSIGN_OR_THROW(const xla::PjRtDevice* const device,
-                       PjrtBackend::GetInstance().GetDevice());
-    c10::DeviceIndex device_idx =
-        static_cast<c10::DeviceIndex>(device->local_hardware_id().value());
+    TT_THROW_IF_ERROR(PjrtBackend::GetInstance().EnsureInitialized());
     // Check that the size_t does not overflow an int64_t.
     // This function is only ever called from PyTorch so safe to throw an
     // exception on failure.
@@ -483,6 +487,10 @@ class TpuAllocator final : public c10::DeviceAllocator {
     TT_ASSIGN_OR_THROW(auto buffer_ref, CreateEmptyDeviceBufferRef(
                                             {static_cast<int64_t>(nbytes)},
                                             mlir::ElementType::UI8));
+    // Tag the DataPtr with the device index the buffer was created on (the
+    // current device of the calling thread), so that the tensor's device
+    // metadata matches the events queue the buffer belongs to.
+    const c10::DeviceIndex device_idx = buffer_ref.device_index();
     return MakeDataPtr(std::move(buffer_ref), device_idx);
   }
 
@@ -688,7 +696,8 @@ void RegisterTpuAllocator() {
   at::setHostAllocator(GetPrivateUse1DeviceType(), GetTpuPinnedAllocator());
 }
 
-c10::DataPtr MakeDataPtr(DeviceBufferRef buffer_ref, const int device_idx) {
+c10::DataPtr MakeDataPtr(DeviceBufferRef buffer_ref,
+                         const c10::DeviceIndex device_idx) {
   AddDataPtrAlias(buffer_ref);
   auto* absl_nonnull const raw_ref_ptr =
       new DeviceBufferRef(std::move(buffer_ref));
