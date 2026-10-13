@@ -17,11 +17,8 @@
 #ifndef TORCH_TPU_CSRC_DISTRIBUTED_SLICEBUILDER_DISCOVERY_H_
 #define TORCH_TPU_CSRC_DISTRIBUTED_SLICEBUILDER_DISCOVERY_H_
 
-#include <cstdint>
 #include <string>
-#include <utility>
 
-#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 
 namespace torch_tpu {
@@ -36,17 +33,6 @@ struct DistributedWorkerConfiguration {
   std::string sb_port;
   std::string topology;
 };
-
-struct SlicebuilderMeshConfig {
-  std::string address;
-  int64_t port;
-};
-
-absl::StatusOr<SlicebuilderMeshConfig> GetSlicebuilderMeshConfig(
-    int rank, int world_size, std::string master_addr, int master_port);
-
-absl::Status InitializeAsDistributedWorker(
-    const DistributedWorkerConfiguration& config);
 
 absl::StatusOr<DistributedWorkerConfiguration>
 GetDistributedWorkerConfiguration();

@@ -16,26 +16,25 @@
 
 #include "csrc/common/utils.h"
 
+#include <cstddef>
+
+#include "csrc/common/dimension_types.h"
 #include "gtest/gtest.h"
 
 namespace torch_tpu {
 namespace {
 
-TEST(LosslessToString, WorksForPositiveDoubles) {
-  EXPECT_EQ(LosslessToString(1.0), "1");
-  EXPECT_EQ(LosslessToString(1.2), "1.2");
-  EXPECT_EQ(LosslessToString(1.23456789), "1.2345678899999999");
-  EXPECT_EQ(LosslessToString(1.2345678901234567), "1.2345678901234567");
+TEST(PercAsStr, ComputesPercentage) {
+  EXPECT_EQ(PercAsStr(50, 100), "50.0%");
+  EXPECT_EQ(PercAsStr(1, 3), "33.3%");
+  EXPECT_EQ(PercAsStr(0, 100), "0.0%");
+  EXPECT_EQ(PercAsStr(10, 0), "NA");
 }
 
-TEST(LosslessToString, WorksForNegativeDoubles) {
-  EXPECT_EQ(LosslessToString(-1.0), "-1");
-  EXPECT_EQ(LosslessToString(-1.2), "-1.2");
-  EXPECT_EQ(LosslessToString(-1.23456789), "-1.2345678899999999");
-  EXPECT_EQ(LosslessToString(-1.2345678901234567), "-1.2345678901234567");
+TEST(FilterIndices, FiltersCorrectly) {
+  Indices even = FilterIndices(6, [](size_t i) { return i % 2 == 0; });
+  EXPECT_EQ(even, (Indices{0, 2, 4}));
 }
-
-TEST(LosslessToString, WorksForZero) { EXPECT_EQ(LosslessToString(0.0), "0"); }
 
 }  // namespace
 }  // namespace torch_tpu

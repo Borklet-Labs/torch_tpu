@@ -20,7 +20,6 @@
 #include <cmath>
 #include <limits>
 #include <optional>
-#include <string>
 #include <string_view>
 #include <utility>
 
@@ -38,10 +37,6 @@
 #include "torch/headeronly/core/ScalarType.h"
 
 namespace torch_tpu {
-
-// Use these functions only for debugging purposes.
-[[nodiscard]] std::string ToString(const at::ScalarType& scalar_type,
-                                   std::string_view name);
 
 // Returns the scalar type of the given tensor.
 inline at::ScalarType GetScalarType(const at::Tensor& tensor) {
@@ -158,13 +153,6 @@ bool IsIntegral(const T& thing) {
 // Returns whether `tensor` holds Long typed data.
 inline bool IsLong(const at::Tensor& tensor) {
   return tensor.scalar_type() == at::ScalarType::Long;
-}
-
-// Returns whether `tensor` holds complex data that is supported by OpenXLA:
-// either complex64 or complex128.
-inline bool IsXlaSupportedComplex(const at::Tensor& tensor) {
-  return tensor.scalar_type() == at::ScalarType::ComplexFloat ||
-         tensor.scalar_type() == at::ScalarType::ComplexDouble;
 }
 
 // Returns whether `tensor` device is PrivateUse1.

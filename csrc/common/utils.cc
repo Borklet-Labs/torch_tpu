@@ -23,24 +23,9 @@
 #include "ATen/core/TensorBody.h"
 #include "absl/log/absl_log.h"
 #include "absl/strings/str_cat.h"
-#include "absl/strings/str_format.h"
 #include "absl/strings/str_split.h"
-#include "torch/headeronly/util/complex.h"
 
 namespace torch_tpu {
-
-// TODO: b/441998432 - Use to_chars() once the OSS toolchain (currently clang
-// 18) supports it for doubles.
-std::string LosslessToString(double value) {
-  // Precision of 17 is chosen because doubles max out at 15 to 17 digits
-  // of precision, so take the higher precision.
-  return absl::StrFormat("%.17g", value);
-}
-
-std::string LosslessToString(const c10::complex<double>& value) {
-  return absl::StrCat(LosslessToString(value.real()), "+",
-                      LosslessToString(value.imag()), "i");
-}
 
 // To prevent the log system from truncating the log messages, each
 // message shouldn't exceed this number of bytes.

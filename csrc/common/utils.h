@@ -32,7 +32,6 @@
 #include "c10/util/DimVector.h"
 #include "csrc/common/dimension_types.h"
 #include "llvm/ADT/ArrayRef.h"
-#include "torch/headeronly/util/complex.h"
 
 // 1 if this is a Google-internal version of torch_tpu. Otherwise 0.
 #ifndef TT_IS_INTERNAL_TORCH_TPU
@@ -79,13 +78,6 @@ inline constexpr bool always_false_v = false;
 ) {
   return SmallInt64Vector(ints.begin(), ints.end());
 }
-
-// Returns a string representation of the given value that can be losslessly
-// converted back to the original value. Use this when computing the computation
-// cache key for a double/complex value to avoid different values mapping to the
-// same cache key.
-[[nodiscard]] std::string LosslessToString(double value);
-[[nodiscard]] std::string LosslessToString(const c10::complex<double>& value);
 
 // Log a very long string as multiple lines. This is to work around ABSL_LOG's
 // limitation on a maximum line length.

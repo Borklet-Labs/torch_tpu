@@ -17,11 +17,7 @@
 #include "csrc/common/aten_utils.h"
 
 #include <cmath>
-#include <cstdint>
 #include <exception>
-#include <sstream>
-#include <string>
-#include <string_view>
 
 #include "ATen/OpMathType.h"
 #include "ATen/core/ATen_fwd.h"
@@ -35,16 +31,6 @@
 #include "torch/headeronly/core/ScalarType.h"
 
 namespace torch_tpu {
-
-std::string ToString(const at::ScalarType& scalar_type,
-                     const std::string_view name) {
-  std::stringstream os;
-  if (!name.empty()) {
-    os << name << ": ";
-  }
-  os << "(type: " << static_cast<int32_t>(scalar_type) << ")";
-  return os.str();
-}
 
 bool operator==(const HashableScalar& lhs, const HashableScalar& rhs) {
   // If the target types are different, they are not equal.
