@@ -448,6 +448,10 @@ REGISTRATION_OVERRIDES = frozenset([
     # decomposition in order to workaround a bug in PyTorch core.
     'ctc_loss',
     'ctc_loss.Tensor',
+    # einsum is registered directly on PrivateUse1 and AutogradPrivateUse1 to
+    # lower contractions directly to stablehlo.dot_general instead of
+    # decomposing into permute + reshape + bmm + view + permute.
+    'einsum',
     # embedding, embedding.out, embedding_backward, and embedding_sparse_backward
     # are registered to provide direct StableHLO lowerings on TPU, overriding
     # the default PyTorch decomposition.

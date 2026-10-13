@@ -15990,6 +15990,166 @@ class MaskedSoftmaxErrorTest(et.ErrorTestBase):
     ):
       torch.lcm(a, b, out=out)
 
+  def test_einsum_errors(self):
+    a = torch.ones(3, 4, device=et.device(), dtype=torch.float32)
+    b = torch.ones(4, 5, device=et.device(), dtype=torch.float32)
+
+    with self.subTest("invalid_path_length"):
+      with et.assert_raises_message(
+          RuntimeError,
+          gpu="""einsum(): expected contraction path given in path parameter to have size 2 but got 1""",
+          tpu="""einsum(): expected contraction path given in path parameter to have size 2, got 1""",
+      ):
+        torch.ops.aten.einsum.default("ij,jk->ik", [a, b], path=[0])
+
+    with self.subTest("fewer_operands"):
+      with et.assert_raises_message(
+          RuntimeError,
+          gpu="""einsum(): fewer operands were provided than specified in the equation""",
+          tpu="""einsum(): expected the number of operands to match the equation, got fewer operands (1) than specified in the equation""",
+      ):
+        torch.ops.aten.einsum.default("ij,jk->ik", [a])
+
+    with self.subTest("more_operands"):
+      with et.assert_raises_message(
+          RuntimeError,
+          gpu="""einsum(): more operands were provided than specified in the equation""",
+          tpu="""einsum(): expected 1 operand(s) as specified in the equation, got 2""",
+      ):
+        torch.ops.aten.einsum.default("ij->ij", [a, b])
+
+    with self.subTest("duplicate_ellipsis_in_operand"):
+      with et.assert_raises_message(
+          RuntimeError,
+          gpu="""einsum(): found '.' for operand 0 for which an ellipsis was already found""",
+          tpu="""einsum(): expected at most one ellipsis ('...') for operand 0, got '.' after an ellipsis was already found""",
+      ):
+        torch.einsum("...i...j->ij", a)
+
+    with self.subTest("incomplete_ellipsis_in_operand"):
+      with et.assert_raises_message(
+          RuntimeError,
+          gpu="""einsum(): found '.' for operand 0 that is not part of any ellipsis""",
+          tpu="""einsum(): expected '.' for operand 0 to be part of an ellipsis ('...'), got '.' that is not part of any ellipsis""",
+      ):
+        torch.einsum(".ij->ij", a)
+
+    with self.subTest("invalid_lhs_subscript"):
+      with et.assert_raises_message(
+          RuntimeError,
+          gpu="""einsum(): invalid subscript given at index 1 in the equation string, subscripts must be in [a-zA-Z]""",
+          tpu="""einsum(): expected subscript at index 1 in the equation string to be in [a-zA-Z], got '1'""",
+      ):
+        torch.einsum("i1->i", a)
+
+    with self.subTest("dim_count_mismatch_no_ellipsis"):
+      with et.assert_raises_message(
+          RuntimeError,
+          gpu="""einsum(): the number of subscripts in the equation (3) does not match the number of dimensions (2) for operand 0 and no ellipsis was given""",
+          tpu="""einsum(): expected the number of subscripts in the equation for operand 0 to match the number of dimensions (2), got 3 with no ellipsis given""",
+      ):
+        torch.einsum("ijk->ij", a)
+
+    with self.subTest("dim_count_mismatch_with_ellipsis"):
+      with et.assert_raises_message(
+          RuntimeError,
+          gpu="""einsum(): the number of subscripts in the equation (3) is more than the number of dimensions (2) for operand 0""",
+          tpu="""einsum(): expected the number of subscripts in the equation for operand 0 to be at most the number of dimensions (2), got 3""",
+      ):
+        torch.einsum("...ijk->ij", a)
+
+    with self.subTest("duplicate_ellipsis_in_output"):
+      with et.assert_raises_message(
+          RuntimeError,
+          gpu="""einsum(): found '.' for output but an ellipsis (...) was already found""",
+          tpu="""einsum(): expected at most one ellipsis ('...') in the output, got '.' after an ellipsis was already found""",
+      ):
+        torch.einsum("...i->......", a)
+
+    with self.subTest("incomplete_ellipsis_in_output"):
+      with et.assert_raises_message(
+          RuntimeError,
+          gpu="""einsum(): found '.' for output that is not part of any ellipsis (...)""",
+          tpu="""einsum(): expected '.' in the output to be part of an ellipsis ('...'), got '.' that is not part of any ellipsis""",
+      ):
+        torch.einsum("...i->..i", a)
+
+    with self.subTest("invalid_rhs_subscript"):
+      with et.assert_raises_message(
+          RuntimeError,
+          gpu="""einsum(): invalid subscript given at index 5 in the equation string, subscripts must be in [a-zA-Z]""",
+          tpu="""einsum(): expected subscript at index 5 in the equation string to be in [a-zA-Z], got '1'""",
+      ):
+        torch.einsum("ij->i1", a)
+
+    with self.subTest("repeated_output_subscript"):
+      with et.assert_raises_message(
+          RuntimeError,
+          gpu="""einsum(): output subscript i appears more than once in the output""",
+          tpu="""einsum(): expected output subscript 'i' to appear in at least one input operand and at most once in the output, got a repeated output subscript""",
+      ):
+        torch.einsum("ij->ii", a)
+
+    with self.subTest("unknown_output_subscript"):
+      with et.assert_raises_message(
+          RuntimeError,
+          gpu="""einsum(): output subscript k does not appear in the equation for any input operand""",
+          tpu="""einsum(): expected output subscript 'k' to appear in at least one input operand and at most once in the output, got a subscript that does not appear in any input operand""",
+      ):
+        torch.einsum("ij->ik", a)
+
+    with self.subTest("ellipsis_broadcast_mismatch"):
+      a3 = torch.ones(2, 3, 4, device=et.device(), dtype=torch.float32)
+      b3 = torch.ones(3, 4, 5, device=et.device(), dtype=torch.float32)
+      with et.assert_raises_message(
+          RuntimeError,
+          gpu="""einsum(): dimension 0 covered by ellipsis in operand 1has size 3 which does not broadcast with previously seen ellipsis with size 2 for the respective dimension""",
+          tpu="""einsum(): expected dimension 0 covered by ellipsis in operand 1 to broadcast with previously seen ellipsis size 2, got size 3""",
+      ):
+        torch.einsum("...ij,...jk->...ik", a3, b3)
+
+    with self.subTest("subscript_size_mismatch"):
+      b_bad = torch.ones(5, 6, device=et.device(), dtype=torch.float32)
+      with et.assert_raises_message(
+          RuntimeError,
+          gpu="""einsum(): subscript j has size 5 for operand 1 which does not broadcast with previously seen size 4""",
+          tpu="""einsum(): expected subscript 'j' for operand 1 to broadcast with previously seen size 4, got size 5""",
+      ):
+        torch.einsum("ij,jk->ik", a, b_bad)
+
+    with self.subTest("diagonal_size_mismatch"):
+      with et.assert_raises_message(
+          RuntimeError,
+          gpu="""einsum(): subscript i is repeated for operand 0 but the sizes don't match, 4 != 3""",
+          tpu="""einsum(): expected repeated subscript 'i' for operand 0 to have matching dimension sizes, got 4 and 3""",
+      ):
+        torch.einsum("ii->i", a)
+
+    with self.subTest("path_self_contraction"):
+      with et.assert_raises_message(
+          RuntimeError,
+          gpu="""einsum(): invalid contraction (0, 0) cannot contract an operand with itself""",
+          tpu="""einsum(): expected distinct contraction operand indices in [0, 2), got (0, 0)""",
+      ):
+        torch.ops.aten.einsum.default("ij,jk->ik", [a, b], path=[0, 0])
+
+    with self.subTest("path_index_out_of_bounds"):
+      with et.assert_raises_message(
+          RuntimeError,
+          gpu="""einsum(): invalid contraction (0, 5) operand index is out of bounds""",
+          tpu="""einsum(): expected distinct contraction operand indices in [0, 2), got (0, 5)""",
+      ):
+        torch.ops.aten.einsum.default("ij,jk->ik", [a, b], path=[0, 5])
+
+    with self.subTest("dtype_mismatch"):
+      b_f64 = torch.ones(4, 5, device=et.device(), dtype=torch.float64)
+      with et.assert_raises_message(
+          RuntimeError,
+          gpu="""expected scalar type Float but found Double""",
+          tpu="""einsum(): expected all tensors to have the same dtype, got float32 and float64""",
+      ):
+        torch.einsum("ij,jk->ik", a, b_f64)
+
 
 if __name__ == "__main__":
   multiprocessing.handle_test_main(absltest.main)

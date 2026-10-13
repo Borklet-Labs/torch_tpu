@@ -336,6 +336,12 @@ ACCURACY_OVERRIDES_VS_GPU = {
         torch.int8: {"rtol": 4.7e-5, "atol": 4.3e-7},
         torch.uint8: {"rtol": 4.7e-5, "atol": 3.6e-5},
     },
+    "einsum": {
+        torch.bfloat16: {"rtol": 3.9e-2},
+        torch.complex64: {"rtol": 2.7e-2},
+        torch.float16: {"rtol": 1.4e-2, "atol": 1.5e-1},
+        torch.float32: {"rtol": 1.1e-2, "atol": 1.6e-1},
+    },
     "erfinv": {
         torch.float32: {"rtol": 1.6e-5, "atol": 1.7e-5},
     },
@@ -681,6 +687,11 @@ ACCURACY_OVERRIDES_VS_GPU_COMPILED = {
         torch.bfloat16: {"atol": 1.9e-2},
         torch.float16: {"rtol": 3.5e-3, "atol": 2.4e-3},
     },
+    "einsum": {
+        torch.complex64: {"rtol": 2.7e-2},
+        torch.float16: {"rtol": 1.4e-2, "atol": 1.5e-1},
+        torch.float32: {"rtol": 1.1e-2, "atol": 1.6e-1},
+    },
     "erfinv": {
         torch.float32: {"rtol": 1.6e-5, "atol": 1.7e-5},
     },
@@ -909,6 +920,10 @@ ACCURACY_OVERRIDES_GRAD_VS_GPU: dict[
         "cumprod": {
             torch.bfloat16: {"rtol": 1.7e-1, "atol": 1.2e-2},
             torch.float16: {"rtol": 1.8e-2, "atol": 2e-3},
+        },
+        "einsum": {
+            torch.float16: {"rtol": 2.4e-2},
+            torch.float32: {"rtol": 2.3e-2},
         },
         "erf": {
             torch.bfloat16: {"rtol": 3.5e-2, "atol": 4.3e-4},
@@ -1746,6 +1761,18 @@ class TestOps(op_testing.OpInfoTestBase):
                 )
                 + COMPLEX_DTYPES
             ),
+        },
+    )
+
+  def test_einsum(self):
+    self.do_test_op(
+        "einsum",
+        # GPU (CUDA) does not support integral or boolean dtypes for einsum,
+        # and CPU's sum/bmm decomposition has inconsistent integral dtype
+        # promotion.
+        exclude_dtypes={
+            "cpu": (torch.bool,) + INTEGRAL_DTYPES,
+            "gpu": (torch.bool,) + INTEGRAL_DTYPES,
         },
     )
 

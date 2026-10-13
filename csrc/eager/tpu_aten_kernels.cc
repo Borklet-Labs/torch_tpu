@@ -87,6 +87,7 @@
 #include "csrc/ops/dynamic/dynamic_slice/dynamic_slice.h"
 #include "csrc/ops/dynamic/pad_real_to_static/pad_real_to_static.h"
 #include "csrc/ops/dynamic/set_dimension_logical_size/set_dimension_logical_size.h"
+#include "csrc/ops/einsum/einsum_aten_kernels.h"
 #include "csrc/ops/elu/elu_aten_kernels.h"
 #include "csrc/ops/embedding/embedding_aten_kernels.h"
 #include "csrc/ops/equal/equal_aten_kernels.h"
@@ -500,6 +501,7 @@ TORCH_LIBRARY_IMPL(aten, PrivateUse1, m) {
   ImplStable<OpName::kDivOutMode>(m, AtenDivOutMode);
   ImplStable<OpName::kDot>(m, AtenDot);
   ImplStable<OpName::kEfficientZeroTensor>(m, AtenEfficientZeroTensor);
+  ImplStable<OpName::kEinsum>(m, AtenEinsum);
   ImplStable<OpName::kEluBackwardGradInput>(m, AtenEluBackwardGradInput);
   ImplStable<OpName::kEluOut>(m, AtenEluOut);
   ImplStable<OpName::kEmbedding>(m, AtenEmbedding);
@@ -1241,6 +1243,7 @@ TORCH_LIBRARY_IMPL(aten, AutogradPrivateUse1, m) {
   // ctc_loss to our custom forward/backward autograd implementation.
   ImplStable<OpName::kCtcLossPublic>(m, AtenCtcLossPublicAutograd);
   ImplStable<OpName::kCtcLossPublicTensor>(m, AtenCtcLossPublicTensorAutograd);
+  ImplStable<OpName::kEinsum>(m, AtenEinsumAutograd);
   ImplStable<OpName::kFftFft>(m, AtenFftFft);
   ImplStable<OpName::kFftFftOut>(m, AtenFftFftOut);
   ImplStable<OpName::kFftIfft>(m, AtenFftIfft);

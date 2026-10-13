@@ -20169,6 +20169,423 @@ class OpTestingFrameworkTest(op_testing.OpInfoTestBase):
         actual=v_tpu.grad.cpu(), expected=v_cpu.grad, rtol=2e-2, atol=2e-2
     )
 
+  @contextlib.contextmanager
+  def _highest_matmul_precision(self):
+    prev_prec = torch.get_float32_matmul_precision()
+    torch.set_float32_matmul_precision("highest")
+    try:
+      yield
+    finally:
+      torch.set_float32_matmul_precision(prev_prec)
+
+  @parameterized.named_parameters(
+      ("identity", "ij->ij", (3, 4)),
+      ("transpose_2d", "ij->ji", (3, 4)),
+      ("permute_3d", "ijk->kij", (2, 3, 4)),
+      ("trace", "ii->", (4, 4)),
+      ("batched_trace", "bii->b", (2, 4, 4)),
+      ("diagonal", "ii->i", (4, 4)),
+      ("batched_diagonal", "bii->bi", (2, 4, 4)),
+      ("three_way_diagonal", "iii->i", (4, 4, 4)),
+      ("partial_reduction", "ijk->ik", (2, 3, 4)),
+      ("full_sum", "ij->", (3, 4)),
+      ("implicit_identity", "ij", (3, 4)),
+      ("implicit_trace", "ii", (4, 4)),
+      ("implicit_ellipsis_trace", "...ii", (2, 4, 4)),
+  )
+  def test_einsum_one_operand(self, equation, shape):
+    with self._highest_matmul_precision():
+      x_cpu = torch.randn(shape, dtype=torch.float32, requires_grad=True)
+      x_tpu = x_cpu.detach().to("tpu").requires_grad_(True)
+
+      out_cpu = torch.einsum(equation, x_cpu)
+      out_tpu = torch.einsum(equation, x_tpu)
+      self.assertEqual(out_tpu.grad_fn.name(), "EinsumBackward0")
+      utils.assert_close(actual=out_tpu.cpu(), expected=out_cpu)
+
+      grad_out_cpu = torch.randn_like(out_cpu)
+      out_cpu.backward(grad_out_cpu)
+      out_tpu.backward(grad_out_cpu.to("tpu"))
+      utils.assert_close(actual=x_tpu.grad.cpu(), expected=x_cpu.grad)
+
+  @parameterized.named_parameters(
+      ("inner_product", "i,i->", (6,), (6,)),
+      ("outer_product", "i,j->ij", (4,), (5,)),
+      ("matvec", "ij,j->i", (3, 4), (4,)),
+      ("matmul", "ij,jk->ik", (3, 4), (4, 5)),
+      ("matmul_nt", "ij,kj->ik", (3, 4), (5, 4)),
+      ("matmul_tn", "ji,jk->ik", (4, 3), (4, 5)),
+      ("matmul_tt", "ji,kj->ki", (4, 3), (5, 4)),
+      ("bmm", "bij,bjk->bik", (2, 3, 4), (2, 4, 5)),
+      ("mha", "bhqd,bhkd->bhqk", (2, 4, 6, 8), (2, 4, 7, 8)),
+      ("gqa_explicit_size1", "bhqd,bhkd->bhqk", (2, 4, 6, 8), (2, 1, 7, 8)),
+      ("gqa_lhs_size1", "bhqd,bhkd->bhqk", (2, 1, 6, 8), (2, 4, 7, 8)),
+      ("gqa_rank_broadcast", "bhqd,bkd->bhqk", (2, 4, 6, 8), (2, 7, 8)),
+      (
+          "mamba3_6d",
+          "bctrhd,bcsqhd->bhctrsq",
+          (2, 2, 3, 2, 2, 4),
+          (2, 2, 3, 2, 2, 4),
+      ),
+      ("mamba3_proj", "blhp,hrp->blrhp", (2, 3, 4, 5), (4, 2, 5)),
+      ("uncontracted_sum_rhs", "ij,jk->i", (3, 4), (4, 5)),
+      ("uncontracted_sum_both", "ijk,jkl->il", (2, 3, 4), (3, 4, 5)),
+      ("full_sum_disjoint", "ij,kl->", (2, 3), (4, 5)),
+      ("diag_lhs", "ii,ij->j", (4, 4), (4, 5)),
+      ("batched_diag_lhs", "bii,bij->bj", (2, 4, 4), (2, 4, 5)),
+      ("ellipsis_hadamard", "...,...->...", (2, 3), (2, 3)),
+      ("ellipsis_bmm", "...ij,...jk->...ik", (2, 3, 4), (2, 4, 5)),
+      ("ellipsis_bcast_size1", "...ij,...jk->...ik", (1, 3, 4), (2, 4, 5)),
+      ("ellipsis_bcast_rank", "...ij,...jk->...ik", (3, 4), (2, 4, 5)),
+      ("ellipsis_sum_batch", "...ij,...jk->ik", (2, 3, 4), (2, 4, 5)),
+      ("implicit_matmul", "ij,jk", (3, 4), (4, 5)),
+      ("implicit_ellipsis_bmm", "...ij,...jk", (2, 3, 4), (2, 4, 5)),
+  )
+  def test_einsum_two_operands(self, equation, shape_a, shape_b):
+    with self._highest_matmul_precision():
+      a_cpu = torch.randn(shape_a, dtype=torch.float32, requires_grad=True)
+      b_cpu = torch.randn(shape_b, dtype=torch.float32, requires_grad=True)
+      a_tpu = a_cpu.detach().to("tpu").requires_grad_(True)
+      b_tpu = b_cpu.detach().to("tpu").requires_grad_(True)
+
+      out_cpu = torch.einsum(equation, a_cpu, b_cpu)
+      out_tpu = torch.einsum(equation, a_tpu, b_tpu)
+      self.assertEqual(out_tpu.grad_fn.name(), "EinsumBackward0")
+      utils.assert_close(
+          actual=out_tpu.cpu(), expected=out_cpu, rtol=1e-4, atol=1e-4
+      )
+
+      grad_out_cpu = torch.randn_like(out_cpu)
+      out_cpu.backward(grad_out_cpu)
+      out_tpu.backward(grad_out_cpu.to("tpu"))
+      utils.assert_close(
+          actual=a_tpu.grad.cpu(), expected=a_cpu.grad, rtol=1e-4, atol=1e-4
+      )
+      utils.assert_close(
+          actual=b_tpu.grad.cpu(), expected=b_cpu.grad, rtol=1e-4, atol=1e-4
+      )
+
+  def test_einsum_multi_operands_and_path(self):
+    with self._highest_matmul_precision():
+      # 3-operand chain matmul
+      a_cpu = torch.randn((3, 4), dtype=torch.float32, requires_grad=True)
+      b_cpu = torch.randn((4, 5), dtype=torch.float32, requires_grad=True)
+      c_cpu = torch.randn((5, 2), dtype=torch.float32, requires_grad=True)
+      a_tpu = a_cpu.detach().to("tpu").requires_grad_(True)
+      b_tpu = b_cpu.detach().to("tpu").requires_grad_(True)
+      c_tpu = c_cpu.detach().to("tpu").requires_grad_(True)
+
+      out_cpu = torch.einsum("ij,jk,kl->il", a_cpu, b_cpu, c_cpu)
+      out_tpu = torch.einsum("ij,jk,kl->il", a_tpu, b_tpu, c_tpu)
+      self.assertEqual(out_tpu.grad_fn.name(), "EinsumBackward0")
+      utils.assert_close(
+          actual=out_tpu.cpu(), expected=out_cpu, rtol=1e-4, atol=1e-4
+      )
+
+      grad_out_cpu = torch.randn_like(out_cpu)
+      out_cpu.backward(grad_out_cpu)
+      out_tpu.backward(grad_out_cpu.to("tpu"))
+      utils.assert_close(
+          actual=a_tpu.grad.cpu(), expected=a_cpu.grad, rtol=1e-4, atol=1e-4
+      )
+      utils.assert_close(
+          actual=b_tpu.grad.cpu(), expected=b_cpu.grad, rtol=1e-4, atol=1e-4
+      )
+      utils.assert_close(
+          actual=c_tpu.grad.cpu(), expected=c_cpu.grad, rtol=1e-4, atol=1e-4
+      )
+
+      # Explicit contraction paths via torch.ops.aten.einsum.default
+      for path in ([0, 1, 0, 1], [1, 2, 0, 1]):
+        out_path_cpu = torch.ops.aten.einsum.default(
+            "ij,jk,kl->il",
+            [a_cpu.detach(), b_cpu.detach(), c_cpu.detach()],
+            path=path,
+        )
+        out_path_tpu = torch.ops.aten.einsum.default(
+            "ij,jk,kl->il",
+            [a_tpu.detach(), b_tpu.detach(), c_tpu.detach()],
+            path=path,
+        )
+        utils.assert_close(
+            actual=out_path_tpu.cpu(),
+            expected=out_path_cpu,
+            rtol=1e-4,
+            atol=1e-4,
+        )
+
+      # 4-operand contraction
+      ops_cpu = [
+          torch.randn((2, 3), dtype=torch.float32, requires_grad=True),
+          torch.randn((3, 4), dtype=torch.float32, requires_grad=True),
+          torch.randn((4, 3), dtype=torch.float32, requires_grad=True),
+          torch.randn((3, 2), dtype=torch.float32, requires_grad=True),
+      ]
+      ops_tpu = [t.detach().to("tpu").requires_grad_(True) for t in ops_cpu]
+      out4_cpu = torch.einsum("ab,bc,cd,de->ae", *ops_cpu)
+      out4_tpu = torch.einsum("ab,bc,cd,de->ae", *ops_tpu)
+      grad4_cpu = torch.randn_like(out4_cpu)
+      out4_cpu.backward(grad4_cpu)
+      out4_tpu.backward(grad4_cpu.to("tpu"))
+      utils.assert_close(
+          actual=out4_tpu.cpu(), expected=out4_cpu, rtol=1e-4, atol=1e-4
+      )
+      for t_tpu, t_cpu in zip(ops_tpu, ops_cpu):
+        utils.assert_close(
+            actual=t_tpu.grad.cpu(), expected=t_cpu.grad, rtol=1e-4, atol=1e-4
+        )
+
+  def test_einsum_double_backward(self):
+    with self._highest_matmul_precision():
+      cases = [
+          ("ij->ji", [(3, 4)]),
+          ("bii->bi", [(2, 4, 4)]),
+          ("ij,jk->ik", [(3, 4), (4, 5)]),
+          ("bhqd,bhkd->bhqk", [(2, 4, 3, 4), (2, 1, 5, 4)]),
+          (
+              "bctrhd,bcsqhd->bhctrsq",
+              [(1, 2, 2, 2, 2, 3), (1, 2, 2, 2, 2, 3)],
+          ),
+          ("ij,jk,kl->il", [(2, 3), (3, 4), (4, 2)]),
+      ]
+      for equation, shapes in cases:
+        with self.subTest(equation=equation):
+          ops_cpu = [
+              torch.randn(s, dtype=torch.float32, requires_grad=True)
+              for s in shapes
+          ]
+          ops_tpu = [t.detach().to("tpu").requires_grad_(True) for t in ops_cpu]
+
+          out_cpu = torch.einsum(equation, *ops_cpu)
+          out_tpu = torch.einsum(equation, *ops_tpu)
+          v_cpu = torch.randn_like(out_cpu, requires_grad=True)
+          v_tpu = v_cpu.detach().to("tpu").requires_grad_(True)
+
+          grads_cpu = torch.autograd.grad(
+              out_cpu, ops_cpu, grad_outputs=out_cpu * v_cpu, create_graph=True
+          )
+          grads_tpu = torch.autograd.grad(
+              out_tpu, ops_tpu, grad_outputs=out_tpu * v_tpu, create_graph=True
+          )
+
+          loss_cpu = sum((g * g).sum() for g in grads_cpu)
+          loss_tpu = sum((g * g).sum() for g in grads_tpu)
+          loss_cpu.backward()
+          loss_tpu.backward()
+
+          utils.assert_close(
+              actual=v_tpu.grad.cpu(),
+              expected=v_cpu.grad,
+              rtol=1e-4,
+              atol=1e-4,
+          )
+          for t_tpu, t_cpu in zip(ops_tpu, ops_cpu):
+            utils.assert_close(
+                actual=t_tpu.grad.cpu(),
+                expected=t_cpu.grad,
+                rtol=1e-4,
+                atol=1e-4,
+            )
+
+  def test_einsum_partial_requires_grad(self):
+    with self._highest_matmul_precision():
+      for req_a, req_b in ((True, False), (False, True)):
+        a_cpu = torch.randn((3, 4), dtype=torch.float32, requires_grad=req_a)
+        b_cpu = torch.randn((4, 5), dtype=torch.float32, requires_grad=req_b)
+        a_tpu = a_cpu.detach().to("tpu").requires_grad_(req_a)
+        b_tpu = b_cpu.detach().to("tpu").requires_grad_(req_b)
+
+        out_cpu = torch.einsum("ij,jk->ik", a_cpu, b_cpu)
+        out_tpu = torch.einsum("ij,jk->ik", a_tpu, b_tpu)
+        grad_out = torch.randn_like(out_cpu)
+        out_cpu.backward(grad_out)
+        out_tpu.backward(grad_out.to("tpu"))
+
+        if req_a:
+          utils.assert_close(
+              actual=a_tpu.grad.cpu(), expected=a_cpu.grad, rtol=1e-4, atol=1e-4
+          )
+        else:
+          self.assertIsNone(a_tpu.grad)
+        if req_b:
+          utils.assert_close(
+              actual=b_tpu.grad.cpu(), expected=b_cpu.grad, rtol=1e-4, atol=1e-4
+          )
+        else:
+          self.assertIsNone(b_tpu.grad)
+
+  def test_einsum_views_and_conj(self):
+    with self._highest_matmul_precision():
+      # Non-contiguous transposed and sliced views
+      base_a_cpu = torch.randn((4, 6), dtype=torch.float32, requires_grad=True)
+      base_b_cpu = torch.randn((5, 8), dtype=torch.float32, requires_grad=True)
+      base_a_tpu = base_a_cpu.detach().to("tpu").requires_grad_(True)
+      base_b_tpu = base_b_cpu.detach().to("tpu").requires_grad_(True)
+
+      out_cpu = torch.einsum(
+          "ij,jk->ik", base_a_cpu.t()[::2, :], base_b_cpu[:, ::2].t()
+      )
+      out_tpu = torch.einsum(
+          "ij,jk->ik", base_a_tpu.t()[::2, :], base_b_tpu[:, ::2].t()
+      )
+      grad_out = torch.randn_like(out_cpu)
+      out_cpu.backward(grad_out)
+      out_tpu.backward(grad_out.to("tpu"))
+      utils.assert_close(
+          actual=out_tpu.cpu(), expected=out_cpu, rtol=1e-4, atol=1e-4
+      )
+      utils.assert_close(
+          actual=base_a_tpu.grad.cpu(),
+          expected=base_a_cpu.grad,
+          rtol=1e-4,
+          atol=1e-4,
+      )
+      utils.assert_close(
+          actual=base_b_tpu.grad.cpu(),
+          expected=base_b_cpu.grad,
+          rtol=1e-4,
+          atol=1e-4,
+      )
+
+      # Complex .conj() views (Wirtinger derivatives)
+      ca_cpu = torch.randn((3, 4), dtype=torch.complex64, requires_grad=True)
+      cb_cpu = torch.randn((4, 5), dtype=torch.complex64, requires_grad=True)
+      ca_tpu = ca_cpu.detach().to("tpu").requires_grad_(True)
+      cb_tpu = cb_cpu.detach().to("tpu").requires_grad_(True)
+
+      cout_cpu = torch.einsum("ij,jk->ik", ca_cpu.conj(), cb_cpu.conj())
+      cout_tpu = torch.einsum("ij,jk->ik", ca_tpu.conj(), cb_tpu.conj())
+      cgrad_out = torch.randn_like(cout_cpu)
+      cout_cpu.backward(cgrad_out)
+      cout_tpu.backward(cgrad_out.to("tpu"))
+      utils.assert_close(
+          actual=cout_tpu.cpu(), expected=cout_cpu, rtol=1e-4, atol=1e-4
+      )
+      utils.assert_close(
+          actual=ca_tpu.grad.cpu(), expected=ca_cpu.grad, rtol=1e-4, atol=1e-4
+      )
+      utils.assert_close(
+          actual=cb_tpu.grad.cpu(), expected=cb_cpu.grad, rtol=1e-4, atol=1e-4
+      )
+
+  def test_einsum_zero_elements(self):
+    cases = [
+        ("ij,jk->ik", [(3, 0), (0, 4)]),
+        ("ij,jk->", [(3, 0), (0, 4)]),
+        ("bij,bjk->bik", [(0, 3, 4), (0, 4, 5)]),
+        ("ij->ji", [(0, 4)]),
+        ("ij->", [(0, 4)]),
+    ]
+    for equation, shapes in cases:
+      with self.subTest(equation=equation, shapes=shapes):
+        ops_cpu = [
+            torch.randn(s, dtype=torch.float32, requires_grad=True)
+            for s in shapes
+        ]
+        ops_tpu = [t.detach().to("tpu").requires_grad_(True) for t in ops_cpu]
+        out_cpu = torch.einsum(equation, *ops_cpu)
+        out_tpu = torch.einsum(equation, *ops_tpu)
+        self.assertEqual(out_tpu.shape, out_cpu.shape)
+        utils.assert_close(actual=out_tpu.cpu(), expected=out_cpu)
+
+        grad_out = torch.ones_like(out_cpu)
+        out_cpu.backward(grad_out)
+        out_tpu.backward(grad_out.to("tpu"))
+        for t_tpu, t_cpu in zip(ops_tpu, ops_cpu):
+          self.assertEqual(t_tpu.grad.shape, t_cpu.grad.shape)
+          utils.assert_close(actual=t_tpu.grad.cpu(), expected=t_cpu.grad)
+
+  @parameterized.named_parameters(
+      ("float32", torch.float32),
+      ("bfloat16", torch.bfloat16),
+      ("float16", torch.float16),
+      ("float64", torch.float64),
+      ("int8", torch.int8),
+      ("uint8", torch.uint8),
+      ("int16", torch.int16),
+      ("int32", torch.int32),
+      ("int64", torch.int64),
+      ("complex64", torch.complex64),
+      ("complex128", torch.complex128),
+  )
+  def test_einsum_dtypes(self, dtype):
+    with self._highest_matmul_precision():
+      is_floating_or_complex = dtype.is_floating_point or dtype.is_complex
+      if is_floating_or_complex:
+        a_cpu = torch.randn((2, 3, 4), dtype=dtype, requires_grad=True)
+        b_cpu = torch.randn((2, 4, 5), dtype=dtype, requires_grad=True)
+      else:
+        a_cpu = torch.randint(1, 5, (2, 3, 4), dtype=dtype)
+        b_cpu = torch.randint(1, 5, (2, 4, 5), dtype=dtype)
+
+      a_tpu = a_cpu.detach().to("tpu").requires_grad_(is_floating_or_complex)
+      b_tpu = b_cpu.detach().to("tpu").requires_grad_(is_floating_or_complex)
+
+      out_cpu = torch.einsum("bij,bjk->bik", a_cpu, b_cpu)
+      out_tpu = torch.einsum("bij,bjk->bik", a_tpu, b_tpu)
+      rtol = 1e-2 if dtype in (torch.bfloat16, torch.float16) else 1e-4
+      atol = 1e-2 if dtype in (torch.bfloat16, torch.float16) else 1e-4
+      utils.assert_close(
+          actual=out_tpu.cpu(), expected=out_cpu, rtol=rtol, atol=atol
+      )
+
+      if is_floating_or_complex:
+        grad_out = torch.randn_like(out_cpu)
+        out_cpu.backward(grad_out)
+        out_tpu.backward(grad_out.to("tpu"))
+        utils.assert_close(
+            actual=a_tpu.grad.cpu(), expected=a_cpu.grad, rtol=rtol, atol=atol
+        )
+        utils.assert_close(
+            actual=b_tpu.grad.cpu(), expected=b_cpu.grad, rtol=rtol, atol=atol
+        )
+
+  def test_einsum_direct_dot_general_ir_and_compile(self):
+    # Verify that 6D Mamba-3 einsum lowers directly to a single
+    # stablehlo.dot_general without intermediate 3D reshapes.
+    q = torch.randn((2, 2, 4, 2, 2, 8), dtype=torch.bfloat16).to("tpu")
+    k = torch.randn((2, 2, 4, 2, 2, 8), dtype=torch.bfloat16).to("tpu")
+
+    with execution_mode.set_eager_mode(
+        execution_mode.EagerMode._INTERNAL_COMPILE_FX_GRAPH
+    ):
+      out = torch.einsum("bctrhd,bcsqhd->bhctrsq", q, k)
+
+    mlir_module = tpu_torch_compile.build_mlir([out], [q, k])
+    mlir_text = tpu_torch_compile.serialize_mlir_text(mlir_module)
+    self.assertIn("stablehlo.dot_general", mlir_text)
+    self.assertNotIn("stablehlo.reshape", mlir_text)
+
+    # Also verify torch.compile forward + backward numerical accuracy.
+    def mamba3_qk(x, y):
+      return torch.einsum("bctrhd,bcsqhd->bhctrsq", x, y)
+
+    with self._highest_matmul_precision():
+      q_cpu = torch.randn(
+          (2, 2, 3, 2, 2, 4), dtype=torch.float32, requires_grad=True
+      )
+      k_cpu = torch.randn(
+          (2, 2, 3, 2, 2, 4), dtype=torch.float32, requires_grad=True
+      )
+      q_tpu = q_cpu.detach().to("tpu").requires_grad_(True)
+      k_tpu = k_cpu.detach().to("tpu").requires_grad_(True)
+
+      out_cpu = mamba3_qk(q_cpu, k_cpu)
+      out_tpu = torch.compile(mamba3_qk, backend="tpu")(q_tpu, k_tpu)
+      grad_out = torch.randn_like(out_cpu)
+      out_cpu.backward(grad_out)
+      out_tpu.backward(grad_out.to("tpu"))
+
+      utils.assert_close(
+          actual=out_tpu.cpu(), expected=out_cpu, rtol=1e-4, atol=1e-4
+      )
+      utils.assert_close(
+          actual=q_tpu.grad.cpu(), expected=q_cpu.grad, rtol=1e-4, atol=1e-4
+      )
+      utils.assert_close(
+          actual=k_tpu.grad.cpu(), expected=k_cpu.grad, rtol=1e-4, atol=1e-4
+      )
+
 
 if __name__ == "__main__":
   absltest.main()

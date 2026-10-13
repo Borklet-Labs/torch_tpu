@@ -1374,6 +1374,43 @@ Please use clone() or contiguous() to copy the tensor before writing""",
             inp, grad_out, weight, [True, True, True]
         )
 
+  @et.why_tpu_only(
+      "Calling aten.einsum with an empty tensor list requires PrivateUse1"
+      " redispatch to reach the TPU kernel."
+  )
+  def test_einsum_no_operands_error(self):
+    dk = torch._C._parse_dispatch_key("PrivateUse1")
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""einsum(): expected at least one operand, got 0""",
+    ):
+      torch.ops.aten.einsum.default.redispatch(
+          torch._C.DispatchKeySet(dk), "ij->ij", []
+      )
+
+  @et.why_tpu_only(
+      "PyTorch CPU/GPU raises RuntimeError in bmm, whereas TorchTPU raises"
+      " NotImplementedError in einsum."
+  )
+  def test_einsum_bool_input_error(self):
+    a = torch.ones(2, 3, dtype=torch.bool, device=et.device())
+    b = torch.ones(3, 4, dtype=torch.bool, device=et.device())
+    with et.assert_raises_message(
+        NotImplementedError,
+        tpu="""einsum(): expected non-bool dtype, got bool""",
+    ):
+      torch.einsum("ij,jk->ik", a, b)
+
+  @et.why_tpu_only("Tests TPU-specific mixed-device operand validation.")
+  def test_einsum_mixed_device_error(self):
+    a = torch.ones(2, 3, dtype=torch.float32, device=et.device())
+    b = torch.ones(3, 4, dtype=torch.float32, device="cpu")
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""einsum(): expected tensor to be on tpu, got cpu""",
+    ):
+      torch.einsum("ij,jk->ik", a, b)
+
   @et.why_tpu_only("TODO: investigate why this is TPU-only.")
   def test_grid_sampler_2d_invalid_interpolation_mode(self):
     inp = torch.ones(1, 1, 2, 2, device=et.device())

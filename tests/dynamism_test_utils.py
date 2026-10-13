@@ -345,7 +345,12 @@ def verify_op_supports_dynamism(
   # _pytree.tree_flatten to recursively inspect the input_value and args,
   # ensuring that tensors inside lists, tuples, or other nested structures
   # (common in foreach ops) are properly vetted.
-  for value in _pytree.tree_flatten((input_value, args))[0]:
+  values_to_check = (
+      _pytree.tree_flatten(input_value)[0]
+      if op.name == "einsum"
+      else _pytree.tree_flatten((input_value, args))[0]
+  )
+  for value in values_to_check:
     skip_input = _should_skip_input_marking(op, value)
     if skip_input:
       return skip_input
@@ -357,7 +362,7 @@ def verify_op_supports_dynamism(
   if skip_input:
     return skip_input
   if not DynamicOpInfo.get(op).dynamic_dimension_candidates(
-      canonical_input, args
+      input_value if op.name == "einsum" else canonical_input, args
   ):
     return "No valid input dimensions to mark dynamic."
 
@@ -481,6 +486,7 @@ class DynamicOpInfo:
     adapters = [
         ForEachDynamicOpInfo,
         MatmulDynamicOpInfo,
+        EinsumDynamicOpInfo,
         SdpaDynamicOpInfo,
         LinearDynamicOpInfo,
         BinaryElementwiseDynamicOpInfo,
@@ -869,6 +875,171 @@ class SdpaDynamicOpInfo(DynamicOpInfo):
         _mark_numpy_broadcastable_arg_dynamic(
             attn_mask, like, idx, ub, mode=mode
         )
+
+
+class EinsumDynamicOpInfo(DynamicOpInfo):
+  """A wrapper around OpInfo that supports bounded dynamism for einsum."""
+
+  @staticmethod
+  def adapter_supports_op(op_info: core.OpInfo) -> bool:
+    """Method to declare ops supported by this adapter."""
+    return op_info.name == "einsum"
+
+  @staticmethod
+  def _tokenize_subscript(sub: str) -> list[str]:
+    tokens = []
+    i = 0
+    while i < len(sub):
+      if sub[i : i + 3] == "...":
+        tokens.append("...")
+        i += 3
+      elif sub[i] != " ":
+        tokens.append(sub[i])
+        i += 1
+      else:
+        i += 1
+    return tokens
+
+  @classmethod
+  def _parse_einsum_labels(
+      cls, tensors: Sequence[torch.Tensor], equation: str
+  ) -> tuple[list[list[str]], list[str]]:
+    parts = equation.split("->")
+    lhs = parts[0]
+    subs = lhs.split(",")
+    operand_tokens = [cls._tokenize_subscript(s) for s in subs]
+
+    max_ell_dims = 0
+    for tensor, tokens in zip(tensors, operand_tokens, strict=True):
+      if "..." in tokens:
+        ell_dims = tensor.ndim - (len(tokens) - 1)
+        max_ell_dims = max(max_ell_dims, ell_dims)
+
+    operand_labels: list[list[str]] = []
+    label_counts: dict[str, int] = {}
+    for tensor, tokens in zip(tensors, operand_tokens, strict=True):
+      labels: list[str] = []
+      for tok in tokens:
+        if tok == "...":
+          ell_dims = tensor.ndim - (len(tokens) - 1)
+          for k in range(max_ell_dims - ell_dims, max_ell_dims):
+            labels.append(f"...{k}")
+        else:
+          labels.append(tok)
+          label_counts[tok] = label_counts.get(tok, 0) + 1
+      operand_labels.append(labels)
+
+    ell_output_labels = [f"...{k}" for k in range(max_ell_dims)]
+    if len(parts) == 1:
+      rhs_labels = ell_output_labels + sorted(
+          lbl for lbl, cnt in label_counts.items() if cnt == 1
+      )
+    else:
+      rhs_tokens = cls._tokenize_subscript(parts[1])
+      rhs_labels = []
+      for tok in rhs_tokens:
+        if tok == "...":
+          rhs_labels.extend(ell_output_labels)
+        else:
+          rhs_labels.append(tok)
+
+    return operand_labels, rhs_labels
+
+  def dynamic_dimension_candidates(
+      self,
+      input_value: torch.Tensor | Sequence[torch.Tensor],
+      args: Sequence[Any],
+  ) -> Sequence[int]:
+    """Returns the dimensions of the first operand that can be marked dynamic."""
+    tensors: list[torch.Tensor] = (
+        [input_value]
+        if isinstance(input_value, torch.Tensor)
+        else list(input_value)
+    )
+    if (
+        not tensors
+        or not isinstance(tensors[0], torch.Tensor)
+        or not args
+        or not isinstance(args[0], str)
+    ):
+      return []
+
+    operand_labels, rhs_labels = self._parse_einsum_labels(tensors, args[0])
+    if not operand_labels or len(operand_labels[0]) != tensors[0].ndim:
+      return []
+
+    any_requires_grad = any(t.requires_grad for t in tensors)
+    if any_requires_grad:
+      # Repeated labels within an operand use diagonal_scatter into a static
+      # zeros tensor in backward, and uncontracted single-operand dimensions
+      # summed out in forward use static expand in backward.
+      if any(len(set(lbls)) != len(lbls) for lbls in operand_labels):
+        return []
+      for k, t_k in enumerate(tensors):
+        if not t_k.requires_grad:
+          continue
+        for d_k, lbl in enumerate(operand_labels[k]):
+          if t_k.shape[d_k] <= 1:
+            continue
+          in_bwd_lhs = lbl in rhs_labels or any(
+              lbl in operand_labels[j] for j in range(len(tensors)) if j != k
+          )
+          if not in_bwd_lhs:
+            return []
+
+    first_tensor = tensors[0]
+    first_labels = operand_labels[0]
+    candidates = []
+    for d, sz in enumerate(first_tensor.shape):
+      if sz <= 1:
+        continue
+      lbl = first_labels[d]
+      # Repeated labels with size > 1 use stablehlo.iota in forward.
+      if any(lbls.count(lbl) > 1 for lbls in operand_labels):
+        continue
+      candidates.append(d)
+    return candidates
+
+  def mark_dynamic(
+      self,
+      seed: int,
+      input_value: torch.Tensor | Sequence[torch.Tensor],
+      args: Sequence[Any],
+      mode: DynamismMode = DynamismMode.EAGER,
+      kwargs: Mapping[str, Any] | None = None,
+  ) -> None:
+    """Marks a chosen dimension of the first operand and matching label dims dynamic."""
+    del kwargs
+    tensors: list[torch.Tensor] = (
+        [input_value]
+        if isinstance(input_value, torch.Tensor)
+        else list(input_value)
+    )
+    candidates = self.dynamic_dimension_candidates(tensors, args)
+    random.seed(seed)
+    idx = random.choice(candidates)
+    first_tensor = tensors[0]
+    ub = first_tensor.shape[idx] + 10
+    first_tensor_str = utils.get_tensor_summary(first_tensor, data=False)
+    print(
+        f">>>> Marking dim {idx} dynamic [<={ub}] in {first_tensor_str}"
+        f" (mode={mode.value})",
+        flush=True,
+    )
+    _mark_tensor_dynamic(first_tensor, idx, 2, ub, mode=mode)
+
+    operand_labels, _ = self._parse_einsum_labels(tensors, args[0])
+    target_label = operand_labels[0][idx]
+    for t_k, lbls_k in zip(tensors[1:], operand_labels[1:], strict=True):
+      if target_label in lbls_k:
+        d_k = lbls_k.index(target_label)
+        if t_k.shape[d_k] == first_tensor.shape[idx] and t_k.shape[d_k] > 1:
+          print(
+              f">>>> Marking dependent arg dim {d_k} dynamic [<={ub}] in"
+              f" {utils.InputMetadata(t_k)} (mode={mode.value})",
+              flush=True,
+          )
+          _mark_tensor_dynamic(t_k, d_k, 2, ub, mode=mode)
 
 
 def mark_input_dynamic(

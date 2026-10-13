@@ -195,6 +195,7 @@ enum class OpName {
   kDynamicReshape,
   kDynamicSlice,
   kEfficientZeroTensor,
+  kEinsum,
   kEluBackwardGradInput,
   kEluOut,
   kEmbedding,
@@ -1230,6 +1231,8 @@ ToString(  // NOLINT(google-readability-function-size)
       return "_dynamic_slice";
     case OpName::kEfficientZeroTensor:
       return "_efficientzerotensor";
+    case OpName::kEinsum:
+      return "einsum";
     case OpName::kEluBackwardGradInput:
       return "elu_backward.grad_input";
     case OpName::kEluOut:

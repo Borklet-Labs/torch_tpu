@@ -962,6 +962,114 @@ class DynamismTest(seed_test_utils.RepeatableTest):
     self.assertEmpty(dynamism.get_dynamism_info(act[1]))
     self.assertEmpty(dynamism.get_dynamism_info(act[2]))
 
+  @parameterized.named_parameters(
+      dict(
+          testcase_name="matmul_2d",
+          equation="ij,jk->ik",
+          shapes=[(3, 4), (4, 5)],
+          dynamic_indices=[0],
+          dim=0,
+          upper_bound=8,
+      ),
+      dict(
+          testcase_name="bmm_3d",
+          equation="bij,bjk->bik",
+          shapes=[(2, 5, 4), (2, 4, 6)],
+          dynamic_indices=[0],
+          dim=1,
+          upper_bound=10,
+      ),
+      dict(
+          testcase_name="bmm_batch_dynamic",
+          equation="bij,bjk->bik",
+          shapes=[(3, 4, 5), (3, 5, 6)],
+          dynamic_indices=[0, 1],
+          dim=0,
+          upper_bound=8,
+      ),
+  )
+  def test_einsum_dynamic_input(
+      self,
+      equation: str,
+      shapes: Sequence[tuple[int, ...]],
+      dynamic_indices: Sequence[int],
+      dim: int,
+      upper_bound: int,
+  ):
+    def mark_dynamic(*tensors: torch.Tensor) -> None:
+      for idx in dynamic_indices:
+        dynamism.mark_dynamic(tensors[idx], dim, 2, upper_bound)
+
+    einsum_fn = lambda *tensors: torch.einsum(equation, *tensors)
+    args = [
+        torch.randint(-3, 4, shape, dtype=torch.float32) for shape in shapes
+    ]
+    act = self._run_bounded_dynamism_test(einsum_fn, mark_dynamic, *args)
+    act_dynamism_info = dynamism.get_dynamism_info(act)
+    self.assertLen(act_dynamism_info, 1)
+    self.assertEqual(act_dynamism_info[0].dimension, dim)
+    self.assertEqual(act_dynamism_info[0].lower_bound, 2)
+    self.assertEqual(act_dynamism_info[0].upper_bound, upper_bound)
+
+  @parameterized.named_parameters(
+      dict(
+          testcase_name="einsum_backward_2d",
+          equation="ij,jk->ik",
+          x_shape=(3, 4),
+          w_shape=(4, 5),
+          grad_out_shape=(3, 5),
+          dim=0,
+          upper_bound=8,
+      ),
+      dict(
+          testcase_name="einsum_backward_3d",
+          equation="bij,bjk->bik",
+          x_shape=(2, 5, 4),
+          w_shape=(2, 4, 6),
+          grad_out_shape=(2, 5, 6),
+          dim=1,
+          upper_bound=10,
+      ),
+  )
+  def test_einsum_backward_dynamic_input(
+      self,
+      equation: str,
+      x_shape: tuple[int, ...],
+      w_shape: tuple[int, ...],
+      grad_out_shape: tuple[int, ...],
+      dim: int,
+      upper_bound: int,
+  ):
+    def mark_dynamic(
+        x: torch.Tensor, grad_out: torch.Tensor, w: torch.Tensor
+    ) -> None:
+      del w
+      dynamism.mark_dynamic(x, dim, 2, upper_bound)
+      dynamism.mark_dynamic(grad_out, dim, 2, upper_bound)
+
+    def einsum_backward_fn(
+        x: torch.Tensor, grad_out: torch.Tensor, w: torch.Tensor
+    ):
+      x_req = x.detach().clone().requires_grad_(True)
+      w_req = w.detach().clone().requires_grad_(True)
+      out = torch.einsum(equation, x_req, w_req)
+      out.backward(grad_out)
+      return (x_req.grad, w_req.grad)
+
+    args = [
+        torch.randint(-3, 4, shape, dtype=torch.float32)
+        for shape in (x_shape, grad_out_shape, w_shape)
+    ]
+    act = self._run_bounded_dynamism_test(
+        einsum_backward_fn, mark_dynamic, *args
+    )
+    grad_x_dynamism_info = dynamism.get_dynamism_info(act[0])
+    self.assertLen(grad_x_dynamism_info, 1)
+    self.assertEqual(grad_x_dynamism_info[0].dimension, dim)
+    self.assertEqual(grad_x_dynamism_info[0].lower_bound, 2)
+    self.assertEqual(grad_x_dynamism_info[0].upper_bound, upper_bound)
+    self.assertEmpty(dynamism.get_dynamism_info(act[1]))
+
 
 if __name__ == "__main__":
   absltest.main()
