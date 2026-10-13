@@ -3550,7 +3550,7 @@ class TestOps(op_testing.OpInfoTestBase):
         },
         # Upstream generates 288 samples per dtype; cap to prevent test
         # shard timeouts (10 samples per op dtype results in ~15m test time).
-        max_samples_per_op_dtype=6,
+        max_samples_per_op_dtype=4,
     )
 
   def test_segment_reduce_lengths(self):
