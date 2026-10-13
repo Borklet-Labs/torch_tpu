@@ -107,9 +107,11 @@ func.func @main(%input: tensor<1x2x?x256xbf16, #stablehlo.bounds<?, ?, 128, ?>>,
 Below, we take the base **Muse Glimmer** model implementation and extend it for
 end-to-end autoregressive generation by adding:
 
-1.  **DynamicKVCache**: Appends new key and value states along the sequence
+1.  **`DynamicCache`**: Appends new key and value states along the sequence
     dimension (`dim=-2`) via `torch.cat`.
-2.  **Autoregressive decode loop**: Runs prefill on the prompt followed by
+2.  **`StaticCache`**: Preallocates fixed-size `[B, H_kv, max_cache_len, D]` key
+    and value buffers and updates them in-place.
+3.  **Autoregressive decode loop**: Runs prefill on the prompt followed by
     greedy token-by-token decoding, recording per-step latencies.
 
 ```python
@@ -158,7 +160,21 @@ def precompute_rope_sin_cos(
   )
   return torch.sin(pos_idx * inv_freq), torch.cos(pos_idx * inv_freq)
 
-class DynamicKVCache:
+class Cache:
+  """Base KV cache interface."""
+
+  def get_seq_length(self) -> int | torch.Tensor:
+    raise NotImplementedError()
+
+  def update(
+      self,
+      key_states: torch.Tensor,
+      value_states: torch.Tensor,
+      layer_idx: int,
+  ) -> tuple[torch.Tensor, torch.Tensor]:
+    raise NotImplementedError()
+
+class DynamicCache(Cache):
   """KV cache that grows dynamically along the sequence dimension via torch.cat."""
 
   def __init__(self):
@@ -188,6 +204,52 @@ class DynamicKVCache:
       )
     return self.keys[layer_idx], self.values[layer_idx]
 
+class StaticCache(Cache):
+  """Fixed-size preallocated KV cache mutated in-place for static compilation."""
+
+  def __init__(
+      self,
+      num_layers: int,
+      batch_size: int,
+      num_kv_heads: int,
+      max_cache_len: int,
+      head_dim: int,
+      dtype: torch.dtype,
+      device: torch.device | str,
+  ):
+    shape = (batch_size, num_kv_heads, max_cache_len, head_dim)
+    self.keys = [
+        torch.zeros(shape, dtype=dtype, device=device)
+        for _ in range(num_layers)
+    ]
+    self.values = [
+        torch.zeros(shape, dtype=dtype, device=device)
+        for _ in range(num_layers)
+    ]
+    # Stored as a 0-D tensor on device so in-place updates do not trigger
+    # torch.compile(dynamic=False) recompilations across decode steps.
+    self.cumulative_length = [
+        torch.zeros((), dtype=torch.long, device=device)
+        for _ in range(num_layers)
+    ]
+
+  def get_seq_length(self) -> torch.Tensor:
+    return self.cumulative_length[0].clone()
+
+  def update(
+      self,
+      key_states: torch.Tensor,
+      value_states: torch.Tensor,
+      layer_idx: int,
+  ) -> tuple[torch.Tensor, torch.Tensor]:
+    kv_len = key_states.shape[-2]
+    past_len = self.cumulative_length[layer_idx]
+    cache_position = torch.arange(kv_len, device=key_states.device) + past_len
+    self.keys[layer_idx].index_copy_(2, cache_position, key_states)
+    self.values[layer_idx].index_copy_(2, cache_position, value_states)
+    past_len.add_(kv_len)
+    return self.keys[layer_idx], self.values[layer_idx]
+
 @dataclasses.dataclass
 class Config:
   # General model config
@@ -211,7 +273,7 @@ class Config:
   num_decode_steps: int = 10
 
 class Attention(nn.Module):
-  """Grouped-query Attention with DynamicKVCache support."""
+  """Grouped-query Attention with KV cache support."""
 
   def __init__(self, config: Config, is_swa: bool, layer_idx: int = 0):
     super().__init__()
@@ -240,7 +302,7 @@ class Attention(nn.Module):
       self,
       h: torch.Tensor,
       rope_sin_cos: tuple[torch.Tensor, torch.Tensor],
-      past_key_values: DynamicKVCache,
+      past_key_values: Cache,
       attn_mask: torch.Tensor | None = None,
   ) -> torch.Tensor:
     local_bsz, seq_len, _ = h.shape
@@ -313,7 +375,7 @@ class DecoderBlock(nn.Module):
       self,
       h: torch.Tensor,
       rope_sin_cos: tuple[torch.Tensor, torch.Tensor],
-      past_key_values: DynamicKVCache,
+      past_key_values: Cache,
       attn_mask: torch.Tensor | None = None,
   ) -> torch.Tensor:
     h = h + self.post_attention_layernorm(
@@ -355,6 +417,9 @@ class MuseGlimmer30B(nn.Module):
 
     causal_mask = torch.ones(1, 1, max_len, max_len).tril()
     swa_mask = causal_mask.triu(-config.swa_size + 1)
+    self.causal_mask = nn.Buffer(
+        torch.where(causal_mask == 1, 0.0, float("-inf")), persistent=False
+    )
     self.swa_mask = nn.Buffer(
         torch.where(swa_mask == 1, 0.0, float("-inf")), persistent=False
     )
@@ -362,25 +427,33 @@ class MuseGlimmer30B(nn.Module):
   def forward(
       self,
       tok: torch.Tensor,
-      past_key_values: DynamicKVCache | None = None,
-  ) -> tuple[torch.Tensor, DynamicKVCache]:
+      past_key_values: Cache | None = None,
+  ) -> tuple[torch.Tensor, Cache]:
     if past_key_values is None:
-      past_key_values = DynamicKVCache()
+      past_key_values = DynamicCache()
     past_len = past_key_values.get_seq_length()
     seq_len = tok.shape[1]
-    # SDPA with is_causal=True aligns the causal mask to the top-left corner,
-    # which is only valid when the cache is empty (past_len == 0).
-    assert past_len == 0 or seq_len == 1
-    kv_len = past_len + seq_len
-    rope_sin_cos = (
-        self.rope_sin[:, :, past_len:kv_len, :],
-        self.rope_cos[:, :, past_len:kv_len, :],
-    )
-    swa_mask = self.swa_mask[:, :, past_len:kv_len, :kv_len]
+    if isinstance(past_key_values, StaticCache):
+      cache_position = torch.arange(seq_len, device=tok.device) + past_len
+      rope_sin_cos = (
+          self.rope_sin.index_select(2, cache_position),
+          self.rope_cos.index_select(2, cache_position),
+      )
+      causal_mask = self.causal_mask.index_select(2, cache_position)
+      swa_mask = self.swa_mask.index_select(2, cache_position)
+    else:
+      assert past_len == 0 or seq_len == 1
+      kv_len = past_len + seq_len
+      rope_sin_cos = (
+          self.rope_sin[:, :, past_len:kv_len, :],
+          self.rope_cos[:, :, past_len:kv_len, :],
+      )
+      causal_mask = None
+      swa_mask = self.swa_mask[:, :, past_len:kv_len, :kv_len]
 
     h = self.embed_norm(self.embed_tokens(tok))
     for layer in self.layers:
-      attn_mask = swa_mask if layer.self_attn.is_swa else None
+      attn_mask = swa_mask if layer.self_attn.is_swa else causal_mask
       h = layer(
           h,
           rope_sin_cos,
@@ -403,27 +476,33 @@ def init_nn_module(m: nn.Module) -> None:
 ## 4. Prefill and decode loop with performance comparison
 
 Next, we define `model_generate` to run the prefill pass and greedy decode loop,
-and compare the performance of the two runs below on the TPU using the
-`MuseGlimmer30B` model and `DynamicKVCache`:
+and compare the performance of three configurations on the TPU using the
+`MuseGlimmer30B` model:
 
-1.  **Static Compilation (`dynamic=False`)**: Every decode step changes the KV
+1.  **`DynamicCache` with `dynamic=False`**: Every decode step changes the KV
     cache sequence length (`kv_len`), forcing XLA to recompile the entire model
     on every generated token.
-2.  **Bounded Dynamism (`dynamic=None`)**: Only the initial prefill and warmup
-    decode steps compile. From step 4 onward, **zero recompilations** occur and
-    decode latency drops by orders of magnitude.
+2.  **`StaticCache` with `dynamic=False`**: Preallocates fixed-size KV buffers
+    (`max_cache_len`) and updates them in-place.
+3.  **`DynamicCache` with `dynamic=None` (Bounded Dynamism)**: Uses the simple
+    `torch.cat`-based `DynamicCache` without manual buffer preallocation. Only
+    the initial prefill and warmup decode steps compile; from step 4 onward,
+    **zero recompilations** occur and decode latency matches static compilation.
 
 ```python
 def model_generate(
     compiled_model,
     initial_inputs: torch.Tensor,
     num_decode_steps: int,
+    past_key_values: Cache | None = None,
     prefix: str = "",
 ) -> list[int]:
   """Runs prefill and greedy decode loop, returning generated token IDs."""
   with torch.inference_mode():
     prefill_start = time.perf_counter()
-    logits, past_key_values = compiled_model(initial_inputs)
+    logits, past_key_values = compiled_model(
+        initial_inputs, past_key_values=past_key_values
+    )
     torch.accelerator.synchronize()
     prefill_time_ms = (time.perf_counter() - prefill_start) * 1000
     print(f"{prefix}Prefill done in {prefill_time_ms:.2f} ms", flush=True)
@@ -471,7 +550,10 @@ torch.accelerator.synchronize()
 ```
 
 ```python
-print("--- 1. Running with dynamic=False (recompiles every decode step) ---")
+print(
+    "--- 1. Running DynamicCache with dynamic=False (recompiles every decode"
+    " step) ---"
+)
 torch._dynamo.reset()
 autograd_cache.AOTAutogradCache.clear()
 # Allow enough recompilations for the static (dynamic=False) baseline to finish all decode steps
@@ -481,14 +563,39 @@ tokens_no_bd = model_generate(
     model_no_bd,
     inputs,
     config.num_decode_steps,
-    prefix="[dynamic=False] ",
+    prefix="[DynamicCache, dynamic=False] ",
 )
-print(f"[dynamic=False] Generated token IDs: {tokens_no_bd}")
+print(f"[DynamicCache, dynamic=False] Generated token IDs: {tokens_no_bd}")
 del model_no_bd
 ```
 
 ```python
-print("--- 2. Running with dynamic=None (BD) ---")
+print("--- 2. Running StaticCache with dynamic=False ---")
+torch._dynamo.reset()
+autograd_cache.AOTAutogradCache.clear()
+static_cache = StaticCache(
+    num_layers=config.num_layers,
+    batch_size=inputs.shape[0],
+    num_kv_heads=config.num_kv_heads,
+    max_cache_len=config.prefill_seq_len + config.num_decode_steps,
+    head_dim=config.dhead,
+    dtype=torch.bfloat16,
+    device=inputs.device,
+)
+model_static = torch.compile(base_model, backend="tpu", dynamic=False)
+tokens_static = model_generate(
+    model_static,
+    inputs,
+    config.num_decode_steps,
+    past_key_values=static_cache,
+    prefix="[StaticCache, dynamic=False] ",
+)
+print(f"[StaticCache, dynamic=False] Generated token IDs: {tokens_static}")
+del model_static, static_cache
+```
+
+```python
+print("--- 3. Running DynamicCache with dynamic=None (BD) ---")
 torch._dynamo.reset()
 autograd_cache.AOTAutogradCache.clear()
 model_bd = torch.compile(base_model, backend="tpu", dynamic=None)
@@ -496,38 +603,85 @@ tokens_bd = model_generate(
     model_bd,
     inputs,
     config.num_decode_steps,
-    prefix="[dynamic=None] ",
+    prefix="[DynamicCache, dynamic=None] ",
 )
-print(f"[dynamic=None] Generated token IDs: {tokens_bd}")
+print(f"[DynamicCache, dynamic=None] Generated token IDs: {tokens_bd}")
 del model_bd
 ```
 
 ### Benchmark results
 
 Running the benchmark above with the full 52-layer `MuseGlimmer30B` model
-(`num_layers=52`) on a single TPU v7x chip produces the following latency
-comparison:
+(`num_layers=52`, `batch_size=1`, `prefill_seq_len=128`, `num_decode_steps=10`)
+on a single TPU v7x chip produces the following latency comparison:
 
-| Metric                           | `dynamic=False` | `dynamic=None` (BD) |
-| -------------------------------- | --------------- | ------------------- |
-| **Prefill time (ms)**            | 21620.00        | 21207.66            |
-| **Decode step 1 (ms)**           | 21851.85        | 21505.71            |
-| **Decode step 2 (ms)**           | 21598.38        | 29786.60            |
-| **Decode step 3 (ms)**           | 21786.57        | 5832.60             |
-| **Decode step 4 (ms)**           | 21837.68        | 32.41               |
-| **Decode step 5 (ms)**           | 21831.57        | 31.63               |
-| **Decode step 6 (ms)**           | 21914.96        | 30.68               |
-| **Decode step 7 (ms)**           | 21979.15        | 30.73               |
-| **Decode step 8 (ms)**           | 22044.13        | 30.77               |
-| **Decode step 9 (ms)**           | 22206.13        | 30.53               |
-| **Decode step 10 (ms)**          | 21985.66        | 30.69               |
-| **Avg decode time / token (ms)** | **21903.61**    | **4334.24**         |
-| **Avg decode time / token (no    | **21971.33**    | **31.06**           |
-: warmup) (ms)**                   :                 :                     :
+| Metric           | `DynamicCache`    | `StaticCache`     | `DynamicCache`   |
+:                  : (`dynamic=False`) : (`dynamic=False`) : (`dynamic=None`, :
+:                  :                   :                   : BD)              :
+| ---------------- | ----------------- | ----------------- | ---------------- |
+| **Prefill time   | 21620.00          | 21969.08          | 19632.58         |
+: (ms)**           :                   :                   :                  :
+| **Decode step 1  | 21851.85          | 20881.95          | 20391.57         |
+: (ms)**           :                   :                   :                  :
+| **Decode step 2  | 21598.38          | 24.43             | 21588.71         |
+: (ms)**           :                   :                   :                  :
+| **Decode step 3  | 21786.57          | 23.93             | 5312.25          |
+: (ms)**           :                   :                   :                  :
+| **Decode step 4  | 21837.68          | 23.52             | 31.67            |
+: (ms)**           :                   :                   :                  :
+| **Decode step 5  | 21831.57          | 23.49             | 30.79            |
+: (ms)**           :                   :                   :                  :
+| **Decode step 6  | 21914.96          | 23.51             | 30.13            |
+: (ms)**           :                   :                   :                  :
+| **Decode step 7  | 21979.15          | 23.51             | 29.90            |
+: (ms)**           :                   :                   :                  :
+| **Decode step 8  | 22044.13          | 23.44             | 29.89            |
+: (ms)**           :                   :                   :                  :
+| **Decode step 9  | 22206.13          | 23.50             | 29.95            |
+: (ms)**           :                   :                   :                  :
+| **Decode step 10 | 21985.66          | 23.48             | 29.81            |
+: (ms)**           :                   :                   :                  :
+| **Avg decode     | **21903.61**      | **2109.48**       | **4750.47**      |
+: time / token     :                   :                   :                  :
+: (ms)**           :                   :                   :                  :
+| **Avg decode     | **21971.33**      | **23.49**         | **30.31**        |
+: time / token (no :                   :                   :                  :
+: warmup) (ms)**   :                   :                   :                  :
 
-*   **With `dynamic=False`:** Every decode step changes `kv_len` and triggers a
-    full XLA recompilation (~21.9 seconds per token).
-*   **With `dynamic=None` (Bounded Dynamism):** After the initial warmup
-    compilations on steps 1–3, **Decode steps 4–10 execute with zero
-    recompilations at ~31.06 ms per token** (~700x faster per step than
-    recompiling).
+*   **`DynamicCache` with `dynamic=False`:** Every decode step changes `kv_len`
+    and triggers a full XLA recompilation (~21.9 seconds per token).
+*   **`StaticCache` with `dynamic=False`:** Avoids recompilations after decode
+    step 1 (~23.49 ms per token) by preallocating fixed `max_cache_len` buffers
+    and mutating them in-place.
+*   **`DynamicCache` with `dynamic=None` (Bounded Dynamism):** After the initial
+    warmup compilations on steps 1–3, **Decode steps 4–10 execute with zero
+    recompilations at ~30.31 ms per token** (~700x faster than recompiling),
+    approaching `StaticCache` performance.
+
+## 5. Current limitations
+
+Bounded dynamism in TorchTPU is actively evolving and is currently optimized
+around the **autoregressive KV cache** use case. Keep the following limitations
+in mind when applying it to your models:
+
+*   **Bucket limit and unbounded dynamism:** At most **8 buckets**
+    (`num_dynamic_buckets <= 8`) are compiled per trace. Unbounded dynamism is
+    not supported yet—if a dynamic dimension grows past the highest compiled
+    bucket's upper bound, a recompilation is triggered.
+*   **Compute and HBM overhead up to the bucket upper bound:** Because execution
+    runs on buffers padded to the bucket's static upper bound `U`, HBM footprint
+    and FLOPs scale with `U` rather than the runtime logical size `s0`. Setting
+    a very large `bucket_size` or `mark_dynamic(..., max=U)` when `s0 << U` pays
+    the compute and memory cost of `U`.
+*   **XLA layout changes:** Even when a tensor's shape falls within an
+    already-compiled bucket, a change in the underlying XLA physical layout of
+    an input buffer (for example, minor-to-major dimension order changing from
+    `{3,2,1,0}` to `{3,1,2,0}`) will trigger a bucket recompilation.
+*   **Operator coverage:** Not all PyTorch operators support bounded dynamic
+    shapes yet.
+*   **Views as model inputs:** Support for passing tensor views directly as
+    inputs to the compiled model is limited.
+*   **Data-dependent dynamism:** Operations whose output shapes depend on
+    runtime tensor values (such as `torch.nonzero`) are not supported.
+*   **Custom kernels:** Bounded dynamic shapes are not supported with custom TPU
+    kernels (such as Pallas kernels registered via `torch.tpu.pallas.jax_op`).
