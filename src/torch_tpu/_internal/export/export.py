@@ -462,7 +462,10 @@ def fx_to_mlir(
     An `ExportedMlir` object containing the MLIR representation of the graph and
     FX output reconstruction information.
   """
-  with xprof_adapter.TraceMe("export.fx_to_mlir"):
+  with (
+      xprof_adapter.TraceMe("export.fx_to_mlir"),
+      execution_mode.set_eager_mode(EagerMode._INTERNAL_COMPILE_FX_GRAPH),
+  ):
     # Filter out non-tensor arguments.
     argument_tensors = [a for a in args if isinstance(a, torch.Tensor)]
     if argument_layouts is not None:
@@ -499,104 +502,100 @@ def fx_to_mlir(
           for gen in argument_generators
       }
 
-      # Set export-mode override for the default generator.
-      tpu_torch_compile.set_export_mode_default_device_generator(
-          export_mode_generators[default_generator]
-      )
-
-      # Include the state tensors from the export-mode generators in the
-      # arguments for graph traversal, as these represent mutable RNG states
-      # within the graph.
-      for gen in argument_generators:
-        argument_tensors.append(
-            tpu_torch_compile.get_device_state_tensor(
-                export_mode_generators[gen]
-            )
-        )
-        if internal_layouts:
-          internal_layouts.append([])
-
       try:
-        with execution_mode.set_eager_mode(
-            EagerMode._INTERNAL_COMPILE_FX_GRAPH
-        ):
-          # We clone the args so that inplace updates do not overwrite the
-          # placeholder args. These copies will be removed in the compiled code so
-          # there is no performance impact.
-          # Remove once b/491716758 is implemented.
-          mapped_args = [
-              export_mode_generators[x]
-              if isinstance(x, torch.Generator)
-              else (x.clone() if isinstance(x, torch.Tensor) else x)
-              for x in args
-          ]
-          with xprof_adapter.TraceMe("EagerLikeFxInterpreter.run"):
-            fx_outputs = EagerLikeFxInterpreter(module).run(*mapped_args)
+        # Set export-mode override for the default generator.
+        tpu_torch_compile.set_export_mode_default_device_generator(
+            export_mode_generators[default_generator], default_device_index
+        )
 
-          (
-              result_tensors,
-              reconstruct_fx_outputs_fn,
-              deduped_dynamic_outputs,
-              unique_output_indices,
-          ) = _process_fx_outputs(
-              module, fx_outputs, dynamic_outputs=dynamic_outputs
-          )
-
-          # Plumb the final state tensor as the last output of the graph so
-          # that the updated RNG state can be returned from the executable and
-          # persisted.
-          result_tensors.extend(
+        # Include the state tensors from the export-mode generators in the
+        # arguments for graph traversal, as these represent mutable RNG states
+        # within the graph.
+        for gen in argument_generators:
+          argument_tensors.append(
               tpu_torch_compile.get_device_state_tensor(
                   export_mode_generators[gen]
               )
-              for gen in argument_generators
           )
+          if internal_layouts:
+            internal_layouts.append([])
 
-          # Check if the module updates the default generator state.
-          if has_implicit_default_generator:
-            begin_default_state_tensor = argument_tensors[-1]
-            end_default_state_tensor = result_tensors[-1]
-            updates_default_generator_state = (
-                begin_default_state_tensor.data_ptr()
-                != end_default_state_tensor.data_ptr()
+        # We clone the args so that inplace updates do not overwrite the
+        # placeholder args. These copies will be removed in the compiled code so
+        # there is no performance impact.
+        # Remove once b/491716758 is implemented.
+        mapped_args = [
+            export_mode_generators[x]
+            if isinstance(x, torch.Generator)
+            else (x.clone() if isinstance(x, torch.Tensor) else x)
+            for x in args
+        ]
+        with xprof_adapter.TraceMe("EagerLikeFxInterpreter.run"):
+          fx_outputs = EagerLikeFxInterpreter(module).run(*mapped_args)
+
+        (
+            result_tensors,
+            reconstruct_fx_outputs_fn,
+            deduped_dynamic_outputs,
+            unique_output_indices,
+        ) = _process_fx_outputs(
+            module, fx_outputs, dynamic_outputs=dynamic_outputs
+        )
+
+        # Plumb the final state tensor as the last output of the graph so
+        # that the updated RNG state can be returned from the executable and
+        # persisted.
+        result_tensors.extend(
+            tpu_torch_compile.get_device_state_tensor(
+                export_mode_generators[gen]
             )
-            if not updates_default_generator_state:
-              if len(result_tensors) > 1:
-                # Remove the default generator state tensor from the arguments
-                # and outputs since it is not used.
-                argument_tensors.pop()
-                result_tensors.pop()
-                if internal_layouts:
-                  internal_layouts.pop()
-              else:
-                # No RNG update and nothing to compute: this graph is a no-op.
-                return ExportedMlir(
-                    module=None,
-                    executable=None,
-                    mlir_result_tensors=[],
-                    reconstruct_fx_outputs_fn=reconstruct_fx_outputs_fn,
-                    updates_default_generator_state=False,
-                    is_noop=True,
-                    dynamic_outputs=[],
-                    unique_output_indices=[],
-                )
-          else:
-            updates_default_generator_state = False
+            for gen in argument_generators
+        )
+
+        # Check if the module updates the default generator state.
+        if has_implicit_default_generator:
+          begin_default_state_tensor = argument_tensors[-1]
+          end_default_state_tensor = result_tensors[-1]
+          updates_default_generator_state = (
+              begin_default_state_tensor.data_ptr()
+              != end_default_state_tensor.data_ptr()
+          )
+          if not updates_default_generator_state:
+            if len(result_tensors) > 1:
+              # Remove the default generator state tensor from the arguments
+              # and outputs since it is not used.
+              argument_tensors.pop()
+              result_tensors.pop()
+              if internal_layouts:
+                internal_layouts.pop()
+            else:
+              # No RNG update and nothing to compute: this graph is a no-op.
+              return ExportedMlir(
+                  module=None,
+                  executable=None,
+                  mlir_result_tensors=[],
+                  reconstruct_fx_outputs_fn=reconstruct_fx_outputs_fn,
+                  updates_default_generator_state=False,
+                  is_noop=True,
+                  dynamic_outputs=[],
+                  unique_output_indices=[],
+              )
+        else:
+          updates_default_generator_state = False
       finally:
         tpu_torch_compile.clear_export_mode_default_device_generators()
 
-    with execution_mode.set_eager_mode(EagerMode._INTERNAL_COMPILE_FX_GRAPH):
-      compile_result = tpu_torch_compile.traverse_and_compile(
-          result_tensors=result_tensors,
-          argument_tensors=argument_tensors,
-          build_mlir_module=build_mlir_module,
-          use_stablehlo_bounds=use_stablehlo_bounds,
-          argument_layouts=internal_layouts,
-          donated_inputs=list(donated_inputs)
-          if donated_inputs is not None
-          else [],
-          module_name=module_name,
-      )
+    compile_result = tpu_torch_compile.traverse_and_compile(
+        result_tensors=result_tensors,
+        argument_tensors=argument_tensors,
+        build_mlir_module=build_mlir_module,
+        use_stablehlo_bounds=use_stablehlo_bounds,
+        argument_layouts=internal_layouts,
+        donated_inputs=list(donated_inputs)
+        if donated_inputs is not None
+        else [],
+        module_name=module_name,
+    )
 
     return ExportedMlir(
         module=compile_result.module,

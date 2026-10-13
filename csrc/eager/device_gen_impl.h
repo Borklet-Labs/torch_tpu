@@ -262,6 +262,11 @@ class ExportModeDeviceGeneratorImpl : public DeviceGeneratorImplBase {
   explicit ExportModeDeviceGeneratorImpl(
       const at::Generator& default_generator);
 
+  // Constructs an export mode generator directly with a placeholder state
+  // tensor without accessing eager default generator state.
+  ExportModeDeviceGeneratorImpl(c10::DeviceIndex device_index,
+                                at::Tensor device_state_tensor);
+
   at::Tensor DeviceStateTensor() const override;
 
   // Export mode does not support eager read accessors.
@@ -296,6 +301,10 @@ class ExportModeDeviceGeneratorImpl : public DeviceGeneratorImplBase {
   c10::intrusive_ptr<ExportModeDeviceGeneratorState> export_state_;
 };
 
+// Constructs a pure export-mode placeholder generator for the specified device
+// index without initializing eager default generators.
+at::Generator MakeExportModePlaceholderGenerator(c10::DeviceIndex device_index);
+
 // Convenience functions.
 
 // Returns the default generator for the given device index. If idx is -1,
@@ -304,12 +313,6 @@ class ExportModeDeviceGeneratorImpl : public DeviceGeneratorImplBase {
 // default generator or throws if not set, otherwise returns the eager default
 // generator.
 at::Generator& GetDefaultDeviceGenerator(c10::DeviceIndex idx = -1);
-
-// Returns the eager default generator for the given device index. If idx is -1,
-// returns the eager default generator for the current device. Unlike
-// GetDefaultDeviceGenerator(), this function always returns the standard eager
-// generator even when EagerMode::kInternalCompileFxGraph is active.
-at::Generator& GetEagerDefaultDeviceGenerator(c10::DeviceIndex idx = -1);
 
 // Sets the export-mode default generator for override. If idx is -1, sets the
 // export-mode default generator for the current device.

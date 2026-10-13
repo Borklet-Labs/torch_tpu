@@ -461,12 +461,22 @@ TT_PYBIND11_MODULE(_device_ops_backend, m) {
       "Get the default generator for the given device index.");
 
   m.def(
-      "get_eager_default_generator",
+      "make_export_mode_placeholder_generator",
       [](int device_index) -> at::Generator {
-        return GetEagerDefaultDeviceGenerator(device_index);
+        return MakeExportModePlaceholderGenerator(device_index);
       },
       py::arg("device_index"),
-      "Get the eager default generator for the given device index.");
+      "Construct an export mode placeholder generator for the given device"
+      " index.");
+
+  m.def(
+      "set_export_mode_default_device_generator",
+      [](at::Generator gen, int device_index) {
+        SetExportModeDefaultDeviceGenerator(std::move(gen), device_index);
+      },
+      py::arg("generator"), py::arg("device_index"),
+      "Sets the export-mode default generator override for the given device"
+      " index.");
 
   PyBindClass<CacheEntryStats>(m, "CacheEntryStats")
       .def_property_readonly(

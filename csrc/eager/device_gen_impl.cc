@@ -18,6 +18,7 @@
 
 #include <cstdint>
 #include <deque>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -649,6 +650,14 @@ ExportModeDeviceGeneratorImpl::ExportModeDeviceGeneratorImpl(
           ValidateAndGetEagerBase(default_generator)) {}
 
 ExportModeDeviceGeneratorImpl::ExportModeDeviceGeneratorImpl(
+    const c10::DeviceIndex device_index, at::Tensor device_state_tensor)
+    : DeviceGeneratorImplBase(device_index) {
+  TT_THROW_IF_ERROR(ValidateDeviceStateTensor(device_state_tensor));
+  export_state_ = c10::make_intrusive<ExportModeDeviceGeneratorState>(
+      std::move(device_state_tensor));
+}
+
+ExportModeDeviceGeneratorImpl::ExportModeDeviceGeneratorImpl(
     const c10::DeviceIndex device_index,
     c10::intrusive_ptr<ExportModeDeviceGeneratorState> state)
     : DeviceGeneratorImplBase(device_index), export_state_(std::move(state)) {
@@ -780,8 +789,20 @@ at::Generator& GetDefaultDeviceGenerator(c10::DeviceIndex idx) {
   return DeviceGenerators::GetDefaultInstance().GetDefaultGenerator(idx);
 }
 
-at::Generator& GetEagerDefaultDeviceGenerator(c10::DeviceIndex idx) {
-  return DeviceGenerators::GetDefaultInstance().GetEagerDefaultGenerator(idx);
+at::Generator MakeExportModePlaceholderGenerator(
+    c10::DeviceIndex device_index) {
+  device_index = NormalizeDeviceIndex(device_index);
+  c10::DeviceGuard guard(
+      c10::Device(c10::DeviceType::PrivateUse1, device_index));
+  TT_ASSIGN_OR_THROW(
+      DeviceBufferRef placeholder,
+      DeviceBufferList::CreatePlaceholder(
+          Dimensions({2}), mlir::ElementType::UI64, /*is_pinned_host=*/false),
+      _.SetPrepend() << "failed to create export generator placeholder: ");
+  at::Tensor placeholder_tensor =
+      MakeTensor(std::move(placeholder), device_index);
+  return at::make_generator<ExportModeDeviceGeneratorImpl>(
+      device_index, std::move(placeholder_tensor));
 }
 
 }  // namespace torch_tpu

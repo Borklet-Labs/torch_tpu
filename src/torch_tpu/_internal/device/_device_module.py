@@ -110,7 +110,13 @@ class _DefaultGeneratorsProperty:
         try:
           generators.append(_device_ops_backend.get_default_generator(i))
         except RuntimeError:
-          generators.append(_device_ops_backend.get_eager_default_generator(i))
+          export_gen = (
+              _device_ops_backend.make_export_mode_placeholder_generator(i)
+          )
+          _device_ops_backend.set_export_mode_default_device_generator(
+              export_gen, i
+          )
+          generators.append(export_gen)
       return tuple(generators)
 
     if self._cached_default_generators is None:
