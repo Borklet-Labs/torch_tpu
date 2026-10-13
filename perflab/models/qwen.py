@@ -20,7 +20,6 @@ from perflab import context as context_lib
 from perflab import model_helpers
 from perflab import registry as registry_lib
 from perflab import step_lib
-from perflab import target as target_lib
 from perflab import torch_device_ops
 
 
@@ -295,12 +294,18 @@ def qwen3_coder_30b_moe_forward(ctx: context_lib.Context):
 @registry_lib.register_benchmark(stepper=step_lib.StepperType.FORWARD)
 def qwen3_5_397b_4_layers_forward(ctx: context_lib.Context):
   """Benchmark factory for Qwen3.5-397B-A17B (4 Layers) MoE forward."""
-  if ctx.run_scope == context_lib.RunScope.PRESUBMIT:
-    raise target_lib.UnsupportedBenchmark(
-        "Qwen3.5-397B uses too much memory to run on TPUs with smaller memory."
-    )
-  batch_size = 1
-  seq_len = 2048
+  if model_helpers.presubmit_smoke_or_raise(
+      ctx,
+      unsupported_reason=(
+          "Qwen3.5-397B uses too much memory to run on TPUs with smaller"
+          " memory."
+      ),
+  ):
+    batch_size = model_helpers.SMOKE_BATCH_SIZE
+    seq_len = model_helpers.SMOKE_SEQ_LEN
+  else:
+    batch_size = 1
+    seq_len = 2048
 
   model, inputs = _load_hf_qwen(
       ctx,

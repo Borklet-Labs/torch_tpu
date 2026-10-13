@@ -70,6 +70,20 @@ torch_tpu_py_test(
 )
 
 torch_tpu_py_test(
+    name = "model_helpers_test",
+    srcs = ["model_helpers_test.py"],
+    deps = [
+        "//perflab:context",
+        "//perflab:model_helpers",
+        "//perflab:target",
+        "//shims/absl_py/testing:absltest",
+        "//shims/absl_py/testing:flagsaver",
+        "//src/torch_tpu",
+        "//tests:seed_test_utils",
+    ],
+)
+
+torch_tpu_py_test(
     name = "mode_test",
     srcs = ["mode_test.py"],
     deps = [
@@ -80,6 +94,22 @@ torch_tpu_py_test(
         "//shims/torch:pytorch",
         "//src/torch_tpu",
         "//src/torch_tpu/_internal/execution_mode",
+        "//tests:seed_test_utils",
+    ],
+)
+
+torch_tpu_py_test(
+    name = "models_presubmit_scope_test",
+    srcs = ["models_presubmit_scope_test.py"],
+    deps = [
+        "//perflab:context",
+        "//perflab:target",
+        "//perflab/models",
+        "//shims/absl_py/testing:absltest",
+        "//shims/absl_py/testing:flagsaver",
+        "//shims/absl_py/testing:parameterized",
+        "//shims/torch:pytorch",
+        "//src/torch_tpu",
         "//tests:seed_test_utils",
     ],
 )

@@ -20,7 +20,6 @@ from perflab import context as context_lib
 from perflab import model_helpers
 from perflab import registry as registry_lib
 from perflab import step_lib
-from perflab import target as target_lib
 from perflab import torch_device_ops
 
 
@@ -193,13 +192,18 @@ def gemma_4_31b_6_layers_forward(ctx: context_lib.Context):
 @registry_lib.register_benchmark(stepper=step_lib.StepperType.TRAINING)
 def gemma_4_31b_6_layers_training(ctx: context_lib.Context):
   """Benchmark factory for Gemma-4 31B 6 layers training."""
-  if ctx.run_scope == context_lib.RunScope.PRESUBMIT:
-    raise target_lib.UnsupportedBenchmark(
-        "Gemma 4 31B training uses too much memory to run on TPUs with smaller"
-        " memory."
-    )
-  batch_size = 2
-  seq_len = 1024
+  if model_helpers.presubmit_smoke_or_raise(
+      ctx,
+      unsupported_reason=(
+          "Gemma 4 31B training uses too much memory to run on TPUs with"
+          " smaller memory."
+      ),
+  ):
+    batch_size = model_helpers.SMOKE_BATCH_SIZE
+    seq_len = model_helpers.SMOKE_SEQ_LEN
+  else:
+    batch_size = 2
+    seq_len = 1024
   model, inputs = _load_hf_gemma(
       ctx,
       "google/gemma-4-31b",
@@ -246,19 +250,29 @@ def gemma_4_e2b_forward(ctx: context_lib.Context):
 @registry_lib.register_benchmark(stepper=step_lib.StepperType.TRAINING)
 def gemma_4_e2b_training(ctx: context_lib.Context):
   """Benchmark factory for Gemma-4 E2B training."""
-  if ctx.run_scope == context_lib.RunScope.PRESUBMIT:
-    raise target_lib.UnsupportedBenchmark(
-        "Gemma 4 E2B training uses too much memory to run on TPUs with smaller"
-        " memory."
-    )
-  batch_size = 2
-  seq_len = 1024
+  if model_helpers.presubmit_smoke_or_raise(
+      ctx,
+      unsupported_reason=(
+          "Gemma 4 E2B training uses too much memory to run on TPUs with"
+          " smaller memory."
+      ),
+  ):
+    batch_size = model_helpers.SMOKE_BATCH_SIZE
+    seq_len = model_helpers.SMOKE_SEQ_LEN
+    # Layers 0-4 cover both the sliding-window and full-attention layer types;
+    # the KV-shared layers are not built.
+    num_layers = 5
+  else:
+    batch_size = 2
+    seq_len = 1024
+    num_layers = None
   model, inputs = _load_hf_gemma(
       ctx,
       "google/gemma-4-e2b",
       is_training=True,
       seq_len=seq_len,
       batch_size=batch_size,
+      num_layers=num_layers,
   )
   opt = torch.optim.AdamW(
       model.parameters(),
@@ -295,13 +309,18 @@ def gemma_4_26b_a4b_6_layers_forward(ctx: context_lib.Context):
 @registry_lib.register_benchmark(stepper=step_lib.StepperType.TRAINING)
 def gemma_4_26b_a4b_6_layers_training(ctx: context_lib.Context):
   """Benchmark factory for Gemma-4 26B-A4B Ragged MoE training."""
-  if ctx.run_scope == context_lib.RunScope.PRESUBMIT:
-    raise target_lib.UnsupportedBenchmark(
-        "Gemma 4 26B-A4B training uses too much memory to run on TPUs with"
-        " smaller memory."
-    )
-  batch_size = 2
-  seq_len = 2048
+  if model_helpers.presubmit_smoke_or_raise(
+      ctx,
+      unsupported_reason=(
+          "Gemma 4 26B-A4B training uses too much memory to run on TPUs with"
+          " smaller memory."
+      ),
+  ):
+    batch_size = model_helpers.SMOKE_BATCH_SIZE
+    seq_len = model_helpers.SMOKE_SEQ_LEN
+  else:
+    batch_size = 2
+    seq_len = 2048
   model, inputs = _load_hf_gemma(
       ctx,
       "google/gemma-4-26B-A4B",

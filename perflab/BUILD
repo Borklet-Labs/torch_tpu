@@ -267,7 +267,9 @@ torch_tpu_py_library(
     name = "model_helpers",
     srcs = ["model_helpers.py"],
     deps = [
+        ":context",
         ":mode",
+        ":target",
         "//shims/torch:pytorch",
         "//tests:module_registry",
     ],

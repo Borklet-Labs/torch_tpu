@@ -20,10 +20,44 @@ import typing
 from typing import Any
 
 import torch
+from perflab import context as context_lib
 from perflab import mode as mode_lib
+from perflab import target as target_lib
 
 if typing.TYPE_CHECKING:
   from tests import module_registry
+
+# Batch size and sequence length of the models that run in presubmit scope only
+# in the FakeTensorMode CPU smoke.
+SMOKE_BATCH_SIZE = 1
+SMOKE_SEQ_LEN = 128
+
+
+def presubmit_smoke_or_raise(
+    ctx: context_lib.Context, *, unsupported_reason: str
+) -> bool:
+  """Raises for a too-large model in presubmit scope outside the CPU smoke.
+
+  Otherwise returns whether the model runs in the CPU smoke. A model too large
+  for presubmit runs in presubmit scope only in the FakeTensorMode CPU smoke,
+  which allocates no storage, and then at reduced sizes (e.g.
+  `SMOKE_BATCH_SIZE` and `SMOKE_SEQ_LEN`).
+
+  Args:
+    ctx: The benchmark context.
+    unsupported_reason: Why the model cannot run in presubmit scope otherwise.
+
+  Returns:
+    True in presubmit scope under the smoke, False outside presubmit scope.
+
+  Raises:
+    target_lib.UnsupportedBenchmark: In presubmit scope outside the smoke.
+  """
+  if ctx.run_scope is not context_lib.RunScope.PRESUBMIT:
+    return False
+  if not mode_lib.fake_tensor_smoke_enabled():
+    raise target_lib.UnsupportedBenchmark(unsupported_reason)
+  return True
 
 
 def init_small_random_weights(module: torch.nn.Module) -> None:
