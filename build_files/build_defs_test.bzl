@@ -181,6 +181,11 @@ def _test_py_test_multi_tpu_targets(name):
         nobuild = "Analysis test subject",
         nolocal = "Analysis test subject",
     )
+    attr = {"aspects": [tags_aspect]}
+    if is_oss():
+        # Pin `//:_rbe_region` to its default, which _V5_RBE_EXEC_PROPERTIES
+        # assumes, so the expectations hold whatever region CI passes.
+        attr["@config_settings"] = {_rbe_region_flag(): _DEFAULT_RBE_REGION}
     analysis_test(
         name = name,
         impl = _test_py_test_multi_tpu_targets_impl,
@@ -190,9 +195,9 @@ def _test_py_test_multi_tpu_targets(name):
             "target_v7": name + "_subject_" + get_tpu_version_for_testing("requires-tpu-v7x"),
         },
         attrs = {
-            "target_v5": {"aspects": [tags_aspect]},
-            "target_v6": {"aspects": [tags_aspect]},
-            "target_v7": {"aspects": [tags_aspect]},
+            "target_v5": dict(attr),
+            "target_v6": dict(attr),
+            "target_v7": dict(attr),
         },
     )
 
@@ -931,6 +936,12 @@ def _test_shard_count_clamping(env):
 
 _V5_RBE_TAGS = ["requires-tpu"]
 
+# The default value of `//:_rbe_region` (OSS only).
+_DEFAULT_RBE_REGION = "us-west1"
+
+def _rbe_region_flag():
+    return str(Label("//:_rbe_region"))
+
 # RBE region -> v5e worker pool on that region's RBE instance.
 _V5_RBE_POOLS = {
     "asia-southeast1": "ci_tpu_v5_asia_se1_rbe",
@@ -946,7 +957,10 @@ def _v5_rbe_exec_properties(pool):
         "test.dockerRunAsRoot": "true",
     }
 
-_V5_RBE_EXEC_PROPERTIES = _v5_rbe_exec_properties(_V5_RBE_POOLS["us-west1"])
+# What a single-chip v5 test gets in the default region. Analysis tests that
+# expect it must pin `//:_rbe_region` to _DEFAULT_RBE_REGION, since CI passes
+# --//:_rbe_region=<region> for the region it runs in.
+_V5_RBE_EXEC_PROPERTIES = _v5_rbe_exec_properties(_V5_RBE_POOLS[_DEFAULT_RBE_REGION])
 
 _V5_RBE_ENV = {
     "TPU_ACCELERATOR_TYPE": "v5e-1",
@@ -1053,10 +1067,10 @@ def _test_rbe_macro_exec_properties_impl(env, targets):
     if not is_oss():
         return
 
-    # Config prefix -> pool a single-chip v5 test should land in. `rbe_` leaves
-    # `//:_rbe_region` unset, which has to behave like us-west1.
+    # Config prefix -> pool a single-chip v5 test on RBE should land in.
+    # us-west1 is the default region, so it also covers the `//conditions:default`
+    # branch of the macros' region select.
     for prefix, pool in [
-        ("rbe_", _V5_RBE_POOLS["us-west1"]),
         ("west1_", _V5_RBE_POOLS["us-west1"]),
         ("central1_", _V5_RBE_POOLS["us-central1"]),
         ("east1_", _V5_RBE_POOLS["us-east1"]),
@@ -1158,14 +1172,15 @@ def _test_rbe_macro_exec_properties(name):
     attrs = {k: {"aspects": [tags_aspect]} for k in subject_names}
     if is_oss():
         rbe_flag = str(Label("//:_rbe_test_execution"))
-        region_flag = str(Label("//:_rbe_region"))
+        region_flag = _rbe_region_flag()
         for k in subject_names:
+            # Every subject sets `//:_rbe_region` so the expectations hold
+            # whatever region CI passes on the command line.
             attrs[k] = {
                 "aspects": [tags_aspect],
-                "@config_settings": {rbe_flag: False},
+                "@config_settings": {rbe_flag: False, region_flag: _DEFAULT_RBE_REGION},
             }
             for prefix, config_settings in [
-                ("rbe_", {rbe_flag: True}),
                 ("west1_", {rbe_flag: True, region_flag: "us-west1"}),
                 ("central1_", {rbe_flag: True, region_flag: "us-central1"}),
                 ("east1_", {rbe_flag: True, region_flag: "us-east1"}),
