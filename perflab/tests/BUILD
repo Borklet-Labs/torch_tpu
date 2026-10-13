@@ -384,7 +384,9 @@ torch_tpu_py_test(
 internal_target(
     torch_tpu_py_test,
     name = "distributed_qwen3_8_test",
+    timeout = "long",
     srcs = ["distributed_qwen3_8_test.py"],
+    tags = ["requires-mem:28g"],
     # Fix to alleviate too many input files error (transformers + torchtitan).
     use_precompile = False,
     deps = [
