@@ -73,6 +73,8 @@ internal_target(
     torch_tpu_py_test,
     name = "torchtitan_qwen3_5_test",
     srcs = ["torchtitan_qwen3_5_test.py"],
+    # Disable `use_precompile`, otherwise the test fails with `INPUTS_TOO_LARGE`.
+    use_precompile = False,
     deps = [
         ":torchtitan_qwen3_5",
         "//shims/absl_py/testing:absltest",
