@@ -16,6 +16,7 @@
 
 from collections.abc import Sequence
 import dataclasses
+import gc
 import time
 from typing import Callable, Tuple
 
@@ -23,9 +24,13 @@ from absl.testing import absltest
 from absl.testing import parameterized
 import torch
 from torch_tpu._internal import compile as compile_lib
+from torch_tpu._internal import execution_mode
 from torch_tpu._internal import testing as tt_testing
 from torch_tpu._internal.utils import test_utils as utils
+from tests import oss_utils
 from tests import seed_test_utils
+
+EagerMode = execution_mode.EagerMode
 
 
 def setUpModule():
@@ -1540,6 +1545,65 @@ class CompileTest(LayoutTest):
       out_compiled = compiled_fn(x_tpu)
     self.assertEqual(out_compiled.shape, out_expected.shape)
     utils.assert_close(out_compiled.cpu(), out_expected)
+
+
+@oss_utils.skip_if_libtpu_version(
+    lambda v: v < (0, 0, 42),
+    "TODO(b/565506249): Requires libtpu >= 0.0.42 for reset_peak_memory_stats.",
+)
+class ContiguousWindowWriteMemoryTest(seed_test_utils.RepeatableTest):
+  """Checks that writes into a contiguous window of a buffer are O(window)."""
+
+  _SHAPES = [(1024,), (1408, 1024), (1024, 3, 2, 16, 16), (1024,)]
+
+  def setUp(self):
+    super().setUp()
+    tt_testing.reset_eager_state()
+    self.device = torch.device("tpu")
+    gc.collect()
+    torch.accelerator.synchronize()
+
+  def tearDown(self):
+    super().tearDown()
+    gc.collect()
+    torch.accelerator.synchronize()
+
+  def _write_all(self, flat, updates):
+    offset = 0
+    for update in updates:
+      flat[offset : offset + update.numel()].view(update.shape).copy_(update)
+      offset += update.numel()
+    flat.sum().item()
+    torch.accelerator.synchronize()
+
+  @parameterized.named_parameters(
+      ("defer_and_fuse", EagerMode.DEFER_AND_FUSE),
+      ("defer_never", EagerMode.DEFER_NEVER),
+  )
+  def test_peak_memory_of_view_writes(self, mode):
+    with execution_mode.set_eager_mode(mode):
+      # 1.91 GiB of bf16, not a multiple of the views' trailing dimensions.
+      flat = torch.zeros(
+          1024 * 1_000_000 + 128, dtype=torch.bfloat16, device=self.device
+      )
+      updates = [
+          torch.randn(s, dtype=torch.bfloat16, device=self.device)
+          for s in self._SHAPES
+      ]
+      # Warm up so that compilation and runtime initialization aren't counted.
+      self._write_all(flat, updates)
+      gc.collect()
+
+      torch.accelerator.reset_peak_memory_stats()
+      base_mem = torch.accelerator.memory_allocated()
+      self._write_all(flat, updates)
+      extra_mem = torch.accelerator.max_memory_allocated() - base_mem
+
+      buffer_bytes = flat.numel() * flat.element_size()
+      print(f"extra peak memory: {extra_mem / buffer_bytes:.2f}x buffer")
+      # A write can't donate the base buffer yet, so the old and new versions
+      # briefly coexist: about 1x the buffer.
+      self.assertLess(extra_mem, 1.5 * buffer_bytes)
 
 
 if __name__ == "__main__":

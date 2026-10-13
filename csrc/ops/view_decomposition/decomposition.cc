@@ -1361,7 +1361,13 @@ absl::StatusOr<Dimensions> GetContiguousBaseShape(
       DecomposeIntoViewSequence({min_numel}, mlir::ElementType::BF16,
                                 view_layout, mlir::ElementType::BF16,
                                 /*is_conj=*/false));
-  Simplify(one_d_view_sequence, {min_numel});
+  // Disable reordering to allow a reshape to be the first operation.
+  // This is optimal because the view decomposition logic already minimizes
+  // the number of slices in a pattern of (reshape, slice, reshape, slice, ...)
+  // If only one slice is required, this will find it; if more than one slice
+  // is required (such as by torch.ones(30).view(2, 15)[:, :14].view(2, 2, 7))
+  // then the best we can do is to choose the first reshape (2, 15).
+  Simplify(one_d_view_sequence, {min_numel}, /*allow_reorder=*/false);
 
   if (one_d_view_sequence.empty()) {
     // The view was exactly the 1D contiguous base we started with.

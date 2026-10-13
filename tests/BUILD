@@ -1897,6 +1897,7 @@ torch_tpu_py_test(
     srcs = ["view_test.py"],
     tags = ["requires-tpu-v5lite"],
     deps = [
+        ":oss_utils",
         ":seed_test_utils",
         "//csrc/eager:tpu_aten_kernels",
         "//shims/absl_py/testing:absltest",
@@ -1904,6 +1905,7 @@ torch_tpu_py_test(
         "//shims/torch:pytorch",
         "//src/torch_tpu",
         "//src/torch_tpu/_internal/compile",
+        "//src/torch_tpu/_internal/execution_mode",
         "//src/torch_tpu/_internal/utils:test_utils",
     ],
 )
