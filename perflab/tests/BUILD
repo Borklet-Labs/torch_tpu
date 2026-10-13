@@ -426,7 +426,10 @@ internal_target(
 internal_target(
     torch_tpu_py_test,
     name = "distributed_synthetic_test",
+    timeout = "long",
     srcs = ["distributed_synthetic_test.py"],
+    shard_count = 2,
+    tags = ["requires-mem:28g"],
     # Avoids TOO_MANY_INPUT_FILES from torchtitan's sources.
     use_precompile = False,
     deps = [
