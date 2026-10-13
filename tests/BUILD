@@ -2016,6 +2016,7 @@ torch_tpu_py_test(
     srcs = ["rng_multi_device_test.py"],
     args = ["--backend=gpu"],
     main = "rng_multi_device_test.py",
+    nolocal = "Skipping in local runs by default as it requires --config=cuda.",
     tags = [
         "nozapfhahn",  # Requires --config=cuda; excluded from Zapfhahn coverage.
         # Requires 2 devices for multi-device tests.
