@@ -40,8 +40,9 @@ _FAILED_ONCE_MARKER = "failed_once"
 # Error text libtpu emits when the local TPU agent socket is unreachable, which
 # `dist_run` treats as transient.
 _TPU_AGENT_FAILURE = (
-    "DEADLINE_EXCEEDED: failed to retrieve the PjRt client: TPU initialization"
-    " failed: Failed to connect to unix:///var/run/tpu-plugin/vbar.sock"
+    "DEADLINE_EXCEEDED: failed to retrieve the PjRt client -- the XLA compiler"
+    " failed with: TPU initialization failed: Failed to connect to"
+    " unix:///var/run/tpu-plugin/vbar.sock"
 )
 
 

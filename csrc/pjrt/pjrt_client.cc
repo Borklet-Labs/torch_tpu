@@ -22,7 +22,6 @@
 
 #include "absl/base/nullability.h"
 #include "absl/status/statusor.h"
-#include "csrc/common/env_vars.h"
 #include "csrc/common/error_utils.h"
 #include "xla/pjrt/c_api_client/pjrt_c_api_client.h"
 #include "xla/pjrt/pjrt_client.h"
@@ -32,8 +31,10 @@ namespace torch_tpu {
 absl::StatusOr<absl_nonnull std::unique_ptr<xla::PjRtClient>> GetPjRtClient(
     const std::string& device_type, int64_t tpu_premapped_buffer_size) {
   if (device_type == "tpu") {
-    return xla::GetCApiClient(
-        "tpu", {{"premapped_buffer_size", tpu_premapped_buffer_size}});
+    return AdaptXlaError(
+        xla::GetCApiClient(
+            "tpu", {{"premapped_buffer_size", tpu_premapped_buffer_size}}),
+        /*context=*/"failed to retrieve the PjRt client");
   }
   return TT_ERROR(error::kInvalidArgument)
          << "unable to get PJRT client for unsupported device type: "
