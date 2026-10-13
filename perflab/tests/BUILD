@@ -405,7 +405,9 @@ internal_target(
 internal_target(
     torch_tpu_py_test,
     name = "distributed_muse_glimmer_test",
+    timeout = "long",
     srcs = ["distributed_muse_glimmer_test.py"],
+    tags = ["requires-mem:28g"],
     use_precompile = False,
     deps = [
         "//perflab:context",
