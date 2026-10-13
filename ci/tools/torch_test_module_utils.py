@@ -86,7 +86,6 @@ DISABLED_TEST_MODULES: Final[frozenset[str]] = frozenset({
     "test_sparse_csr",
     "test_spectral_ops",
     "test_tensor_creation_ops",
-    "test_tensorboard",
     "test_testing",
     "test_torch",
     "test_type_promotion",

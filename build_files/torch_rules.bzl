@@ -88,6 +88,7 @@ def torch_tpu_torch_test(
             "@pypi//packaging",
             "@pypi//pytest",
             "@pypi//scipy",
+            "//shims/torch:tensorboard_support",
             "//shims/torch:testing_internal",
             "//src/torch_tpu",
             "//src/torch_tpu/_internal/utils:annotations",
