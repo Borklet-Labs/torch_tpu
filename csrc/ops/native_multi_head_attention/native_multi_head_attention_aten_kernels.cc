@@ -218,9 +218,14 @@ absl::StatusOr<mlir::MlirOp> BuildDotGeneral(
       result_type, lhs, rhs, dot_dimension_numbers, precision_config_attr);
 }
 
-absl::StatusOr<mlir::MlirOp> BuildLinear(mlir::MlirOp input,
-                                         mlir::MlirOp weight, mlir::MlirOp bias,
+absl::StatusOr<mlir::MlirOp> BuildGemmNt(mlir::MlirOp input,
+                                         mlir::MlirOp weight,
                                          mlir::stablehlo::Precision precision) {
+  auto input_type = GetTensorTypeOrDie(input);
+  TT_ASSIGN_OR_RETURN(
+      mlir::ElementType input_elem_type,
+      ConvertTo<mlir::ElementType>(input_type.getElementType()));
+
   // Execute GEMM: input [B, T, D_in] @ weight [D_out, D_in]^T -> [B, T, D_out].
   TT_ASSIGN_OR_RETURN(
       mlir::MlirOp mm,
@@ -228,25 +233,45 @@ absl::StatusOr<mlir::MlirOp> BuildLinear(mlir::MlirOp input,
                       /*rhs_contracting=*/{1}, /*lhs_batching=*/{},
                       /*rhs_batching=*/{}, precision));
 
-  auto input_type = GetTensorTypeOrDie(input);
-  TT_ASSIGN_OR_RETURN(
-      mlir::ElementType input_elem_type,
-      ConvertTo<mlir::ElementType>(input_type.getElementType()));
-  TT_ASSIGN_OR_RETURN(mm, CastIfNeeded(mm, input_elem_type));
+  return CastIfNeeded(mm, input_elem_type);
+}
 
-  // Reshape 1-D bias to [1, 1, D_out] and broadcast add to GEMM output.
+absl::StatusOr<mlir::MlirOp> BuildBiasAdd(mlir::MlirOp mm, mlir::MlirOp bias,
+                                          mlir::ElementType comp_dtype) {
+  TT_ASSIGN_OR_RETURN(mm, CastIfNeeded(mm, comp_dtype));
+
+  // Reshape 1-D bias to [1, 1, D_out] and broadcast add to GEMM output in
+  // comp_dtype.
   auto bias_type = GetTensorTypeOrDie(bias);
   const int64_t d_out = bias_type.getShape()[0];
   TT_ASSIGN_OR_RETURN(mlir::MlirOp bias_reshaped,
                       ReshapeFromStaticDimensions(bias, Dimensions{d_out},
                                                   Dimensions{1, 1, d_out}));
-
-  TT_ASSIGN_OR_RETURN(bias_reshaped,
-                      CastIfNeeded(bias_reshaped, input_elem_type));
-
+  TT_ASSIGN_OR_RETURN(bias_reshaped, CastIfNeeded(bias_reshaped, comp_dtype));
   TT_ASSIGN_OR_RETURN(bias_reshaped, BroadcastIfNeeded(bias_reshaped, mm));
 
   return mlir::stablehlo::Add(mm, bias_reshaped);
+}
+
+absl::StatusOr<mlir::MlirOp> BuildLinear(mlir::MlirOp input,
+                                         mlir::MlirOp weight, mlir::MlirOp bias,
+                                         mlir::stablehlo::Precision precision) {
+  auto input_type = GetTensorTypeOrDie(input);
+  TT_ASSIGN_OR_RETURN(
+      mlir::ElementType input_elem_type,
+      ConvertTo<mlir::ElementType>(input_type.getElementType()));
+  TT_ASSIGN_OR_RETURN(mlir::ElementType comp_dtype,
+                      InferComputationDtype(input_elem_type));
+
+  // Execute GEMM: input [B, T, D_in] @ weight [D_out, D_in]^T -> [B, T, D_out].
+  TT_ASSIGN_OR_RETURN(
+      mlir::MlirOp mm,
+      BuildDotGeneral(input, weight, /*lhs_contracting=*/{2},
+                      /*rhs_contracting=*/{1}, /*lhs_batching=*/{},
+                      /*rhs_batching=*/{}, precision));
+
+  TT_ASSIGN_OR_RETURN(mlir::MlirOp out, BuildBiasAdd(mm, bias, comp_dtype));
+  return CastIfNeeded(out, input_elem_type);
 }
 
 // Common function to compute core MHA intermediate tensors
@@ -267,6 +292,9 @@ absl::StatusOr<MhaCoreTensors> BuildMhaCore(
   TT_ASSIGN_OR_RETURN(
       mlir::ElementType query_elem_type,
       ConvertTo<mlir::ElementType>(query_type.getElementType()));
+  TT_ASSIGN_OR_RETURN(mlir::ElementType comp_dtype,
+                      InferComputationDtype(query_elem_type));
+
   auto shape = query_type.getShape();
   const int64_t batch_size = shape[0];
   const int64_t seq_len = shape[1];
@@ -293,19 +321,24 @@ absl::StatusOr<MhaCoreTensors> BuildMhaCore(
       mlir::stablehlo::Slice(qkv_bias, Dimensions{2 * embed_dim},
                              Dimensions{3 * embed_dim}, Dimensions{1});
 
-  // 2. Linear projections: Q_proj, K_proj, V_proj [B, T, D]
-  TT_ASSIGN_OR_RETURN(mlir::MlirOp q_proj,
-                      BuildLinear(query, w_q, b_q, precision));
-  TT_ASSIGN_OR_RETURN(mlir::MlirOp k_proj,
-                      BuildLinear(key, w_k, b_k, precision));
-  TT_ASSIGN_OR_RETURN(mlir::MlirOp v_proj,
-                      BuildLinear(value, w_v, b_v, precision));
+  // 2. QKV projections (matching qkv_projection + _transform_bias_rescale_qkv)
+  TT_ASSIGN_OR_RETURN(mlir::MlirOp q_mm, BuildGemmNt(query, w_q, precision));
+  TT_ASSIGN_OR_RETURN(mlir::MlirOp k_mm, BuildGemmNt(key, w_k, precision));
+  TT_ASSIGN_OR_RETURN(mlir::MlirOp v_mm, BuildGemmNt(value, w_v, precision));
 
-  // 3. Scale Q by 1.0 / sqrt(dim_per_head)
+  TT_ASSIGN_OR_RETURN(mlir::MlirOp q_proj, BuildBiasAdd(q_mm, b_q, comp_dtype));
+  TT_ASSIGN_OR_RETURN(mlir::MlirOp k_proj, BuildBiasAdd(k_mm, b_k, comp_dtype));
+  TT_ASSIGN_OR_RETURN(mlir::MlirOp v_proj, BuildBiasAdd(v_mm, b_v, comp_dtype));
+
+  // 3. Scale Q by 1.0 / sqrt(dim_per_head) in comp_dtype, then cast Q, K, V
+  // back to query_elem_type.
   const double scale_factor =
       1.0 / std::sqrt(static_cast<double>(dim_per_head));
   mlir::MlirOp scale_const = MakeConstantLike(q_proj, scale_factor);
-  const mlir::MlirOp q_scaled = mlir::stablehlo::Mul(q_proj, scale_const);
+  mlir::MlirOp q_scaled = mlir::stablehlo::Mul(q_proj, scale_const);
+  TT_ASSIGN_OR_RETURN(q_scaled, CastIfNeeded(q_scaled, query_elem_type));
+  TT_ASSIGN_OR_RETURN(k_proj, CastIfNeeded(k_proj, query_elem_type));
+  TT_ASSIGN_OR_RETURN(v_proj, CastIfNeeded(v_proj, query_elem_type));
 
   // 4. Reshape and Transpose to [B, H, T, dim_per_head]
   const Dimensions target_4d = {batch_size, seq_len, num_head, dim_per_head};
@@ -333,7 +366,6 @@ absl::StatusOr<MhaCoreTensors> BuildMhaCore(
       BuildDotGeneral(q_mha, k_mha, /*lhs_contracting=*/{3},
                       /*rhs_contracting=*/{3}, /*lhs_batching=*/{0, 1},
                       /*rhs_batching=*/{0, 1}, precision));
-
   TT_ASSIGN_OR_RETURN(qkt, CastIfNeeded(qkt, query_elem_type));
 
   // 6. Apply optional mask
@@ -373,16 +405,11 @@ absl::StatusOr<MhaCoreTensors> BuildMhaCore(
           mask_4d, zero_mask_elem, mlir::stablehlo::ComparisonDirection::NE);
     }
 
+    TT_ASSIGN_OR_RETURN(mask_bool, BroadcastIfNeeded(mask_bool, qkt));
     mlir::MlirOp neg_inf = MakeScalarConstant(
         builder, -std::numeric_limits<float>::infinity(), query_elem_type);
-    mlir::MlirOp zero = MakeScalarConstant(builder, 0.0, query_elem_type);
-    TT_ASSIGN_OR_RETURN(neg_inf, BroadcastIfNeeded(neg_inf, mask_bool));
-    TT_ASSIGN_OR_RETURN(zero, BroadcastIfNeeded(zero, mask_bool));
-
-    mlir::MlirOp mask_additive =
-        mlir::stablehlo::Select(mask_bool, neg_inf, zero);
-    TT_ASSIGN_OR_RETURN(mask_additive, BroadcastIfNeeded(mask_additive, qkt));
-    qkt = mlir::stablehlo::Add(qkt, mask_additive);
+    TT_ASSIGN_OR_RETURN(neg_inf, BroadcastIfNeeded(neg_inf, qkt));
+    qkt = mlir::stablehlo::Select(mask_bool, neg_inf, qkt);
   }
 
   // 7. Softmax along axis 3
@@ -396,7 +423,6 @@ absl::StatusOr<MhaCoreTensors> BuildMhaCore(
       BuildDotGeneral(attn_weights_full, v_mha, /*lhs_contracting=*/{3},
                       /*rhs_contracting=*/{2}, /*lhs_batching=*/{0, 1},
                       /*rhs_batching=*/{0, 1}, precision));
-
   TT_ASSIGN_OR_RETURN(attn_ctx, CastIfNeeded(attn_ctx, query_elem_type));
 
   // 9. Output projection: transpose to [B, T, H, d], reshape to [B, T, D],
@@ -425,6 +451,13 @@ BuildNativeMultiHeadAttentionWithWeightsShlo(
     int64_t num_head, AttnWeightsReduction weights_reduction,
     mlir::stablehlo::Precision precision,
     std::optional<int64_t> mask_type_param = std::nullopt) {
+  auto query_type = GetTensorTypeOrDie(query);
+  TT_ASSIGN_OR_RETURN(
+      mlir::ElementType query_elem_type,
+      ConvertTo<mlir::ElementType>(query_type.getElementType()));
+  TT_ASSIGN_OR_RETURN(mlir::ElementType comp_dtype,
+                      InferComputationDtype(query_elem_type));
+
   TT_ASSIGN_OR_RETURN(
       auto core, BuildMhaCore(query, key, value, qkv_weight, qkv_bias,
                               proj_weight, proj_bias, mask, embed_dim, num_head,
@@ -434,12 +467,14 @@ BuildNativeMultiHeadAttentionWithWeightsShlo(
   // 4-D weights.
   mlir::MlirOp attn_weights;
   if (weights_reduction == AttnWeightsReduction::kAverage) {
-    TT_ASSIGN_OR_RETURN(
-        mlir::MlirOp sum_weights,
-        BuildSumShlo(core.attn_weights_full, {1}, ReductionMode::kDropDims));
+    TT_ASSIGN_OR_RETURN(mlir::MlirOp sum_weights,
+                        BuildSumShlo(core.attn_weights_full, {1},
+                                     ReductionMode::kDropDims, comp_dtype));
     mlir::MlirOp scale_op =
         MakeConstantLike(sum_weights, 1.0 / static_cast<double>(num_head));
     attn_weights = mlir::stablehlo::Mul(sum_weights, scale_op);
+    TT_ASSIGN_OR_RETURN(attn_weights,
+                        CastIfNeeded(attn_weights, query_elem_type));
   } else {
     attn_weights = core.attn_weights_full;
   }

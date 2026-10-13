@@ -237,8 +237,7 @@ ACCURACY_OVERRIDES_VS_GPU = {
         torch.float32: {"rtol": 1e-5, "atol": 2.1e-5},
     },
     "_native_multi_head_attention": {
-        torch.bfloat16: {"rtol": 1.0, "atol": 2.0e-1},
-        torch.float16: {"rtol": 1.0, "atol": 2.0e-1},
+        torch.float16: {"rtol": 1.4e-1, "atol": 1.3e-1},
         torch.float32: {"rtol": 2.0e-1, "atol": 3.2e-1},
     },
     "_softmax_backward_data": {
@@ -623,8 +622,7 @@ ACCURACY_OVERRIDES_VS_GPU_COMPILED = {
         torch.float32: {"rtol": 1e-5, "atol": 2.1e-5},
     },
     "_native_multi_head_attention": {
-        torch.bfloat16: {"rtol": 1.0, "atol": 2.0e-1},
-        torch.float16: {"rtol": 1.0, "atol": 2.0e-1},
+        torch.float16: {"rtol": 1.4e-1, "atol": 1.3e-1},
         torch.float32: {"rtol": 2.0e-1, "atol": 3.2e-1},
     },
     "_softmax_backward_data": {
