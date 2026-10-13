@@ -991,6 +991,15 @@ class _DeviceModule(abc.ABC, metaclass=_DeviceModuleMeta):
   @classmethod
   def _shutdown_runtime(cls):
     if cls._public_module().is_initialized():
+      # Ensure clear_compiled_executables() executes before
+      # _shutdown_runtime().
+      exec_mod = sys.modules.get(
+          "torch_tpu._internal.compile.torch_tpu_compiled_executable"
+      )
+      if exec_mod is not None and hasattr(
+          exec_mod, "clear_compiled_executables"
+      ):
+        exec_mod.clear_compiled_executables()
       if torch.distributed.is_available():
         if torch.distributed.is_initialized():
           torch.distributed.barrier()
