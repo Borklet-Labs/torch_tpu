@@ -25,6 +25,18 @@ package(
 )
 
 torch_tpu_py_test(
+    name = "common_test",
+    srcs = ["common_test.py"],
+    deps = [
+        "//perflab:common",
+        "//shims/absl_py/testing:absltest",
+        "//shims/torch:pytorch",
+        "//src/torch_tpu",
+        "//tests:seed_test_utils",
+    ],
+)
+
+torch_tpu_py_test(
     name = "export_test",
     srcs = ["export_test.py"],
     deps = [

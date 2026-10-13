@@ -16,8 +16,9 @@
 
 import enum
 import random
+from typing import Any
 import torch
-
+from torch.utils import _pytree as pytree
 
 _RANDOM_SEED = 0
 
@@ -26,6 +27,32 @@ def seed_rngs() -> None:
   """Seeds the Python and PyTorch RNGs with the given seed."""
   random.seed(_RANDOM_SEED)
   torch.manual_seed(_RANDOM_SEED)
+
+
+def prepare_inputs(model: Any, inputs: Any) -> None:
+  """Canonicalizes model parameters, buffers, and inputs in-place."""
+  seen: set[int] = set()
+
+  def _prepare_tensor(t: Any) -> Any:
+    if isinstance(t, torch.Tensor) and not t.is_meta and id(t) not in seen:
+      seen.add(id(t))
+      with torch.no_grad():
+        # TODO(basioli) Remove +0 once we fix the full reinterpret view path.
+        t.data = (
+            torch.clone(t.data, memory_format=torch.contiguous_format) + 0
+        ).to(t.dtype)
+    return t
+
+  if isinstance(model, torch.nn.Module):
+    for p in model.parameters():
+      _prepare_tensor(p)
+    for b in model.buffers():
+      _prepare_tensor(b)
+  else:
+    pytree.tree_map(_prepare_tensor, model)
+  pytree.tree_map(_prepare_tensor, inputs)
+  if torch.accelerator.is_available():
+    torch.accelerator.synchronize()
 
 
 class RunMode(enum.Enum):

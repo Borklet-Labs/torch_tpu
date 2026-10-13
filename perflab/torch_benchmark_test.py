@@ -81,7 +81,9 @@ def _make_run_step(
   """
   common.seed_rngs()
   runner = step_lib.resolve_stepper(spec.stepper, **spec.stepper_kwargs)
-  runner.init_with_benchmark_args(*spec.factory(ctx))
+  benchmark_args = spec.factory(ctx)
+  common.prepare_inputs(benchmark_args[0], benchmark_args[1:])
+  runner.init_with_benchmark_args(*benchmark_args)
 
   if common.is_torch_compile(mode):
     compile_config = spec.compile_config or compile_lib.CompileConfig()
