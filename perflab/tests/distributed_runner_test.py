@@ -672,6 +672,72 @@ class DistributedRunnerTest(seed_test_utils.RepeatableTest):
     self.assertRegex(summary, r"healthy_compiled\s+PASSED")
     self.assertIn("2 passed, 0 failed, 1 skipped", summary)
 
+  @parameterized.named_parameters(
+      ("first_shard_node_0", "0", "0", True),
+      ("second_shard", "1", "0", False),
+      ("node_1", "0", "1", False),
+  )
+  def test_main_exports_known_failure_skips_once(
+      self, shard_index, node_rank, exports_skips
+  ):
+    registry = {
+        "known_bad": types.SimpleNamespace(
+            name="known_bad", skipped_run_modes=frozenset()
+        ),
+        "skips_eager": types.SimpleNamespace(
+            name="skips_eager", skipped_run_modes=frozenset({"eager_default"})
+        ),
+    }
+    # Matches every run mode, including eager_optimized, which CUDA does not
+    # run.
+    failures = (
+        known_failures.KnownFailure(
+            benchmark="known_bad",
+            framework=mode_lib.Framework.TORCH,
+            device_kind=target_lib.DeviceKind.CUDA,
+            reason="simulated CUDA failure",
+        ),
+    )
+    status_file = os.path.join(self.create_tempdir().full_path, "status")
+
+    with (
+        mock.patch.dict(registry_lib.REGISTRY, registry, clear=True),
+        mock.patch.object(known_failures, "KNOWN_FAILURES", failures),
+        mock.patch.dict(
+            os.environ,
+            {
+                "BENCHMARK_PLATFORM": "b200_8",
+                "TESTBRIDGE_TEST_ONLY": (
+                    "known_bad_compiled known_bad_eager_optimized"
+                    " skips_eager_eager_default"
+                ),
+                "TEST_TOTAL_SHARDS": "2",
+                "TEST_SHARD_INDEX": shard_index,
+                "TEST_SHARD_STATUS_FILE": status_file,
+                "NODE_RANK": node_rank,
+            },
+        ),
+        mock.patch.object(
+            distributed_runner.distributed_utils,
+            "dist_run",
+            _FakeDistRun(failing_specs=set()),
+        ),
+        mock.patch.object(
+            export_lib, "export_skip", autospec=True
+        ) as mock_export_skip,
+    ):
+      distributed_runner.main(["distributed_runner"])
+
+    if exports_skips:
+      mock_export_skip.assert_called_once_with(
+          spec_name="known_bad",
+          platform=target_lib.Platform.B200_8,
+          framework=mode_lib.Framework.TORCH,
+          run_mode=common.RunMode.COMPILED,
+      )
+    else:
+      mock_export_skip.assert_not_called()
+
   def _run_main_sharded(
       self, total_shards: int, shard_index: int, status_file: str
   ) -> tuple[_FakeDistRun, str]:

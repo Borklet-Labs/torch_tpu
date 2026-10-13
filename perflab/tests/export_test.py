@@ -124,6 +124,21 @@ class ExportTest(seed_test_utils.RepeatableTest):
         microbenchmark_name="prefill",
     )
 
+  @mock.patch.object(export_adapter, "export_benchmark_skip")
+  def test_export_skip(self, mock_export_benchmark_skip):
+    export_lib.export_skip(
+        spec_name="test_model",
+        platform=target_lib.Platform.V7_1X1X1,
+        framework=mode_lib.Framework.TORCH,
+        run_mode=common.RunMode.EAGER_OPTIMIZED,
+    )
+    mock_export_benchmark_skip.assert_called_once_with(
+        spec_name="test_model",
+        platform="v7_1x1x1",
+        framework="torch",
+        run_mode="eager_optimized",
+    )
+
 
 if __name__ == "__main__":
   absltest.main()

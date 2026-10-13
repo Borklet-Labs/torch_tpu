@@ -25,6 +25,29 @@ package(
 )
 
 torch_tpu_py_test(
+    name = "base_test_test",
+    srcs = ["base_test_test.py"],
+    tags = [
+        # perflab/base_test.py matches *_test.py, so the wheel test site
+        # packages leave it out.
+        "wheel_test_excluded",
+    ],
+    deps = [
+        "//perflab:base_test",
+        "//perflab:common",
+        "//perflab:export",
+        "//perflab:flags",
+        "//perflab:known_failures",
+        "//perflab:mode",
+        "//perflab:target",
+        "//shims/absl_py/testing:absltest",
+        "//shims/absl_py/testing:flagsaver",
+        "//src/torch_tpu",
+        "//tests:seed_test_utils",
+    ],
+)
+
+torch_tpu_py_test(
     name = "common_test",
     srcs = ["common_test.py"],
     deps = [

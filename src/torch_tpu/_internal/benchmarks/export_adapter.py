@@ -24,6 +24,12 @@ _TENSORBOARD_OUTPUT_ENV_VAR = "TENSORBOARD_OUTPUT_DIR"
 _TEAM_NAME = "torch_tpu"
 
 
+def _test_name(
+    spec_name: str, platform: str, framework: str, run_mode: str
+) -> str:
+  return f"{_TEAM_NAME}/{platform}/{spec_name}/{run_mode}/{framework}"
+
+
 def export_benchmark_results(
     spec_name: str,
     platform: str,
@@ -51,7 +57,7 @@ def export_benchmark_results(
   if not tblog_dir:
     return
 
-  test_name = f"{_TEAM_NAME}/{platform}/{spec_name}/{run_mode}/{framework}"
+  test_name = _test_name(spec_name, platform, framework, run_mode)
 
   if microbenchmark_name:
     test_name = f"{test_name}/{microbenchmark_name}"
@@ -78,5 +84,36 @@ def export_benchmark_results(
           int(succeeded),
           global_step=0,
       )
+  except (OSError, IOError):
+    logging.exception("Error writing TensorBoard logs")
+
+
+def export_benchmark_skip(
+    spec_name: str,
+    platform: str,
+    framework: str,
+    run_mode: str,
+) -> None:
+  """Exports to TensorBoard that a benchmark case was skipped.
+
+  Writes `<test_name>/skipped` with the test name of the case's results, so the
+  benchmark dashboards can drop the results that the case reported before it
+  was skipped.
+
+  Args:
+    spec_name: The name of the benchmark spec.
+    platform: The hardware platform the benchmark was skipped on.
+    framework: The execution framework.
+    run_mode: The execution run mode.
+  """
+  tblog_dir = os.environ.get(_TENSORBOARD_OUTPUT_ENV_VAR, None)
+  if not tblog_dir:
+    return
+
+  test_name = _test_name(spec_name, platform, framework, run_mode)
+  try:
+    os.makedirs(tblog_dir, exist_ok=True)
+    with writer.SummaryWriter(log_dir=tblog_dir) as tb_writer:
+      tb_writer.add_scalar(f"{test_name}/skipped", 1, global_step=0)
   except (OSError, IOError):
     logging.exception("Error writing TensorBoard logs")

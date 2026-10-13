@@ -125,6 +125,7 @@ class TorchaxBenchmarkTest(
     )
 
     if skip_reason is not None and flags_lib.SKIP_BEHAVIOR.value == "skip":
+      self.report_skip(spec, mode)
       self.skipTest(skip_reason)
     if skip_reason is None and flags_lib.SKIP_BEHAVIOR.value == "run_skipped":
       self.skipTest(

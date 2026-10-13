@@ -60,6 +60,7 @@ from perflab import cases
 from perflab import common
 from perflab import export as export_lib
 from perflab import flags as flags_lib
+from perflab import known_failures
 from perflab import metrics as metrics_lib
 from perflab import mode as mode_lib
 from perflab import registry as registry_lib
@@ -339,6 +340,7 @@ class BaseBenchmarkTest(
     try:
       skip_reason = self._get_parent_skip_reason()
       if skip_reason is not None:
+        self.report_skip(*self.case_params[self._testMethodName])
         _record(result, self, Outcome.SKIPPED, skip_reason)
         return result
 
@@ -386,6 +388,36 @@ class BaseBenchmarkTest(
       self.isolated_payload = data
     else:
       export_lib.export(data)
+
+  def report_skip(
+      self, spec: registry_lib.BenchmarkSpec, mode: common.RunMode
+  ) -> None:
+    """Exports a skip record if the skipped case is a known failure.
+
+    The record lets dashboards drop the last failure of a benchmark that became
+    a known failure. The run modes in `BenchmarkSpec.skipped_run_modes` are not
+    recorded, as most of them never ran.
+
+    Args:
+      spec: The skipped benchmark.
+      mode: The skipped run mode.
+    """
+    if flags_lib.DRY_RUN.value:
+      return
+    failure_reason = known_failures.get_known_failure_reason(
+        spec.name,
+        framework=self.framework,
+        device_kind=target_lib.make_target(self.platform).device_kind,
+        run_mode=mode,
+    )
+    if failure_reason is None:
+      return
+    export_lib.export_skip(
+        spec_name=spec.name,
+        platform=self.platform,
+        framework=self.framework,
+        run_mode=mode,
+    )
 
   def _dry_run_test(self) -> None:
     """Logs and writes dry run test details to a text file."""

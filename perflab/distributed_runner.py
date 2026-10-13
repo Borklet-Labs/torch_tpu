@@ -45,6 +45,7 @@ from perflab import discovery as discovery_lib
 from perflab import distributed_models
 from perflab import export as export_lib
 from perflab import flags as flags_lib
+from perflab import known_failures
 from perflab import measure as measure_lib
 from perflab import metrics as metrics_lib
 from perflab import mode as mode_lib
@@ -100,6 +101,24 @@ def _get_skip_reason(
     return f"Run mode {mode.value} is not supported on {device_kind.value}"
   return cases.get_skip_reason(
       spec, mode, framework=_FRAMEWORK, device_kind=device_kind
+  )
+
+
+def _is_known_failure(
+    spec: registry_lib.BenchmarkSpec,
+    mode: common.RunMode,
+    device_kind: target_lib.DeviceKind,
+) -> bool:
+  """Returns whether `spec` runs in `mode` on `device_kind` but is known to fail."""
+  return (
+      mode in mode_lib.modes_for(_FRAMEWORK, device_kind)
+      and known_failures.get_known_failure_reason(
+          spec.name,
+          framework=_FRAMEWORK,
+          device_kind=device_kind,
+          run_mode=mode,
+      )
+      is not None
   )
 
 
@@ -575,6 +594,10 @@ def main(argv: Sequence[str]) -> None:
 
   results: list[_TargetResult] = []
   runnable_targets = []
+  node_rank = int(os.environ.get("NODE_RANK", "0"))  # PY_ENVIRON_OK=benchmark
+  # Every shard skips the same known failures; only node 0 of the first shard
+  # exports their skip records, so that each is recorded once per run.
+  exports_skips = node_rank == 0 and _shard_env()[0] == 0
   for spec, mode in targets_to_run:
     skip_reason = _get_skip_reason(spec, mode, target.device_kind)
     if skip_reason is None:
@@ -592,6 +615,13 @@ def main(argv: Sequence[str]) -> None:
     results.append(
         _TargetResult(target_name, TargetStatus.SKIPPED, skip_reason)
     )
+    if exports_skips and _is_known_failure(spec, mode, target.device_kind):
+      export_lib.export_skip(
+          spec_name=spec.name,
+          platform=platform,
+          framework=_FRAMEWORK,
+          run_mode=mode,
+      )
 
   # Shard after dropping skipped targets: most distributed benchmarks only run
   # compiled, so sharding the full (spec x mode) list round-robin could put all
@@ -653,9 +683,6 @@ def main(argv: Sequence[str]) -> None:
       # reach the worker's exception handler (e.g. a rank killed by a signal)
       # are still visible on dashboards. Only node 0 exports to avoid duplicate
       # records in multi-host runs.
-      node_rank = int(
-          os.environ.get("NODE_RANK", "0")  # PY_ENVIRON_OK=benchmark
-      )
       if node_rank == 0:
         _export_benchmark_result(
             spec,

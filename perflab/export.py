@@ -65,3 +65,29 @@ def export(data: BenchmarkData) -> None:
       wall_time=data.metrics.e2e_wall_time_seconds,
       microbenchmark_name=data.microbenchmark_name,
   )
+
+
+def export_skip(
+    *,
+    spec_name: str,
+    platform: target_lib.Platform,
+    framework: mode_lib.Framework,
+    run_mode: common.RunMode,
+) -> None:
+  """Exports that a benchmark case was skipped as a known failure.
+
+  A skipped case reports no result, so without this record dashboards would
+  keep showing its last failure until it goes stale.
+
+  Args:
+    spec_name: The name of the benchmark spec.
+    platform: The hardware platform the benchmark was skipped on.
+    framework: The execution framework.
+    run_mode: The execution run mode.
+  """
+  export_adapter.export_benchmark_skip(
+      spec_name=spec_name,
+      platform=platform.value,
+      framework=framework.value,
+      run_mode=run_mode.value,
+  )
