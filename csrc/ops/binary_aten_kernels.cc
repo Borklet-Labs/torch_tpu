@@ -1759,27 +1759,13 @@ at::Tensor AtenRemainderScalarTensor(const at::Scalar& self,
   auto promoted_self = PromoteScalar(self);
   TT_KERNEL(OpName::kRemainderScalarTensor, _, (promoted_self, other), {
     TT_THROW_IF_ERROR(ValidateRemainderInputs(self, other));
-    TT_ASSIGN_OR_THROW(auto div_opts, GetDivOpOptionsFloorMode());
-
-    auto remainder_builder =
-        [div_opts = std::move(div_opts)](
-            mlir::MlirOp self_op,
-            mlir::MlirOp other_op) -> absl::StatusOr<mlir::MlirOp> {
-      TT_ASSIGN_OR_RETURN((auto [cast_self_op, cast_other_op]),
-                          ApplyBroadcastIfNeeded(self_op, other_op));
-      TT_ASSIGN_OR_RETURN(auto div_op,
-                          div_opts.op_builder(cast_self_op, cast_other_op));
-      auto mul_op = stablehlo::Mul(div_op, cast_other_op);
-      return stablehlo::Subtract(cast_self_op, mul_op);
-    };
-
     const at::ScalarType promoted_scalar_type = at::result_type(self, other);
     TT_ASSIGN_OR_THROW(const at::Tensor self_tensor,
                        promoted_self.GetTensor(promoted_scalar_type));
 
     TT_ASSIGN_OR_THROW(
         auto result,
-        BinaryOp(self_tensor, other, std::move(remainder_builder),
+        BinaryOp(self_tensor, other, BuildRemainderShlo,
                  {.op_param_cache_keys = OpParamCacheKeys::Empty()}));
     return result;
   });
@@ -1789,21 +1775,8 @@ at::Tensor& AtenRemainderTensorOut(const at::Tensor& self,
                                    const at::Tensor& other, at::Tensor& out) {
   TT_KERNEL(OpName::kRemainderOut, _, (self, other, out), {
     TT_THROW_IF_ERROR(ValidateRemainderInputs(self, other));
-    TT_ASSIGN_OR_THROW(auto div_opts, GetDivOpOptionsFloorMode());
-
-    auto remainder_builder =
-        [div_opts = std::move(div_opts)](
-            mlir::MlirOp self_op,
-            mlir::MlirOp other_op) -> absl::StatusOr<mlir::MlirOp> {
-      TT_ASSIGN_OR_RETURN((auto [cast_self_op, cast_other_op]),
-                          ApplyBroadcastIfNeeded(self_op, other_op));
-      TT_ASSIGN_OR_RETURN(auto div_op,
-                          div_opts.op_builder(cast_self_op, cast_other_op));
-      auto mul_op = stablehlo::Mul(div_op, cast_other_op);
-      return stablehlo::Subtract(cast_self_op, mul_op);
-    };
     TT_THROW_IF_ERROR(
-        BinaryOpOut(self, other, out, std::move(remainder_builder),
+        BinaryOpOut(self, other, out, BuildRemainderShlo,
                     {.op_param_cache_keys = OpParamCacheKeys::Empty()}));
     return out;
   });

@@ -17,10 +17,13 @@
 #include "csrc/ops/binary.h"
 
 #include "absl/status/statusor.h"
+#include "csrc/common/aten_utils.h"
 #include "csrc/common/error_utils.h"
 #include "csrc/ops/op_builder_utils.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/Support/DebugStringHelper.h"
+#include "stablehlo/dialect/StablehloOps.h"
+#include "stablehlo/integrations/cpp/builder/AttrTypeBuilderUtil.h"
 #include "stablehlo/integrations/cpp/builder/MlirBuilder.h"
 #include "stablehlo/integrations/cpp/builder/StablehloBuilder.h"
 
@@ -130,6 +133,33 @@ absl::StatusOr<mlir::MlirOp> BuildBitwiseRightShiftShlo(mlir::MlirOp lhs_op,
     return stablehlo::ShiftRightLogical(lhs, rhs);
   }
   return stablehlo::ShiftRightArithmetic(lhs, rhs);
+}
+
+absl::StatusOr<mlir::MlirOp> BuildRemainderShlo(mlir::MlirOp lhs_op,
+                                                mlir::MlirOp rhs_op) {
+  TT_ASSIGN_OR_RETURN((auto [lhs, rhs]),
+                      ApplyBroadcastIfNeeded(lhs_op, rhs_op));
+  const mlir::ElementType orig_dtype = GetElementTypeOrDie(lhs);
+  TT_ASSIGN_OR_RETURN(const mlir::ElementType comp_dtype,
+                      InferComputationDtype(orig_dtype));
+  TT_ASSIGN_OR_RETURN(lhs, CastIfNeeded(lhs, comp_dtype));
+  TT_ASSIGN_OR_RETURN(rhs, CastIfNeeded(rhs, comp_dtype));
+
+  mlir::MlirOp rem_op = stablehlo::Rem(lhs, rhs);
+  mlir::MlirOp zero_op = MakeConstantLike(rem_op, 0);
+  mlir::MlirOp rem_ne_zero =
+      stablehlo::Compare(rem_op, zero_op, stablehlo::ComparisonDirection::NE);
+  mlir::MlirOp rem_lt_zero =
+      stablehlo::Compare(rem_op, zero_op, stablehlo::ComparisonDirection::LT);
+  mlir::MlirOp rhs_lt_zero =
+      stablehlo::Compare(rhs, zero_op, stablehlo::ComparisonDirection::LT);
+  mlir::MlirOp signs_differ = stablehlo::Compare(
+      rem_lt_zero, rhs_lt_zero, stablehlo::ComparisonDirection::NE);
+  mlir::MlirOp should_adjust = stablehlo::And(rem_ne_zero, signs_differ);
+  mlir::MlirOp adjusted_op = stablehlo::Add(rem_op, rhs);
+  mlir::MlirOp result_op =
+      stablehlo::Select(should_adjust, adjusted_op, rem_op);
+  return CastIfNeeded(result_op, orig_dtype);
 }
 
 }  // namespace torch_tpu

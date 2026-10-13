@@ -398,6 +398,7 @@ torch_tpu_cc_library(
     hdrs = ["binary.h"],
     deps = [
         ":op_builder_utils",
+        "//csrc/common:aten_utils",
         "//csrc/common:error_utils",
         "//csrc/common:macro_utils",
         "//shims/torch:torch_headers",
@@ -405,6 +406,7 @@ torch_tpu_cc_library(
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Support",
         "@stablehlo//:stablehlo_ops",
+        "@stablehlo//stablehlo/integrations/cpp/builder:attr_type_builder_util",
         "@stablehlo//stablehlo/integrations/cpp/builder:mlir_builder",
         "@stablehlo//stablehlo/integrations/cpp/builder:stablehlo_builder",
     ],
