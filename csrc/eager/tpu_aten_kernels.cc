@@ -1085,6 +1085,8 @@ TORCH_LIBRARY_IMPL(aten, PrivateUse1, m) {
   ImplStable<OpName::kUpsampleBilinear2dBackwardGradInput>(
       m, AtenUpsampleBilinear2dBackwardGradInput);
   ImplStable<OpName::kUpsampleBilinear2dOut>(m, AtenUpsampleBilinear2dOut);
+  ImplStable<OpName::kUpsampleLinear1dBackwardGradInput>(
+      m, AtenUpsampleLinear1dBackwardGradInput);
   ImplStable<OpName::kUpsampleLinear1dOut>(m, AtenUpsampleLinear1dOut);
   ImplStable<OpName::kUpsampleNearest1dBackwardGradInput>(
       m, AtenUpsampleNearest1dBackwardGradInput);

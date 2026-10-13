@@ -4271,6 +4271,165 @@ class OpsUnitTest(TorchTpuVsCpuTestBase):
         golden_result=expected_out, torch_tpu_result=out_tensor.cpu()
     )
 
+  def test_upsample_linear1d_backward_out(self):
+    tpu_device = torch.device("tpu")
+    shape_cases = [
+        # Upsampling backward (in_w < out_w), downsampling backward (in_w > out_w),
+        # and identity (in_w == out_w)
+        ((2, 3, 4), (8,)),
+        ((2, 3, 8), (4,)),
+        ((2, 3, 5), (5,)),
+        # Multiple overlapping inputs accumulating into the same index
+        ((1, 2, 1), (5,)),
+        ((2, 2, 2), (7,)),
+        ((1, 3, 3), (10,)),
+        # Non-divisible sizes
+        ((2, 3, 3), (7,)),
+        ((2, 3, 7), (3,)),
+        ((1, 2, 5), (11,)),
+        # Single-element spatial edge cases
+        ((1, 1, 1), (1,)),
+        ((2, 3, 1), (4,)),
+        ((2, 3, 4), (1,)),
+        # Empty batch edge case
+        ((0, 2, 4), (8,)),
+    ]
+    for input_size, output_size in shape_cases:
+      for align_corners in (True, False):
+        grad_out_shape = (input_size[0], input_size[1], output_size[0])
+        grad_out_cpu = torch.randn(grad_out_shape, dtype=torch.float32)
+        grad_out_tpu = grad_out_cpu.to(tpu_device)
+        grad_in_cpu = torch.empty(input_size, dtype=torch.float32)
+        grad_in_tpu = torch.empty(
+            input_size, dtype=torch.float32, device=tpu_device
+        )
+        torch.ops.aten.upsample_linear1d_backward.grad_input(
+            grad_out_cpu,
+            list(output_size),
+            list(input_size),
+            align_corners,
+            None,
+            grad_input=grad_in_cpu,
+        )
+        torch.ops.aten.upsample_linear1d_backward.grad_input(
+            grad_out_tpu,
+            list(output_size),
+            list(input_size),
+            align_corners,
+            None,
+            grad_input=grad_in_tpu,
+        )
+        self.assert_close(
+            golden_result=grad_in_cpu, torch_tpu_result=grad_in_tpu.cpu()
+        )
+
+    # Explicit scales (scales=2.5, scales=0.5, scales=None)
+    scale_cases = [
+        ((2, 3, 4), (10,), 2.5),
+        ((2, 3, 8), (4,), 0.5),
+        ((2, 3, 4), (8,), None),
+    ]
+    for input_size, output_size, scales in scale_cases:
+      for align_corners in (True, False):
+        grad_out_shape = (input_size[0], input_size[1], output_size[0])
+        grad_out_cpu = torch.randn(grad_out_shape, dtype=torch.float32)
+        grad_out_tpu = grad_out_cpu.to(tpu_device)
+        grad_in_cpu = torch.empty(input_size, dtype=torch.float32)
+        grad_in_tpu = torch.empty(
+            input_size, dtype=torch.float32, device=tpu_device
+        )
+        torch.ops.aten.upsample_linear1d_backward.grad_input(
+            grad_out_cpu,
+            list(output_size),
+            list(input_size),
+            align_corners,
+            scales,
+            grad_input=grad_in_cpu,
+        )
+        torch.ops.aten.upsample_linear1d_backward.grad_input(
+            grad_out_tpu,
+            list(output_size),
+            list(input_size),
+            align_corners,
+            scales,
+            grad_input=grad_in_tpu,
+        )
+        self.assert_close(
+            golden_result=grad_in_cpu, torch_tpu_result=grad_in_tpu.cpu()
+        )
+
+    # Out-variant buffer reuse: matching shape, wrong shape requiring resize,
+    # and empty(0)
+    input_size = (2, 3, 4)
+    output_size = (8,)
+    grad_out_cpu = torch.randn(2, 3, 8, dtype=torch.float32)
+    grad_out_tpu = grad_out_cpu.to(tpu_device)
+    for init_shape in (input_size, (1, 1, 1), (0,)):
+      grad_in_cpu = torch.full(init_shape, 99.0, dtype=torch.float32)
+      grad_in_tpu = torch.full(
+          init_shape, 99.0, dtype=torch.float32, device=tpu_device
+      )
+      ret_cpu = torch.ops.aten.upsample_linear1d_backward.grad_input(
+          grad_out_cpu,
+          list(output_size),
+          list(input_size),
+          False,
+          None,
+          grad_input=grad_in_cpu,
+      )
+      ret_tpu = torch.ops.aten.upsample_linear1d_backward.grad_input(
+          grad_out_tpu,
+          list(output_size),
+          list(input_size),
+          False,
+          None,
+          grad_input=grad_in_tpu,
+      )
+      self.assertIs(ret_tpu, grad_in_tpu)
+      self.assertEqual(grad_in_tpu.shape, input_size)
+      self.assert_close(
+          golden_result=ret_cpu, torch_tpu_result=grad_in_tpu.cpu()
+      )
+
+    # Dtypes: float32, float64, bfloat16, float16
+    for dtype in (torch.float32, torch.float64, torch.bfloat16, torch.float16):
+      for input_size, output_size in (((2, 2, 4), (9,)), ((2, 2, 9), (4,))):
+        for align_corners in (True, False):
+          grad_out_cpu = torch.randn(
+              input_size[0], input_size[1], output_size[0], dtype=dtype
+          )
+          grad_out_tpu = grad_out_cpu.to(tpu_device)
+          grad_in_cpu = torch.empty(input_size, dtype=dtype)
+          grad_in_tpu = torch.empty(input_size, dtype=dtype, device=tpu_device)
+          torch.ops.aten.upsample_linear1d_backward.grad_input(
+              grad_out_cpu,
+              list(output_size),
+              list(input_size),
+              align_corners,
+              None,
+              grad_input=grad_in_cpu,
+          )
+          torch.ops.aten.upsample_linear1d_backward.grad_input(
+              grad_out_tpu,
+              list(output_size),
+              list(input_size),
+              align_corners,
+              None,
+              grad_input=grad_in_tpu,
+          )
+          if dtype in (torch.bfloat16, torch.float16):
+            self.assert_close(
+                golden_result=grad_in_cpu,
+                torch_tpu_result=grad_in_tpu.cpu(),
+                atol=1e-2,
+                rtol=1e-2,
+            )
+          else:
+            self.assert_close(
+                golden_result=grad_in_cpu,
+                torch_tpu_result=grad_in_tpu.cpu(),
+            )
+
   def test_bitwise_right_shift(self):
     tpu_device = torch.device("tpu")
     shift_by_int32 = torch.tensor([1, 2, 4, 5], dtype=torch.int32)

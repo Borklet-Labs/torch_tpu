@@ -3923,7 +3923,6 @@ class TestOps(op_testing.OpInfoTestBase):
     self.do_test_op(
         "nn.functional.interpolate",
         variant_test_name="linear",
-        check_grad=False,
         exclude_dtypes=_if_tpu_vs_gpu_compiled(INTEGRAL_DTYPES, ()),
     )
 

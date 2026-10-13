@@ -30,6 +30,13 @@ at::Tensor& AtenUpsampleLinear1dOut(const at::Tensor& self,
                                     std::optional<double> scales,
                                     at::Tensor& out);
 
+at::Tensor& AtenUpsampleLinear1dBackwardGradInput(const at::Tensor& grad_output,
+                                                  at::IntArrayRef output_size,
+                                                  at::IntArrayRef input_size,
+                                                  bool align_corners,
+                                                  std::optional<double> scales,
+                                                  at::Tensor& grad_input);
+
 }  // namespace torch_tpu
 
 #endif  // TORCH_TPU_CSRC_OPS_UPSAMPLE_UPSAMPLE_LINEAR1D_ATEN_KERNELS_H_

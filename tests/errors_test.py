@@ -614,6 +614,130 @@ class TpuVsGpuErrorTest(et.ErrorTestBase):
     ):
       torch.ops.aten.upsample_linear1d.out(t, [10], False, None, out=out)
 
+  def test_upsample_linear1d_backward_invalid_output_size(self):
+    grad_output = torch.ones(1, 2, 10, device=et.device(), dtype=torch.float32)
+    grad_input = torch.empty(1, 2, 4, device=et.device(), dtype=torch.float32)
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""upsample_linear1d_backward(): expected output_size to have 1 element, got 2""",
+        gpu="""It is expected output_size equals to 1, but got size 2""",
+    ):
+      torch.ops.aten.upsample_linear1d_backward.grad_input(
+          grad_output,
+          [10, 10],
+          [1, 2, 4],
+          False,
+          None,
+          grad_input=grad_input,
+      )
+
+  def test_upsample_linear1d_backward_invalid_input_size(self):
+    grad_output = torch.ones(1, 2, 10, device=et.device(), dtype=torch.float32)
+    grad_input = torch.empty(1, 2, 4, device=et.device(), dtype=torch.float32)
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""upsample_linear1d_backward(): expected input_size to have 3 elements, got 2""",
+        gpu="""It is expected input_size equals to 3, but got size 2""",
+    ):
+      torch.ops.aten.upsample_linear1d_backward.grad_input(
+          grad_output,
+          [10],
+          [1, 4],
+          False,
+          None,
+          grad_input=grad_input,
+      )
+
+  def test_upsample_linear1d_backward_invalid_size(self):
+    grad_output = torch.ones(1, 2, 0, device=et.device(), dtype=torch.float32)
+    grad_input = torch.empty(1, 2, 4, device=et.device(), dtype=torch.float32)
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""upsample_linear1d_backward(): expected input and output sizes to be greater than 0, got input (W: 4) and output (W: 0)""",
+        gpu="""Input and output sizes should be greater than 0, but got input (W: 4) and output (W: 0)""",
+    ):
+      torch.ops.aten.upsample_linear1d_backward.grad_input(
+          grad_output,
+          [0],
+          [1, 2, 4],
+          False,
+          None,
+          grad_input=grad_input,
+      )
+
+  def test_upsample_linear1d_backward_invalid_rank(self):
+    grad_output = torch.ones(1, 10, device=et.device(), dtype=torch.float32)
+    grad_input = torch.empty(1, 2, 4, device=et.device(), dtype=torch.float32)
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""upsample_linear1d_backward(): expected 3D grad_output tensor, got 2D tensor""",
+        gpu="""Expected a tensor of dimension 3 and tensor.size[0] == 1 but got: dimension 2 and tensor.size[0] = 1""",
+    ):
+      torch.ops.aten.upsample_linear1d_backward.grad_input(
+          grad_output,
+          [10],
+          [1, 2, 4],
+          False,
+          None,
+          grad_input=grad_input,
+      )
+
+  def test_upsample_linear1d_backward_shape_mismatch(self):
+    grad_output = torch.ones(1, 2, 8, device=et.device(), dtype=torch.float32)
+    grad_input = torch.empty(1, 2, 4, device=et.device(), dtype=torch.float32)
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""upsample_linear1d_backward(): expected grad_output to have size [1, 2, 10], got [1, 2, 8]""",
+        gpu="""Expected a tensor of dimension 3 and tensor.size[2] == 10 but got: dimension 3 and tensor.size[2] = 8""",
+    ):
+      torch.ops.aten.upsample_linear1d_backward.grad_input(
+          grad_output,
+          [10],
+          [1, 2, 4],
+          False,
+          None,
+          grad_input=grad_input,
+      )
+
+  def test_upsample_linear1d_backward_invalid_dtype(self):
+    for dtype, tpu_dtype, gpu_dtype in (
+        (torch.bool, "bool", "Bool"),
+        (torch.int32, "int32", "Int"),
+        (torch.int64, "int64", "Long"),
+    ):
+      grad_output = torch.ones(1, 2, 10, device=et.device(), dtype=dtype)
+      grad_input = torch.empty(1, 2, 4, device=et.device(), dtype=dtype)
+      with et.assert_raises_message(
+          NotImplementedError,
+          tpu=f"""upsample_linear1d_backward(): not implemented for {tpu_dtype}""",
+          gpu=f""""upsample_linear1d_out_frame_backward_unrolled" not implemented for '{gpu_dtype}'""",
+      ):
+        torch.ops.aten.upsample_linear1d_backward.grad_input(
+            grad_output,
+            [10],
+            [1, 2, 4],
+            False,
+            None,
+            grad_input=grad_input,
+        )
+
+  def test_upsample_linear1d_backward_grad_input_dtype_mismatch(self):
+    grad_output = torch.ones(1, 2, 10, device=et.device(), dtype=torch.float32)
+    grad_input = torch.empty(1, 2, 4, device=et.device(), dtype=torch.int32)
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""upsample_linear1d_backward(): expected grad_input dtype float32, got int32""",
+        gpu="""Expected out tensor to have dtype float, but got int instead""",
+    ):
+      torch.ops.aten.upsample_linear1d_backward.grad_input(
+          grad_output,
+          [10],
+          [1, 2, 4],
+          False,
+          None,
+          grad_input=grad_input,
+      )
+
   def test_upsample_bicubic2d_backward_invalid_grad_output_rank(self):
     grad_output = torch.ones(1, 2, 3, device=et.device(), dtype=torch.float32)
     with et.assert_raises_message(

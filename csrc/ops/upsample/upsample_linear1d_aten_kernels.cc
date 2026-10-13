@@ -26,6 +26,7 @@
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "c10/core/ScalarType.h"
+#include "csrc/common/cache_key.h"
 #include "csrc/common/dimension_types.h"
 #include "csrc/common/dtype.h"
 #include "csrc/common/error_utils.h"
@@ -78,6 +79,16 @@ mlir::MlirOp Gather(
                                  slice_sizes, indices_are_sorted);
 }
 
+mlir::MlirOp Scatter(
+    mlir::MlirOp input, mlir::MlirOp scatter_indices, mlir::MlirOp updates,
+    const mlir::RegionBuilderCallback& update_computation,
+    mlir::stablehlo::ScatterDimensionNumbersAttr scatter_dimension_numbers,
+    bool indices_are_sorted = false) {
+  return mlir::stablehlo::Scatter(input, scatter_indices, updates,
+                                  update_computation, scatter_dimension_numbers,
+                                  indices_are_sorted)[0];
+}
+
 mlir::MlirOp Reshape(mlir::Type result_type, mlir::MlirOp operand) {
   return mlir::stablehlo::Reshape(result_type, operand);
 }
@@ -109,6 +120,23 @@ Linear1dGatherConfig GetLinear1dGatherConfig(mlir::MlirOp input) {
           /*index_vector_dim=*/1);
 
   return {gather_dimension_numbers, slice_sizes};
+}
+
+mlir::stablehlo::ScatterDimensionNumbersAttr GetLinear1dScatterConfig(
+    mlir::MlirOp grad_output) {
+  const Dimensions update_window_dims = {0, 1};
+  const Dimensions inserted_window_dims = {2};
+  const Dimensions scatter_dims_to_operand_dims = {2};
+
+  return mlir::stablehlo::ScatterDimensionNumbersAttr::get(
+      &grad_output.getContext(),
+      /*update_window_dims=*/AsArrayRef<int64_t>(update_window_dims),
+      /*inserted_window_dims=*/AsArrayRef<int64_t>(inserted_window_dims),
+      /*input_batching_dims=*/{},
+      /*scatter_indices_batching_dims=*/{},
+      /*scatter_dims_to_operand_dims=*/
+      AsArrayRef<int64_t>(scatter_dims_to_operand_dims),
+      /*index_vector_dim=*/1);
 }
 
 absl::StatusOr<mlir::MlirOp> ComputeLinear1dSourceIndex(
@@ -168,9 +196,9 @@ absl::StatusOr<Linear1dDimInfo> ComputeLinear1dDimInfo(
                                             std::max<int64_t>(0, in_size - 1));
 
   const auto idx_floor_i32 =
-      Clamp(idx_floor_i32_unclamped, zero_i32, max_idx_i32);
+      Clamp(zero_i32, idx_floor_i32_unclamped, max_idx_i32);
   const auto idx_ceil_i32 =
-      Clamp(idx_ceil_i32_unclamped, zero_i32, max_idx_i32);
+      Clamp(zero_i32, idx_ceil_i32_unclamped, max_idx_i32);
 
   const auto index_tensor_type =
       mlir::RankedTensorType::get({out_size, 1}, i32_type);
@@ -240,6 +268,64 @@ absl::StatusOr<mlir::MlirOp> BuildUpsampleLinear1dShlo(
   return mlir::stablehlo::ConvertElementType(interpolated, element_type);
 }
 
+absl::StatusOr<mlir::MlirOp> BuildUpsampleLinear1dBackwardShlo(
+    mlir::MlirOp grad_output, const Dimensions& grad_input_shape,
+    AlignCorners align_corners, std::optional<double> scales,
+    mlir::Type calc_type) {
+  mlir::MlirBuilder& builder = grad_output.getBuilder();
+  const Dimensions grad_output_shape =
+      CopyIntVector(GetTensorTypeOrDie(grad_output).getShape());
+
+  const int64_t in_width = grad_input_shape[2];
+  const int64_t out_width = grad_output_shape[2];
+  if (in_width == out_width) {
+    return grad_output;
+  }
+  const auto element_type = GetTensorTypeOrDie(grad_output).getElementType();
+
+  TT_ASSIGN_OR_RETURN(
+      const auto src_idx,
+      ComputeLinear1dSourceIndex(builder, out_width, in_width, scales,
+                                 align_corners, calc_type));
+
+  TT_ASSIGN_OR_RETURN(
+      const auto dim_info,
+      ComputeLinear1dDimInfo(builder, src_idx, out_width, in_width, calc_type));
+
+  const auto grad_output_calc =
+      mlir::stablehlo::ConvertElementType(grad_output, calc_type);
+
+  const auto weight_broadcast_type = mlir::RankedTensorType::get(
+      AsArrayRef<int64_t>(grad_output_shape), calc_type);
+  const auto left_weight_bcast =
+      BroadcastInDim(weight_broadcast_type, dim_info.left_weight, {2});
+  const auto right_weight_bcast =
+      BroadcastInDim(weight_broadcast_type, dim_info.right_weight, {2});
+
+  TT_ASSIGN_OR_RETURN(const auto left_update,
+                      BuildMulShlo(grad_output_calc, left_weight_bcast));
+  TT_ASSIGN_OR_RETURN(const auto right_update,
+                      BuildMulShlo(grad_output_calc, right_weight_bcast));
+
+  const auto grad_input_zeros = MakeConstant(
+      builder, 0.0, calc_type, AsArrayRef<int64_t>(grad_input_shape));
+
+  const auto scatter_dnums = GetLinear1dScatterConfig(grad_output);
+  const auto scatter_body = [calc_type](mlir::RegionBuilder& rb) {
+    mlir::stablehlo::buildReduceBody<mlir::stablehlo::AddOp>(
+        calc_type, rb.getRegion(), rb.getOpBuilder());
+  };
+
+  const auto grad_input_left =
+      Scatter(grad_input_zeros, dim_info.left_indices, left_update,
+              scatter_body, scatter_dnums, /*indices_are_sorted=*/true);
+  const auto grad_input_accum =
+      Scatter(grad_input_left, dim_info.right_indices, right_update,
+              scatter_body, scatter_dnums, /*indices_are_sorted=*/true);
+
+  return mlir::stablehlo::ConvertElementType(grad_input_accum, element_type);
+}
+
 void CheckUpsampleLinear1dDtypes(const at::Tensor& tensor) {
   TT_CHECK_THROW(at::isFloatingType(tensor.scalar_type()),
                  error::kPythonNotImplementedError)
@@ -270,6 +356,49 @@ void ValidateUpsampleLinear1dInputs(const at::Tensor& self,
                  error::kInvalidArgument)
       << "expected out dtype " << ToString(self.scalar_type()) << ", got "
       << ToString(out.scalar_type());
+}
+
+void ValidateUpsampleLinear1dBackwardInputs(const at::Tensor& grad_output,
+                                            at::IntArrayRef output_size,
+                                            at::IntArrayRef input_size,
+                                            const at::Tensor& grad_input) {
+  TT_CHECK_THROW(output_size.size() == 1, error::kInvalidArgument)
+      << "expected output_size to have 1 element, got "
+      << ToString(output_size.size());
+
+  TT_CHECK_THROW(input_size.size() == 3, error::kInvalidArgument)
+      << "expected input_size to have 3 elements, got "
+      << ToString(input_size.size());
+
+  const int64_t nbatch = input_size[0];
+  const int64_t channels = input_size[1];
+  const int64_t input_width = input_size[2];
+  const int64_t output_width = output_size[0];
+
+  TT_CHECK_THROW(input_width > 0 && output_width > 0, error::kInvalidArgument)
+      << "expected input and output sizes to be greater than 0, got input (W: "
+      << ToString(input_width) << ") and output (W: " << ToString(output_width)
+      << ")";
+
+  TT_CHECK_THROW(grad_output.dim() == 3, error::kInvalidArgument)
+      << "expected 3D grad_output tensor, got " << ToString(grad_output.dim())
+      << "D tensor";
+
+  const Dimensions expected_grad_output_shape = {nbatch, channels,
+                                                 output_width};
+  TT_CHECK_THROW(
+      grad_output.sizes() == AsArrayRef<int64_t>(expected_grad_output_shape),
+      error::kInvalidArgument)
+      << "expected grad_output to have size "
+      << ToString(expected_grad_output_shape) << ", got "
+      << ToString(grad_output.sizes());
+
+  CheckUpsampleLinear1dDtypes(grad_output);
+
+  TT_CHECK_THROW(grad_output.scalar_type() == grad_input.scalar_type(),
+                 error::kInvalidArgument)
+      << "expected grad_input dtype " << ToString(grad_output.scalar_type())
+      << ", got " << ToString(grad_input.scalar_type());
 }
 
 }  // namespace
@@ -318,6 +447,57 @@ at::Tensor& AtenUpsampleLinear1dOut(const at::Tensor& self,
                                .out_dims = CopyIntVector(out.sizes()),
                                .op_param_cache_keys = std::move(param_keys)})));
         return out;
+      });
+}
+
+at::Tensor& AtenUpsampleLinear1dBackwardGradInput(const at::Tensor& grad_output,
+                                                  at::IntArrayRef output_size,
+                                                  at::IntArrayRef input_size,
+                                                  bool align_corners,
+                                                  std::optional<double> scales,
+                                                  at::Tensor& grad_input) {
+  TT_KERNEL(
+      OpName::kUpsampleLinear1dBackwardGradInput, param_keys,
+      (grad_output, IgnoreInCacheKey(output_size, "Doesn't affect SHLO"),
+       input_size, align_corners, scales, grad_input),
+      {
+        ValidateUpsampleLinear1dBackwardInputs(grad_output, output_size,
+                                               input_size, grad_input);
+
+        const Dimensions expected_grad_input_shape = CopyIntVector(input_size);
+        TT_THROW_IF_ERROR(
+            ResizeTensorIfShapeDiffers(grad_input, expected_grad_input_shape));
+
+        if (grad_input.numel() == 0) {
+          return grad_input;
+        }
+
+        TT_ASSIGN_OR_THROW(
+            const auto element_type,
+            ConvertTo<mlir::ElementType>(grad_input.scalar_type()));
+        const at::ScalarType real_dtype =
+            c10::toRealValueType(grad_input.scalar_type());
+
+        const auto op_builder =
+            [grad_in_shape = CopyIntVector(grad_input.sizes()),
+             align_corners =
+                 align_corners ? AlignCorners::kYes : AlignCorners::kNo,
+             scales, real_dtype](
+                mlir::MlirOp grad_out) -> absl::StatusOr<mlir::MlirOp> {
+          const mlir::Type calc_type =
+              (real_dtype == at::kDouble)
+                  ? grad_out.getBuilder().getOpBuilder().getF64Type()
+                  : grad_out.getBuilder().getOpBuilder().getF32Type();
+          return BuildUpsampleLinear1dBackwardShlo(
+              grad_out, grad_in_shape, align_corners, scales, calc_type);
+        };
+
+        TT_THROW_IF_ERROR(
+            (DispatchOpOut<1>(std::move(op_builder), {grad_output}, grad_input,
+                              {.out_dtype = element_type,
+                               .out_dims = CopyIntVector(grad_input.sizes()),
+                               .op_param_cache_keys = std::move(param_keys)})));
+        return grad_input;
       });
 }
 

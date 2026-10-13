@@ -92,6 +92,7 @@ torch_tpu_cc_library(
     srcs = ["upsample_linear1d_aten_kernels.cc"],
     hdrs = ["upsample_linear1d_aten_kernels.h"],
     deps = [
+        "//csrc/common:cache_key",
         "//csrc/common:dimension_types",
         "//csrc/common:dtype",
         "//csrc/common:error_utils",
