@@ -52,7 +52,6 @@
 #include "csrc/eager/eager_mode.h"
 #include "csrc/eager/execution_task.h"
 #include "csrc/eager/structured_log_buffer.h"
-#include "csrc/eager/traversal_utils.h"
 #include "csrc/ops/op_builder_utils.h"
 #include "csrc/ops/op_names.h"
 #include "csrc/ops/python_context.h"
@@ -751,15 +750,12 @@ std::vector<PendingSnapshotMaterialization> PrepareSnapshotMaterializations(
       snapshot_events = stream_state->GetSnapshotEvents();
   for (auto& unique_snapshot_event : snapshot_events) {
     auto& snapshot_event = *unique_snapshot_event;
-
-    auto snapshot_traversals = PrepareTraversals(
-        std::move(snapshot_event.must_execute), snapshot_event.must_materialize,
-        stream_state->core_pinning_mode());
     PruneCompletedFutures(snapshot_event.futures);
     snapshots_to_materialize.push_back(
-        {.traversals = std::move(snapshot_traversals),
-         .execution_task = std::move(snapshot_event.execution_task),
+        {.must_execute = std::move(snapshot_event.must_execute),
          .must_materialize = std::move(snapshot_event.must_materialize),
+         .core_pinning_mode = stream_state->core_pinning_mode(),
+         .execution_task = std::move(snapshot_event.execution_task),
          .settings = std::move(snapshot_event.materialization_settings),
          .futures = std::move(snapshot_event.futures),
          .snapshot_promise = std::move(snapshot_event.snapshot_promise)});

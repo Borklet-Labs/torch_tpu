@@ -36,7 +36,6 @@
 #include "csrc/eager/device_buffer.h"
 #include "csrc/eager/execution_task.h"
 #include "csrc/eager/structured_log_buffer.h"
-#include "csrc/eager/traversal.h"
 #include "xla/future.h"
 
 namespace torch_tpu {
@@ -167,15 +166,15 @@ struct MaterializationSettings {
 
 // A snapshot to be materialized.
 struct PendingSnapshotMaterialization {
-  // The traversals that must be executed to materialize the snapshot.
-  // This may be empty if there has been no eager mode work since the last
-  // snapshot.
-  std::vector<absl_nonnull std::unique_ptr<Traversal>> traversals;
+  // The nodes that must be executed to reach the snapshot.
+  std::vector<SharedDeviceBufferList> must_execute;
+  // The nodes that must be materialized by the snapshot.
+  std::vector<SharedDeviceBufferList> must_materialize;
+  // The core that the must_execute nodes should be executed on.
+  CorePinningMode core_pinning_mode;
   // If the snapshot includes a compiled mode execution task, it will be stored
   // here.
   std::optional<ExecutionTask> execution_task;
-  // The nodes that were expected to be materialized by the traversals.
-  std::vector<SharedDeviceBufferList> must_materialize;
   // Settings for the materialization.
   MaterializationSettings settings;
   // Futures that must be completed before the snapshot is reached.
@@ -185,11 +184,12 @@ struct PendingSnapshotMaterialization {
   xla::Promise<std::shared_ptr<EventSnapshot>> snapshot_promise;
 };
 
-// Returns a sequence of Traversals that, if compiled and executed, would
-// materialize all live tensors created on the given device and stream.
+// Returns a list of execution nodes and up to one ExecutionTask that, if
+// compiled and executed, would materialize all live tensors created on the
+// given device and stream.
 // These are grouped by the snapshot they are satisfying.
 //
-// This clears these nodes from the events queue.
+// This clears these nodes and compiled tasks from the events queue.
 std::vector<PendingSnapshotMaterialization> PrepareSnapshotMaterializations(
     c10::DeviceIndex device_index, c10::StreamId stream_id);
 

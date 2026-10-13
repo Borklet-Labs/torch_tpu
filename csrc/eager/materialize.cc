@@ -65,6 +65,7 @@
 #include "csrc/eager/split_traversal.h"
 #include "csrc/eager/structured_log_buffer.h"
 #include "csrc/eager/traversal.h"
+#include "csrc/eager/traversal_utils.h"
 #include "csrc/ops/op_names.h"
 #include "mlir/IR/MLIRContext.h"
 #include "tsl/profiler/lib/traceme.h"
@@ -391,9 +392,13 @@ std::vector<ExecutionTask> ProcessMaterializationTask(
   auto snapshots_to_materialize =
       PrepareSnapshotMaterializations(task.device_index, task.stream_id);
   for (auto& snapshot_to_materialize : snapshots_to_materialize) {
-    MaterializationStages stages =
-        ApplySplitMode(std::move(snapshot_to_materialize.traversals),
-                       snapshot_to_materialize.settings, mlir_context);
+    auto traversals =
+        PrepareTraversals(std::move(snapshot_to_materialize.must_execute),
+                          snapshot_to_materialize.must_materialize,
+                          snapshot_to_materialize.core_pinning_mode);
+
+    MaterializationStages stages = ApplySplitMode(
+        std::move(traversals), snapshot_to_materialize.settings, mlir_context);
 
     if (stages.first_error.ok()) {
       stages.first_error =

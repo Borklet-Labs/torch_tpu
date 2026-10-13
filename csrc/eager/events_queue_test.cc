@@ -40,7 +40,6 @@
 #include "csrc/eager/materialize.h"
 #include "csrc/eager/structured_log_buffer.h"
 #include "csrc/eager/tensor_to_buffer.h"
-#include "csrc/eager/traversal.h"
 #include "csrc/ops/op_builder_utils.h"
 #include "csrc/ops/op_names.h"
 #include "csrc/ops/python_context.h"
@@ -100,15 +99,9 @@ TEST_F(EventsQueueTest, GetsLiveDeferredBuffers) {
       PrepareSnapshotMaterializations(device_index, stream_id);
 
   ASSERT_EQ(pending_snapshots.size(), 1);
-  const auto& traversals = pending_snapshots[0].traversals;
-
-  ASSERT_EQ(traversals.size(), 1);
-  const Traversal& traversal = *traversals[0];
-  EXPECT_THAT(traversal.arguments(), testing::IsEmpty());
-  EXPECT_THAT(traversal.execution_order(),
+  EXPECT_THAT(pending_snapshots[0].must_execute,
               testing::ElementsAre(ref_a.device_buffer_list(),
                                    ref_b.device_buffer_list()));
-  EXPECT_THAT(traversal.outputs(), testing::ElementsAre(ref_a, ref_b));
 }
 
 TEST_F(EventsQueueTest, IgnoresPlaceholderBuffers) {
@@ -128,8 +121,7 @@ TEST_F(EventsQueueTest, IgnoresPlaceholderBuffers) {
       PrepareSnapshotMaterializations(device_index, stream_id);
 
   ASSERT_EQ(pending_snapshots.size(), 1);
-  const auto& traversals = pending_snapshots[0].traversals;
-  EXPECT_THAT(traversals, testing::IsEmpty());
+  EXPECT_THAT(pending_snapshots[0].must_execute, testing::IsEmpty());
 }
 
 TEST_F(EventsQueueTest, SyncIgnoresEmptyBuffers) {
@@ -149,8 +141,7 @@ TEST_F(EventsQueueTest, SyncIgnoresEmptyBuffers) {
       PrepareSnapshotMaterializations(device_index, stream_id);
 
   ASSERT_EQ(pending_snapshots.size(), 1);
-  const auto& traversals = pending_snapshots[0].traversals;
-  EXPECT_THAT(traversals, testing::IsEmpty());
+  EXPECT_THAT(pending_snapshots[0].must_execute, testing::IsEmpty());
 }
 
 TEST_F(EventsQueueTest, IgnoresAlreadyMaterializedBuffers) {
@@ -172,8 +163,7 @@ TEST_F(EventsQueueTest, IgnoresAlreadyMaterializedBuffers) {
       PrepareSnapshotMaterializations(device_index, stream_id);
 
   ASSERT_EQ(pending_snapshots.size(), 1);
-  const auto& traversals = pending_snapshots[0].traversals;
-  EXPECT_THAT(traversals, testing::IsEmpty());
+  EXPECT_THAT(pending_snapshots[0].must_execute, testing::IsEmpty());
 }
 
 TEST_F(EventsQueueTest, ClearsBuffersAfterMaterialization) {
@@ -219,8 +209,7 @@ TEST_F(EventsQueueTest, ClearsBuffersAfterMaterialization) {
       PrepareSnapshotMaterializations(device_index, stream_id);
 
   ASSERT_EQ(pending_snapshots.size(), 1);
-  const auto& traversals = pending_snapshots[0].traversals;
-  EXPECT_THAT(traversals, testing::IsEmpty());
+  EXPECT_THAT(pending_snapshots[0].must_execute, testing::IsEmpty());
 }
 
 TEST_F(EventsQueueTest, StopsTrackingAfterClearEventsQueue) {
@@ -245,8 +234,7 @@ TEST_F(EventsQueueTest, StopsTrackingAfterClearEventsQueue) {
       PrepareSnapshotMaterializations(device_index, stream_id);
 
   ASSERT_EQ(pending_snapshots1.size(), 1);
-  const auto& traversals1 = pending_snapshots1[0].traversals;
-  EXPECT_THAT(traversals1, testing::IsEmpty());
+  EXPECT_THAT(pending_snapshots1[0].must_execute, testing::IsEmpty());
 
   // Create a second data pointer to the same buffer.
   ref.device_buffer_list()->IncrementLiveDataPtrs(ref.index());
@@ -254,122 +242,10 @@ TEST_F(EventsQueueTest, StopsTrackingAfterClearEventsQueue) {
   EventSnapshot::Record(device_index, stream_id, {});
   auto pending_snapshots2 =
       PrepareSnapshotMaterializations(device_index, stream_id);
-  ASSERT_EQ(pending_snapshots2.size(), 1);
-  const auto& traversals2 = pending_snapshots2[0].traversals;
 
   // The buffer is live, but the DeferredOp was cleared and so does not need
   // to be materialized.
-  EXPECT_THAT(traversals2, testing::IsEmpty());
-}
-
-TEST_F(EventsQueueTest, SingleTraversalIfPossible) {
-  ClearAllStreams();
-  ScopedPythonContextCapturer capturer(OpName::kEmpty);
-  Shape shape(Dimensions{8}, mlir::ElementType::F32);
-
-  // Put three deferred ops in the queue.
-  TT_ASSERT_OK_AND_ASSIGN(auto refs_a, DeviceBufferList::CreateDeferred(
-                                           OpName::kAdd, DummyBuilder, {},
-                                           OpParamCacheKeys::Empty(), {shape}));
-  auto ref_a = refs_a[0];
-  auto list_a = ref_a.device_buffer_list();
-  RecordDeferredOpCreated(list_a);
-
-  TT_ASSERT_OK_AND_ASSIGN(auto refs_b, DeviceBufferList::CreateDeferred(
-                                           OpName::kAdd, DummyBuilder, {},
-                                           OpParamCacheKeys::Empty(), {shape}));
-  auto ref_b = refs_b[0];
-  auto list_b = ref_b.device_buffer_list();
-  RecordDeferredOpCreated(list_b);
-
-  TT_ASSERT_OK_AND_ASSIGN(auto refs_c, DeviceBufferList::CreateDeferred(
-                                           OpName::kAdd, DummyBuilder, {},
-                                           OpParamCacheKeys::Empty(), {shape}));
-  auto ref_c = refs_c[0];
-  auto list_c = ref_c.device_buffer_list();
-  RecordDeferredOpCreated(list_c);
-
-  // Ask for a plan to materialize the stream.
-  const auto device_index = list_a->device_index();
-  const auto stream_id = list_a->stream_id();
-  EventSnapshot::Record(device_index, stream_id, {list_a, list_b, list_c});
-  auto pending_snapshots =
-      PrepareSnapshotMaterializations(device_index, stream_id);
-
-  ASSERT_EQ(pending_snapshots.size(), 1);
-  const auto& traversals = pending_snapshots[0].traversals;
-
-  // There are no required split points, so a single traversal is returned
-  // with all required nodes as outputs.
-  ASSERT_EQ(traversals.size(), 1);
-  const Traversal& traversal = *traversals[0];
-  EXPECT_THAT(traversal.arguments(), testing::IsEmpty());
-  EXPECT_THAT(traversal.execution_order(),
-              testing::ElementsAre(list_a, list_b, list_c));
-  EXPECT_THAT(traversal.outputs(), testing::ElementsAre(ref_a, ref_b, ref_c));
-}
-
-TEST_F(EventsQueueTest, SplitModeRespected) {
-  ClearAllStreams();
-  ScopedPythonContextCapturer capturer(OpName::kEmpty);
-  Shape shape(Dimensions{8}, mlir::ElementType::F32);
-
-  // Put five deferred ops in the queue:
-  // [a (split after), b, c (split before), d (split both), e]
-  TT_ASSERT_OK_AND_ASSIGN(auto refs_a, DeviceBufferList::CreateDeferred(
-                                           OpName::kAdd, DummyBuilder, {},
-                                           OpParamCacheKeys::Empty(), {shape},
-                                           OpSplitMode::kSplitAfter));
-  auto list_a = refs_a[0].device_buffer_list();
-  RecordDeferredOpCreated(list_a);
-
-  TT_ASSERT_OK_AND_ASSIGN(auto refs_b, DeviceBufferList::CreateDeferred(
-                                           OpName::kAdd, DummyBuilder, {},
-                                           OpParamCacheKeys::Empty(), {shape}));
-  auto list_b = refs_b[0].device_buffer_list();
-  RecordDeferredOpCreated(list_b);
-
-  TT_ASSERT_OK_AND_ASSIGN(auto refs_c, DeviceBufferList::CreateDeferred(
-                                           OpName::kAdd, DummyBuilder, {},
-                                           OpParamCacheKeys::Empty(), {shape},
-                                           OpSplitMode::kSplitBefore));
-  auto list_c = refs_c[0].device_buffer_list();
-  RecordDeferredOpCreated(list_c);
-
-  TT_ASSERT_OK_AND_ASSIGN(auto refs_d, DeviceBufferList::CreateDeferred(
-                                           OpName::kAdd, DummyBuilder, {},
-                                           OpParamCacheKeys::Empty(), {shape},
-                                           OpSplitMode::kSplitBoth));
-  auto list_d = refs_d[0].device_buffer_list();
-  RecordDeferredOpCreated(list_d);
-
-  TT_ASSERT_OK_AND_ASSIGN(auto refs_e, DeviceBufferList::CreateDeferred(
-                                           OpName::kAdd, DummyBuilder, {},
-                                           OpParamCacheKeys::Empty(), {shape}));
-  auto list_e = refs_e[0].device_buffer_list();
-  RecordDeferredOpCreated(list_e);
-
-  // Ask for a plan to materialize everything.
-  const auto device_index = list_a->device_index();
-  const auto stream_id = list_a->stream_id();
-  EventSnapshot::Record(device_index, stream_id,
-                        {list_a, list_b, list_c, list_d, list_e});
-  auto pending_snapshots =
-      PrepareSnapshotMaterializations(device_index, stream_id);
-
-  ASSERT_EQ(pending_snapshots.size(), 1);
-  const auto& traversals = pending_snapshots[0].traversals;
-
-  // Each op ends up in its own traversal.
-  // a is split after, so we must split between a | b.
-  // c is split before, so we must split between b | c.
-  // d is split both, so we must split between c | d and between d | e.
-  ASSERT_EQ(traversals.size(), 5);
-  EXPECT_THAT(traversals[0]->execution_order(), testing::ElementsAre(list_a));
-  EXPECT_THAT(traversals[1]->execution_order(), testing::ElementsAre(list_b));
-  EXPECT_THAT(traversals[2]->execution_order(), testing::ElementsAre(list_c));
-  EXPECT_THAT(traversals[3]->execution_order(), testing::ElementsAre(list_d));
-  EXPECT_THAT(traversals[4]->execution_order(), testing::ElementsAre(list_e));
+  EXPECT_THAT(pending_snapshots2[0].must_execute, testing::IsEmpty());
 }
 
 TEST_F(EventsQueueTest, DeadCodeEliminated) {
@@ -416,13 +292,8 @@ TEST_F(EventsQueueTest, DeadCodeEliminated) {
       PrepareSnapshotMaterializations(device_index, stream_id);
 
   ASSERT_EQ(pending_snapshots.size(), 1);
-  const auto& traversals = pending_snapshots[0].traversals;
-  ASSERT_EQ(traversals.size(), 1);
-
   // The dead ops should be stripped.
-  const Traversal& traversal = *traversals[0];
-  EXPECT_THAT(traversal.execution_order(), testing::ElementsAre(list_d));
-  EXPECT_THAT(traversal.outputs(), testing::ElementsAre(ref_d));
+  EXPECT_THAT(pending_snapshots[0].must_execute, testing::ElementsAre(list_d));
 }
 
 TEST_F(EventsQueueTest, DeadSideEffectsRetained) {
@@ -463,7 +334,7 @@ TEST_F(EventsQueueTest, DeadSideEffectsRetained) {
     dead_c_ptr = list_c.get();
   }
 
-  // Create a fourth, non-dead node and request a traversal plan for it.
+  // Create a fourth, non-dead node and request a snapshot for it.
   TT_ASSERT_OK_AND_ASSIGN(auto refs_d, DeviceBufferList::CreateDeferred(
                                            OpName::kAdd, DummyBuilder, {},
                                            OpParamCacheKeys::Empty(), {shape}));
@@ -477,22 +348,13 @@ TEST_F(EventsQueueTest, DeadSideEffectsRetained) {
   auto pending_snapshots =
       PrepareSnapshotMaterializations(device_index, stream_id);
   ASSERT_EQ(pending_snapshots.size(), 1);
-  const auto& traversals = pending_snapshots[0].traversals;
 
-  // We get one traversal, as there were no required split points.
-  ASSERT_EQ(traversals.size(), 1);
-
-  // The side effect op is retained, and marked as an output to force it to
-  // execute. This keeps its dependent inputs a and b from elimination as well.
-  const Traversal& traversal = *traversals[0];
-  ASSERT_EQ(traversal.execution_order().size(), 4);
-  EXPECT_EQ(traversal.execution_order()[0].get(), dead_a_ptr);
-  EXPECT_EQ(traversal.execution_order()[1].get(), dead_b_ptr);
-  EXPECT_EQ(traversal.execution_order()[2].get(), dead_c_ptr);
-  EXPECT_EQ(traversal.execution_order()[3], list_d);
-  ASSERT_EQ(traversal.outputs().size(), 2);
-  EXPECT_EQ(traversal.outputs()[0].device_buffer_list().get(), dead_c_ptr);
-  EXPECT_EQ(traversal.outputs()[1], ref_d);
+  // We must still execute the dead ops.
+  ASSERT_EQ(pending_snapshots[0].must_execute.size(), 4);
+  EXPECT_EQ(pending_snapshots[0].must_execute[0].get(), dead_a_ptr);
+  EXPECT_EQ(pending_snapshots[0].must_execute[1].get(), dead_b_ptr);
+  EXPECT_EQ(pending_snapshots[0].must_execute[2].get(), dead_c_ptr);
+  EXPECT_EQ(pending_snapshots[0].must_execute[3], list_d);
 }
 
 TEST_F(EventsQueueTest, MaterializationIgnoresUnusedEmptyOps) {
@@ -526,119 +388,8 @@ TEST_F(EventsQueueTest, MaterializationIgnoresUnusedEmptyOps) {
   auto pending_snapshots =
       PrepareSnapshotMaterializations(device_index, stream_id);
   ASSERT_EQ(pending_snapshots.size(), 1);
-  const auto& traversals = pending_snapshots[0].traversals;
-
-  // We get one traversal, as there were no required split points.
-  ASSERT_EQ(traversals.size(), 1);
-
-  // The empty tensor is not included in the traversal.
-  const Traversal& traversal = *traversals[0];
-  EXPECT_THAT(traversal.execution_order(),
+  EXPECT_THAT(pending_snapshots[0].must_execute,
               testing::ElementsAre(non_empty_list));
-  EXPECT_THAT(traversal.outputs(), testing::ElementsAre(non_empty_ref));
-}
-
-TEST_F(EventsQueueTest, UsedEmptyOpsMaterializedOnFirstUse) {
-  ClearAllStreams();
-  ScopedPythonContextCapturer capturer(OpName::kEmpty);
-  Shape shape(Dimensions{8}, mlir::ElementType::F32);
-
-  // Create a pattern of [empty, non_empty, non_empty] where the second empty
-  // tensor uses the empty tensor as an input.
-  TT_ASSERT_OK_AND_ASSIGN(auto empty_refs, DeviceBufferList::CreateDeferred(
-                                               OpName::kEmpty, DummyBuilder, {},
-                                               OpParamCacheKeys::Empty(),
-                                               /*output_shapes=*/{shape}));
-  auto empty_ref = empty_refs[0];
-  auto empty_list = empty_ref.device_buffer_list();
-  RecordDeferredOpCreated(empty_list);
-  empty_list->IncrementLiveDataPtrs(empty_ref.index());
-
-  // Create a non-empty deferred tensor that does not rely on the empty tensor.
-  TT_ASSERT_OK_AND_ASSIGN(
-      auto first_non_empty_refs,
-      DeviceBufferList::CreateDeferred(OpName::kAdd, DummyBuilder, {},
-                                       OpParamCacheKeys::Empty(), {shape}));
-  auto first_non_empty_ref = first_non_empty_refs[0];
-  auto first_non_empty_list = first_non_empty_ref.device_buffer_list();
-  RecordDeferredOpCreated(first_non_empty_list);
-  first_non_empty_list->IncrementLiveDataPtrs(first_non_empty_ref.index());
-
-  TT_ASSERT_OK_AND_ASSIGN(
-      auto second_non_empty_refs,
-      DeviceBufferList::CreateDeferred(OpName::kAdd, DummyBuilder, {empty_ref},
-                                       OpParamCacheKeys::Empty(), {shape}));
-  auto second_non_empty_ref = second_non_empty_refs[0];
-  auto second_non_empty_list = second_non_empty_ref.device_buffer_list();
-  RecordDeferredOpCreated(second_non_empty_list);
-  second_non_empty_list->IncrementLiveDataPtrs(second_non_empty_ref.index());
-
-  // Prepare traversals for the non-empty tensors only.
-  const auto device_index = first_non_empty_list->device_index();
-  const auto stream_id = first_non_empty_list->stream_id();
-  EventSnapshot::Record(device_index, stream_id,
-                        {first_non_empty_list, second_non_empty_list});
-  auto pending_snapshots =
-      PrepareSnapshotMaterializations(device_index, stream_id);
-  ASSERT_EQ(pending_snapshots.size(), 1);
-  const auto& traversals = pending_snapshots[0].traversals;
-
-  // We get one traversal, as there were no required split points.
-  ASSERT_EQ(traversals.size(), 1);
-
-  // The empty tensor is included in the traversal, immediately before its use.
-  // It is not an explicit output.
-  const Traversal& traversal = *traversals[0];
-  EXPECT_THAT(traversal.execution_order(),
-              testing::ElementsAre(first_non_empty_list, empty_list,
-                                   second_non_empty_list));
-  EXPECT_THAT(traversal.outputs(),
-              testing::ElementsAre(first_non_empty_ref, second_non_empty_ref));
-}
-
-TEST_F(EventsQueueTest, MaterializationAppendsExplicitEmptyOps) {
-  ClearAllStreams();
-  ScopedPythonContextCapturer capturer(OpName::kEmpty);
-  Shape shape(Dimensions{8}, mlir::ElementType::F32);
-
-  // Create a deferred, empty tensor.
-  TT_ASSERT_OK_AND_ASSIGN(auto empty_refs, DeviceBufferList::CreateDeferred(
-                                               OpName::kEmpty, DummyBuilder, {},
-                                               OpParamCacheKeys::Empty(),
-                                               /*output_shapes=*/{shape}));
-  auto empty_ref = empty_refs[0];
-  auto empty_list = empty_ref.device_buffer_list();
-  RecordDeferredOpCreated(empty_list);
-  empty_list->IncrementLiveDataPtrs(empty_ref.index());
-
-  // Create a non-empty deferred tensor that does not rely on the empty tensor.
-  TT_ASSERT_OK_AND_ASSIGN(
-      auto non_empty_refs,
-      DeviceBufferList::CreateDeferred(OpName::kAdd, DummyBuilder, {},
-                                       OpParamCacheKeys::Empty(), {shape}));
-  auto non_empty_ref = non_empty_refs[0];
-  auto non_empty_list = non_empty_ref.device_buffer_list();
-  RecordDeferredOpCreated(non_empty_list);
-  non_empty_list->IncrementLiveDataPtrs(non_empty_ref.index());
-
-  // Explicitly mark the empty tensor as an output.
-  EventSnapshot::Record(non_empty_list->device_index(),
-                        non_empty_list->stream_id(),
-                        {empty_list, non_empty_list});
-  auto pending_snapshots = PrepareSnapshotMaterializations(
-      non_empty_list->device_index(), non_empty_list->stream_id());
-
-  // We get one traversal, as there were no required split points.
-  ASSERT_EQ(pending_snapshots.size(), 1);
-  const auto& traversals = pending_snapshots[0].traversals;
-  ASSERT_EQ(traversals.size(), 1);
-
-  // The empty tensor is appended after the non-empty list as an output.
-  const Traversal& traversal = *traversals[0];
-  EXPECT_THAT(traversal.execution_order(),
-              testing::ElementsAre(non_empty_list, empty_list));
-  EXPECT_THAT(traversal.outputs(),
-              testing::ElementsAre(non_empty_ref, empty_ref));
 }
 
 TEST_F(EventsQueueTest, PrepareDeviceTraversals) {
@@ -684,17 +435,11 @@ TEST_F(EventsQueueTest, PrepareDeviceTraversals) {
 
   auto pending_event_snapshots = PrepareSnapshotMaterializations(
       device_index, pending_stream_snapshots[0].stream_id);
-  EXPECT_EQ(pending_event_snapshots.size(), 1);
-  const auto& traversals = pending_event_snapshots[0].traversals;
-
-  // The execution will contain a and b but not c. Only b is output as it is
-  // the only executed op with a live DataPtr.
-  ASSERT_EQ(traversals.size(), 1);
-  const Traversal& traversal = *traversals[0];
-  EXPECT_THAT(traversal.arguments(), testing::IsEmpty());
-  EXPECT_THAT(traversal.execution_order(),
+  ASSERT_EQ(pending_event_snapshots.size(), 1);
+  // The execution will contain a and b but not c, as it is on a different
+  // device.
+  EXPECT_THAT(pending_event_snapshots[0].must_execute,
               testing::ElementsAre(list_a, list_b));
-  EXPECT_THAT(traversal.outputs(), testing::ElementsAre(ref_b));
 }
 
 TEST_F(EventsQueueTest, PrepareStreamTraversals) {
@@ -741,16 +486,10 @@ TEST_F(EventsQueueTest, PrepareStreamTraversals) {
   auto pending_snapshots =
       PrepareSnapshotMaterializations(device_index, default_stream_id);
   ASSERT_EQ(pending_snapshots.size(), 1);
-  const auto& traversals = pending_snapshots[0].traversals;
 
-  // The execution will contain a and b but not c. Only b is output as it is
-  // the only executed op with a live DataPtr.
-  ASSERT_EQ(traversals.size(), 1);
-  const Traversal& traversal = *traversals[0];
-  EXPECT_THAT(traversal.arguments(), testing::IsEmpty());
-  EXPECT_THAT(traversal.execution_order(),
+  // c is not included as it is on a different stream.
+  EXPECT_THAT(pending_snapshots[0].must_execute,
               testing::ElementsAre(list_a, list_b));
-  EXPECT_THAT(traversal.outputs(), testing::ElementsAre(ref_b));
 }
 
 TEST_F(EventsQueueTest, StreamsMaterializeSeparately) {
@@ -797,15 +536,9 @@ TEST_F(EventsQueueTest, StreamsMaterializeSeparately) {
   auto pending_snapshots =
       PrepareSnapshotMaterializations(device_index, non_default_stream_id);
   ASSERT_EQ(pending_snapshots.size(), 1);
-  const auto& traversals = pending_snapshots[0].traversals;
 
-  // The execution will contain c, but not a or b, even though they were
-  // created first; different streams have no relative order.
-  ASSERT_EQ(traversals.size(), 1);
-  const Traversal& traversal = *traversals[0];
-  EXPECT_THAT(traversal.arguments(), testing::IsEmpty());
-  EXPECT_THAT(traversal.execution_order(), testing::ElementsAre(list_c));
-  EXPECT_THAT(traversal.outputs(), testing::ElementsAre(ref_c));
+  // Only c is included as it is on a different stream from a and b.
+  EXPECT_THAT(pending_snapshots[0].must_execute, testing::ElementsAre(list_c));
 }
 
 TEST_F(EventsQueueTest, RetainsFailedCompletedFutures) {
@@ -869,18 +602,17 @@ TEST_F(EventsQueueTest, StreamMustMaterializeEmptyTensors) {
       PrepareSnapshotMaterializations(device_index, stream_id);
 
   ASSERT_EQ(pending_snapshots.size(), 1);
-  EXPECT_EQ(pending_snapshots[0].traversals.size(), 0);
+  EXPECT_EQ(pending_snapshots[0].must_execute.size(), 0);
+  EXPECT_EQ(pending_snapshots[0].must_materialize.size(), 0);
 
   // A stream materialization that must materialize the empty tensor does so.
   EventSnapshot::Record(device_index, stream_id, {empty_list});
   pending_snapshots = PrepareSnapshotMaterializations(device_index, stream_id);
   ASSERT_EQ(pending_snapshots.size(), 1);
-  const auto& traversals = pending_snapshots[0].traversals;
-  ASSERT_EQ(traversals.size(), 1);
-  ASSERT_EQ(traversals[0]->execution_order().size(), 1);
-  EXPECT_EQ(traversals[0]->execution_order()[0], empty_list);
-  ASSERT_EQ(traversals[0]->outputs().size(), 1);
-  EXPECT_EQ(traversals[0]->outputs()[0], empty_ref);
+  // Constant ops are listed only in must_materialize, but not must_execute.
+  EXPECT_EQ(pending_snapshots[0].must_execute.size(), 0);
+  EXPECT_THAT(pending_snapshots[0].must_materialize,
+              testing::ElementsAre(empty_list));
 }
 
 TEST_F(EventsQueueTest, DeviceMustMaterializeEmptyTensors) {
@@ -905,18 +637,17 @@ TEST_F(EventsQueueTest, DeviceMustMaterializeEmptyTensors) {
   auto pending_snapshots =
       PrepareSnapshotMaterializations(device_index, stream_id);
   ASSERT_EQ(pending_snapshots.size(), 1);
-  EXPECT_EQ(pending_snapshots[0].traversals.size(), 0);
+  EXPECT_EQ(pending_snapshots[0].must_execute.size(), 0);
+  EXPECT_EQ(pending_snapshots[0].must_materialize.size(), 0);
 
   // A device materialization that must materialize the empty tensor does so.
   RecordDeviceSnapshots(device_index, {empty_list});
   pending_snapshots = PrepareSnapshotMaterializations(device_index, stream_id);
   ASSERT_EQ(pending_snapshots.size(), 1);
-  const auto& traversals = pending_snapshots[0].traversals;
-  ASSERT_EQ(traversals.size(), 1);
-  ASSERT_EQ(traversals[0]->execution_order().size(), 1);
-  EXPECT_EQ(traversals[0]->execution_order()[0], empty_list);
-  ASSERT_EQ(traversals[0]->outputs().size(), 1);
-  EXPECT_EQ(traversals[0]->outputs()[0], empty_ref);
+  // Constant ops are listed only in must_materialize, but not must_execute.
+  EXPECT_EQ(pending_snapshots[0].must_execute.size(), 0);
+  EXPECT_THAT(pending_snapshots[0].must_materialize,
+              testing::ElementsAre(empty_list));
 }
 
 TEST_F(EventsQueueTest, MultipleSnapshotsPulled) {
@@ -952,19 +683,11 @@ TEST_F(EventsQueueTest, MultipleSnapshotsPulled) {
 
   // The first pending snapshot will materialize a (only).
   const auto& first_snapshot = pending_snapshots[0];
-  ASSERT_EQ(first_snapshot.traversals.size(), 1);
-  ASSERT_EQ(first_snapshot.traversals[0]->execution_order().size(), 1);
-  EXPECT_EQ(first_snapshot.traversals[0]->execution_order()[0], list_a);
-  ASSERT_EQ(first_snapshot.traversals[0]->outputs().size(), 1);
-  EXPECT_EQ(first_snapshot.traversals[0]->outputs()[0], ref_a);
+  EXPECT_THAT(first_snapshot.must_execute, testing::ElementsAre(list_a));
 
   // The second pending snapshot will materialize b (only).
   const auto& second_snapshot = pending_snapshots[1];
-  ASSERT_EQ(second_snapshot.traversals.size(), 1);
-  ASSERT_EQ(second_snapshot.traversals[0]->execution_order().size(), 1);
-  EXPECT_EQ(second_snapshot.traversals[0]->execution_order()[0], list_b);
-  ASSERT_EQ(second_snapshot.traversals[0]->outputs().size(), 1);
-  EXPECT_EQ(second_snapshot.traversals[0]->outputs()[0], ref_b);
+  EXPECT_THAT(second_snapshot.must_execute, testing::ElementsAre(list_b));
 }
 
 TEST_F(EventsQueueTest, NotPulledAfterLastSnapshot) {
@@ -997,11 +720,7 @@ TEST_F(EventsQueueTest, NotPulledAfterLastSnapshot) {
   // List b is left in the queue.
   ASSERT_EQ(pending_snapshots.size(), 1);
   const auto& first_snapshot = pending_snapshots[0];
-  ASSERT_EQ(first_snapshot.traversals.size(), 1);
-  ASSERT_EQ(first_snapshot.traversals[0]->execution_order().size(), 1);
-  EXPECT_EQ(first_snapshot.traversals[0]->execution_order()[0], list_a);
-  ASSERT_EQ(first_snapshot.traversals[0]->outputs().size(), 1);
-  EXPECT_EQ(first_snapshot.traversals[0]->outputs()[0], ref_a);
+  EXPECT_THAT(first_snapshot.must_execute, testing::ElementsAre(list_a));
 }
 
 TEST_F(EventsQueueTest, SingleOpFastPathAndExtraConstantFallback) {
@@ -1024,12 +743,10 @@ TEST_F(EventsQueueTest, SingleOpFastPathAndExtraConstantFallback) {
   auto pending_snapshots =
       PrepareSnapshotMaterializations(device_index, stream_id);
   ASSERT_EQ(pending_snapshots.size(), 1);
-  const auto& single_traversals = pending_snapshots[0].traversals;
-  ASSERT_EQ(single_traversals.size(), 1);
-  EXPECT_THAT(single_traversals[0]->execution_order(),
+  EXPECT_THAT(pending_snapshots[0].must_execute,
               testing::ElementsAre(list_single));
-  EXPECT_THAT(single_traversals[0]->outputs(),
-              testing::ElementsAre(ref_single));
+  EXPECT_THAT(pending_snapshots[0].must_materialize,
+              testing::ElementsAre(list_single));
 
   // 2. Single deferred op plus an explicit deferred constant in
   // must_materialize (must bypass the single-op fast path so the constant is
@@ -1053,12 +770,9 @@ TEST_F(EventsQueueTest, SingleOpFastPathAndExtraConstantFallback) {
   EventSnapshot::Record(device_index, stream_id, {list_op, empty_list});
   pending_snapshots = PrepareSnapshotMaterializations(device_index, stream_id);
   ASSERT_EQ(pending_snapshots.size(), 1);
-  const auto& combined_traversals = pending_snapshots[0].traversals;
-  ASSERT_EQ(combined_traversals.size(), 1);
-  EXPECT_THAT(combined_traversals[0]->execution_order(),
+  EXPECT_THAT(pending_snapshots[0].must_execute, testing::ElementsAre(list_op));
+  EXPECT_THAT(pending_snapshots[0].must_materialize,
               testing::ElementsAre(list_op, empty_list));
-  EXPECT_THAT(combined_traversals[0]->outputs(),
-              testing::ElementsAre(ref_op, empty_ref));
 }
 
 TEST_F(EventsQueueTest, NodeMatcherAcrossSmallAndLargeSpans) {
@@ -1071,26 +785,24 @@ TEST_F(EventsQueueTest, NodeMatcherAcrossSmallAndLargeSpans) {
   // flat_hash_set).
   for (int count : {5, 10}) {
     std::vector<SharedDeviceBufferList> nodes;
-    std::vector<DeviceBufferRef> expected_outputs;
     for (int i = 0; i < count; ++i) {
       TT_ASSERT_OK_AND_ASSIGN(
           auto refs,
           DeviceBufferList::CreateDeferred(OpName::kAdd, DummyBuilder, {},
                                            OpParamCacheKeys::Empty(), {shape}));
       nodes.push_back(refs[0].device_buffer_list());
-      expected_outputs.push_back(refs[0]);
       RecordDeferredOpCreated(refs[0].device_buffer_list());
     }
     EventSnapshot::Record(device_index, stream_id, nodes);
     auto pending_snapshots =
         PrepareSnapshotMaterializations(device_index, stream_id);
     ASSERT_EQ(pending_snapshots.size(), 1);
-    const auto& traversals = pending_snapshots[0].traversals;
-    ASSERT_EQ(traversals.size(), 1);
-    EXPECT_THAT(traversals[0]->execution_order(),
+    EXPECT_EQ(pending_snapshots[0].must_execute.size(), count);
+    EXPECT_EQ(pending_snapshots[0].must_materialize.size(), count);
+    EXPECT_THAT(pending_snapshots[0].must_execute,
                 testing::ElementsAreArray(nodes));
-    EXPECT_THAT(traversals[0]->outputs(),
-                testing::ElementsAreArray(expected_outputs));
+    EXPECT_THAT(pending_snapshots[0].must_materialize,
+                testing::ElementsAreArray(nodes));
   }
 }
 
