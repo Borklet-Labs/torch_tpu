@@ -214,8 +214,6 @@ class InternalApiEntry:
 class FlowDict(dict):
   """A dict that forces inline/flow style mapping in PyYAML."""
 
-  pass
-
 
 def flow_dict_representer(dumper, data):
   sorted_data = dict(sorted(data.items()))
