@@ -762,6 +762,35 @@ torch_tpu_cc_library(
 )
 
 torch_tpu_cc_library(
+    name = "const_tensor",
+    srcs = ["const_tensor.cc"],
+    hdrs = ["const_tensor.h"],
+    deps = [
+        "//shims/torch:aten_headers",
+        "//shims/torch:torch_headers",
+        "//shims/torch/c10/core:base_headers",
+        "//shims/torch/c10/util:base_headers",
+        "//shims/torch/torch/headeronly:torch_headeronly",
+    ],
+)
+
+torch_tpu_cc_test(
+    name = "const_tensor_test",
+    srcs = ["const_tensor_test.cc"],
+    deps = [
+        ":const_tensor",
+        "//csrc/common:oss_test_main",
+        "//shims/torch",
+        "//shims/torch:aten",
+        "//shims/torch:aten_headers",
+        "//shims/torch/c10/core:base_headers",
+        "//shims/torch/c10/util:base_headers",
+        "//shims/torch/torch/headeronly:torch_headeronly",
+        "@com_google_absl//absl/strings",
+    ],
+)
+
+torch_tpu_cc_library(
     name = "constexpr_map",
     hdrs = ["constexpr_map.h"],
     deps = [":utils"],
