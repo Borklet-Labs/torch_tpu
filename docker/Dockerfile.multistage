@@ -31,15 +31,14 @@ RUN pip install uv
 
 WORKDIR /workspace
 
-# Copy pyproject.toml to install dependencies
-COPY pyproject.toml .
+# Copy locked upper-bound requirements to install verified dependencies
+COPY requirements/requirements_*_latest.txt ./requirements/
 
-
-
-# Install all dependencies from pyproject.toml (including optional ones for dev/test)
-# We let uv read pyproject.toml to use the explicit pytorch-cpu index only for torch/torchvision!
-RUN uv pip compile pyproject.toml --all-extras --python-version 3.14 --python-platform x86_64-manylinux_2_31 --resolution lowest-direct --generate-hashes --extra-index-url https://download.pytorch.org/whl/cpu --index-strategy unsafe-best-match -o requirements.txt && \
-    uv pip install --system -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cpu --index-strategy unsafe-best-match
+# Install all locked dependencies for the container Python version
+RUN PY_VER=$(python3 -c "import sys; print(f'{sys.version_info.major}_{sys.version_info.minor}')") && \
+    uv pip install --system -r "requirements/requirements_${PY_VER}_latest.txt" \
+        --extra-index-url https://download.pytorch.org/whl/cpu \
+        --index-strategy unsafe-best-match
 # Enable tcmalloc by default for all derived images
 ENV LD_PRELOAD="/usr/lib/x86_64-linux-gnu/libtcmalloc.so.4"
 
@@ -76,7 +75,8 @@ RUN --mount=type=secret,id=gcloud_token \
           --only-binary=:all: \
           -d /opt/wheels; \
     fi; \
-    pip install --force-reinstall --no-deps /opt/wheels/*.whl
+    pip install --force-reinstall --no-deps /opt/wheels/*.whl && \
+    python3 -c "import torch, torch_tpu"
 
 # Maintain hierarchy: Copy examples to /workspace/examples
 COPY examples /workspace/examples
