@@ -63,12 +63,9 @@ bzl_library(
 )
 
 bzl_library(
-    name = "torch_rules_bzl",
-    srcs = ["torch_rules.bzl"],
-    deps = [
-        ":build_defs_bzl",
-        "//shims/build_cleaner:build_defs_lib",
-    ],
+    name = "torch_rules_common_bzl",
+    srcs = ["torch_rules_common.bzl"],
+    deps = [":build_defs_bzl"],
 )
 
 # This library just holds the ENTRY_POINTS variable, so this target is unused;

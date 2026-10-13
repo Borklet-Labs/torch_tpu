@@ -13,9 +13,7 @@
 # limitations under the License.
 
 load("//build_files:build_defs.bzl", "torch_tpu_package_end")
-# copybara:uncomment load("//shims/build_files:torch_rules.bzl", "torch_tpu_torch_test")
-
-load("//build_files:torch_rules.bzl", "torch_tpu_torch_test")  # copybara:comment(oss-only)
+load("//shims/build_files:torch_rules.bzl", "torch_tpu_torch_test")
 load("//shims/py_rules:pytype.bzl", "pytype_strict_binary")
 
 package(default_applicable_licenses = ["//:license"])

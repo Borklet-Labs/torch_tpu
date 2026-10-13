@@ -27,7 +27,7 @@ from ci.tools import gen_torch_tests
 _SAMPLE_BUILD_FILE_TEMPLATE: Final[str] = textwrap.dedent(f"""\
     # Copyright 2026 Google LLC
     load("//build_files:build_defs.bzl", "torch_tpu_package_end")
-    load("//build_files:torch_rules.bzl", "torch_tpu_torch_test")
+    load("//shims/build_files:torch_rules.bzl", "torch_tpu_torch_test")
 
     pytype_strict_binary(
         name = "torch_test_runner",

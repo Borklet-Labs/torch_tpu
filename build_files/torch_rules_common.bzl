@@ -12,10 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Build definitions to run upstream PyTorch tests with TorchTPU."""
+"""Common build definitions to run upstream PyTorch tests with TorchTPU.
+
+This file holds the implementation shared between Google3 and OSS. BUILD files
+should use the platform-specific `torch_tpu_torch_test` macro defined in
+`torch_rules.bzl` instead.
+"""
 
 load("//build_files:build_defs.bzl", "torch_tpu_py_test")
-load("//shims/build_cleaner:build_defs.bzl", "register_extension_info")
 
 # This file is torch_tpu implementation details and should not be imported by
 # other projects.
@@ -28,25 +32,24 @@ visibility(
     ],
 )
 
-def torch_tpu_torch_test(
+def torch_tpu_torch_test_impl(
         name,
         torch_test_module,
-        nolocal = "The test execution is not hermetic.",
+        nolocal,
         extra_deps = None,
         tags = None,
         **kwargs):
     """Creates a Python test target to run an upstream PyTorch test suite with TorchTPU.
 
-    The test execution is not hermetic: it is required to set up a https://github.com/pytorch/pytorch
-    checkout and specify its path via `TORCH_TPU_INTERNAL_PYTORCH_TEST_DIR` environment variable:
-      $ bazel test --test_env=TORCH_TPU_INTERNAL_PYTORCH_TEST_DIR=/path/to/pytorch/test ...
+    The PyTorch test directory is located via `TORCH_TPU_INTERNAL_PYTORCH_TEST_DIR`
+    environment variable, which callers are responsible for setting up.
 
     Args:
         name: Name of the test target.
         torch_test_module: Name of a test module under https://github.com/pytorch/pytorch/tree/main/test,
             without the .py extension, e.g. "test_torch".
-        nolocal: Optional reason to exclude the test from local execution. To enable local
-            execution, set to None.
+        nolocal: Reason to exclude the test from local execution, or None to enable
+            local execution.
         extra_deps: Optional additional dependencies.
         tags: Optional additional tags.
         **kwargs: Additional arguments passed to `torch_tpu_py_test`.
@@ -97,8 +100,3 @@ def torch_tpu_torch_test(
         ] + (extra_deps or []),
         **kwargs
     )
-
-register_extension_info(
-    extension = torch_tpu_torch_test,
-    label_regex_for_dep = "{extension_name}",
-)
