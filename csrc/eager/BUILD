@@ -1116,6 +1116,7 @@ torch_tpu_cc_library(
         ":execution_task",
         ":structured_log_buffer",
         ":traversal",
+        ":traversal_utils",
         "//csrc/common:cache_key",
         "//csrc/common:compilation",
         "//csrc/common:compilation_spec",
@@ -1130,9 +1131,6 @@ torch_tpu_cc_library(
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:no_destructor",
         "@com_google_absl//absl/base:nullability",
-        "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/container:flat_hash_set",
-        "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/log:absl_check",
         "@com_google_absl//absl/log:absl_log",
         "@com_google_absl//absl/status",
@@ -1219,6 +1217,50 @@ torch_tpu_cc_test(
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/time",
+        "@com_google_absl//absl/types:span",
+        "@stablehlo//stablehlo/integrations/cpp/builder:attr_type_builder_util",
+        "@stablehlo//stablehlo/integrations/cpp/builder:mlir_builder",
+    ],
+)
+
+torch_tpu_cc_library(
+    name = "traversal_utils",
+    srcs = ["traversal_utils.cc"],
+    hdrs = ["traversal_utils.h"],
+    deps = [
+        ":device_buffer",
+        ":traversal",
+        "//csrc/common:cache_key",
+        "//csrc/ops:op_names",
+        "@com_google_absl//absl/base:nullability",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/log:absl_check",
+        "@com_google_absl//absl/log:absl_log",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
+torch_tpu_cc_test(
+    name = "traversal_utils_test",
+    srcs = ["traversal_utils_test.cc"],
+    exec_properties = {
+        "cpp_link.mem": "16g",  # Needed for asan.
+    },
+    requires_libtpu = True,
+    deps = [
+        ":device_buffer",
+        ":traversal_utils",
+        "//csrc/common:cache_key",
+        "//csrc/common:dimension_types",
+        "//csrc/common:oss_test_main",
+        "//csrc/common:shape",
+        "//csrc/common:status_test_utils",
+        "//csrc/ops:op_builder_utils",
+        "//csrc/ops:op_names",
+        "//csrc/ops:python_context",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
         "@stablehlo//stablehlo/integrations/cpp/builder:attr_type_builder_util",
         "@stablehlo//stablehlo/integrations/cpp/builder:mlir_builder",
