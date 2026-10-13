@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Domain experts for this package:
+# chizhang529
+# adivinpatel04
+
 load(
     "//build_files:build_defs.bzl",
     "torch_tpu_cc_library",

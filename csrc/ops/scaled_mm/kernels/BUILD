@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Domain experts for this package:
+# yangzhou-ml
+# salkan0
+
 load("//build_files:build_defs.bzl", "torch_tpu_package_end")
 load("//shims/build_defs_testing:bzl_library.bzl", "bzl_library")
 load(":defs.bzl", "define_scaled_mm_kernel")

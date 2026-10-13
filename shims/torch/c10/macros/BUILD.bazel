@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Domain experts for this package:
+# gjh8
+# pganssle-google
+
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("//:visibility.bzl", "PACKAGE_DEFAULT_VISIBILITY")
 load("//shims/torch:torch_wheel_select.bzl", "torch_headers_select")

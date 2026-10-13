@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Domain experts for this package:
+# pganssle-google
+# basioli-k
+
 load("//:visibility.bzl", "PACKAGE_DEFAULT_VISIBILITY")
 
 package(default_visibility = PACKAGE_DEFAULT_VISIBILITY)

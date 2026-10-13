@@ -1,15 +1,3 @@
-load("@rules_license//rules:license.bzl", "license")
-load("@torch_tpu_version//:version.bzl", "WHEEL_VERSION")  # copybara:comment(oss-only)
-load(
-    "//build_files:build_defs.bzl",
-    "if_oss",
-    "torch_tpu_package_end",
-    "torch_tpu_py_library",
-)
-load("//build_files:entry_points.bzl", "ENTRY_POINTS")
-load("//build_files:py_dist_info.bzl", "py_dist_info")
-load("//shims/build_files:build_defs.bzl", "TT_FRIENDS")
-
 # Copyright 2025 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,6 +11,24 @@ load("//shims/build_files:build_defs.bzl", "TT_FRIENDS")
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+# Domain experts for this package:
+# zhanyong-wan
+# yilingyuan
+# cbasile-g
+# pganssle-google
+
+load("@rules_license//rules:license.bzl", "license")
+load("@torch_tpu_version//:version.bzl", "WHEEL_VERSION")  # copybara:comment(oss-only)
+load(
+    "//build_files:build_defs.bzl",
+    "if_oss",
+    "torch_tpu_package_end",
+    "torch_tpu_py_library",
+)
+load("//build_files:entry_points.bzl", "ENTRY_POINTS")
+load("//build_files:py_dist_info.bzl", "py_dist_info")
+load("//shims/build_files:build_defs.bzl", "TT_FRIENDS")
 load("//shims/py_rules:strict.bzl", "py_library_providing_imports_info")
 
 # copybara:uncomment WHEEL_VERSION = "0.2.1"

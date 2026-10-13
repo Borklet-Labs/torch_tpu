@@ -12,6 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Domain experts for this package:
+# yilingyuan
+# zhanyong-wan
+# ryo-not-rio
+# ghpvnist
+# haifeng-jin
+
 """Common utilities for torch_tpu."""
 
 load("@rules_cc//cc:cc_library.bzl", "cc_library")

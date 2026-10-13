@@ -12,6 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Domain experts for this package:
+# haifeng-jin
+# benawilson
+# cbasile-g
+# zhanyong-wan
+
 load("//build_files:build_defs.bzl", "torch_tpu_package_end")
 
 package(

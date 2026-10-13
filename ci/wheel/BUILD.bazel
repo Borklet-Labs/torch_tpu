@@ -12,6 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Domain experts for this package:
+# zhanyong-wan
+# jialei-chen
+# basioli-k
+# pganssle-google
+# yinlin09
+# lukeboyer
+
 load("@bazel_skylib//rules:write_file.bzl", "write_file")
 load("@rules_python//python:packaging.bzl", "py_package", "py_wheel")
 load("@torch_tpu_deps//:dependencies.bzl", "WHEEL_REQUIRES")

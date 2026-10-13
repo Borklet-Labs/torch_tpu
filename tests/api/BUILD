@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Domain experts for this package:
+# zhanyong-wan
+# pganssle-google
+
 """Tests and tools that guard the TorchTPU public API surface."""
 
 load(

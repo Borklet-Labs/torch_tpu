@@ -12,6 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Domain experts for this package:
+# zhanyong-wan
+# chizhang529
+# pganssle-google
+# pgmoka
+# jonathan1920
+
 """Utilities for building torch_tpu."""
 
 load(

@@ -12,6 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Domain experts for this package:
+# benawilson
+# haifeng-jin
+# zhanyong-wan
+# cbasile-g
+
 # Defines a library that wraps the internal PJRT client.
 # This is a workaround to avoid depending on internal components
 # directly from the main torch_tpu library.

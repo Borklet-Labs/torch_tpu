@@ -12,6 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Domain experts for this package:
+# willfroom
+# yaoshiang
+# zhanyong-wan
+# ghpvnist
+# pganssle-google
+# jparkerh
+# chizhang529
+
 load(
     "//build_files:build_defs.bzl",
     "if_oss",

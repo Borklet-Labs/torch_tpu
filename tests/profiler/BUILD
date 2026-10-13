@@ -12,6 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Domain experts for this package:
+# bdubey
+# muditgokhale2
+# zhanyong-wan
+# haifeng-jin
+# pganssle-google
+# yilingyuan
+
 load("//build_files:build_defs.bzl", "torch_tpu_cc_test", "torch_tpu_package_end", "torch_tpu_py_test")
 
 package(

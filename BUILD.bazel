@@ -12,6 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Domain experts for this package:
+# zhanyong-wan
+# jonathan1920
+# pganssle-google
+# cbasile-g
+# jialei-chen
+# chizhang529
+# ghpvnist
+
 load("@bazel_skylib//rules:common_settings.bzl", "bool_flag", "string_flag")
 load("@pypi//:requirements.bzl", "all_requirements", "requirement")
 load("@rules_cc//cc:cc_binary.bzl", "cc_binary")

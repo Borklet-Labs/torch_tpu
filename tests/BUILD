@@ -12,6 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Domain experts for this package:
+# adivinpatel04
+# ghpvnist
+# zhanyong-wan
+# haifeng-jin
+# cbasile-g
+# willfroom
+# arfaian
+
 load(
     "//build_files:build_defs.bzl",
     "DEFAULT_TORCH_EXAMPLE_DEPS",

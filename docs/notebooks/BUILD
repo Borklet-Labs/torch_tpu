@@ -12,6 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Domain experts for this package:
+# yilingyuan
+# chrishjones20
+# leehowes
+# zhanyong-wan
+# muditgokhale2
+# lukeboyer
+# pgmoka
+
 """Exported Colab/Jupyter notebooks for TorchTPU."""
 
 load("//build_files:build_defs.bzl", "torch_tpu_package_end")

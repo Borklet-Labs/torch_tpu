@@ -12,6 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Domain experts for this package:
+# benawilson
+# zhanyong-wan
+# cbasile-g
+# jparkerh
+
 load("//build_files:build_defs.bzl", "torch_tpu_package_end", "torch_tpu_py_library")
 load("//shims/py_rules:strict.bzl", "py_library_providing_imports_info")
 load("//shims/pybind11:pybind.bzl", "pybind_extension")

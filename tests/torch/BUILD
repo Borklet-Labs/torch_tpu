@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Domain experts for this package:
+# chizhang529
+# jialei-chen
+
 load("//build_files:build_defs.bzl", "torch_tpu_package_end")
 load("//shims/build_files:torch_rules.bzl", "torch_tpu_torch_test")
 load("//shims/py_rules:pytype.bzl", "pytype_strict_binary")
