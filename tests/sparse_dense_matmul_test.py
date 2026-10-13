@@ -1483,7 +1483,10 @@ class SparseDenseMatmulTest(op_testing.TorchTpuTestBase):
           ),
       )
 
-  def test_sparse_dense_matmul_grad_preserves_t8_layout_on_tpu(self):
+  @parameterized.parameters(False, True)
+  def test_sparse_dense_matmul_grad_preserves_t8_layout_on_tpu(
+      self, compile_op
+  ):
     device = torch.device("tpu")
     row_pointers, embedding_ids, sample_ids, gains, embedding_table = (
         self._get_inputs(device)
@@ -1505,8 +1508,12 @@ class SparseDenseMatmulTest(op_testing.TorchTpuTestBase):
     )
     lr = torch.tensor(0.01, dtype=torch.float32, device=device)
 
+    grad_fn = torch.tpu.ops.sparse_dense_matmul_grad_with_sgd
+    if compile_op:
+      grad_fn = torch.compile(grad_fn, fullgraph=True)
+
     for step in range(2):
-      table_t8 = torch.tpu.ops.sparse_dense_matmul_grad_with_sgd(
+      table_t8 = grad_fn(
           row_pointers,
           embedding_ids,
           sample_ids,

@@ -201,6 +201,34 @@ def is_pinned_host_tensor(t: Any) -> bool:
     return False
 
 
+def get_non_default_device_layout(t: Any) -> Any | None:
+  """Returns the on-device layout of `t` if it isn't the default layout.
+
+  Args:
+    t: The input to inspect, e.g. a tensor.
+
+  Returns:
+    The on-device layout of `t`, or None if `t` has the default layout or isn't
+    a TPU tensor with a materialized, static-shaped buffer in device memory.
+  """
+  if (
+      not isinstance(t, torch.Tensor)
+      or t.device.type != "tpu"
+      or isinstance(t, FakeTensor)
+      or is_pinned_host_tensor(t)
+  ):
+    return None
+  try:
+    layout = tpu_torch_compile.get_device_layout_if_materialized(t)
+    if layout is None or tpu_torch_compile.is_device_shape_dynamic(t):
+      return None
+    default_layout = tpu_torch_compile.get_default_layout(t.dtype, t.shape)
+  except (RuntimeError, TypeError):
+    return None
+  # Like eager execution, compares only minor_to_major and tiles.
+  return None if layout[:2] == default_layout[:2] else layout
+
+
 def _mark_auto_functionalized_mutations(
     gm_or_graph: torch.fx.GraphModule | torch.fx.Graph,
 ) -> None:
@@ -263,7 +291,9 @@ def _create_storage_aware_placeholders(
           )
         else:
           placeholders[i] = tpu_torch_compile.placeholder_like(
-              arg, is_pinned_host
+              arg,
+              is_pinned_host,
+              layout=getattr(arg, "_tpu_device_layout", None),
           )
     else:
       _, primary_arg = entries[0]
@@ -387,7 +417,10 @@ class StaticCompiler(Compiler):
                 else:
                   extracted_layouts.append([])
               else:
-                extracted_layouts.append([])
+                # A fake tensor may carry the layout of its real tensor.
+                extracted_layouts.append(
+                    getattr(val, "_tpu_device_layout", None) or []
+                )
           if any(extracted_layouts):
             argument_layouts = extracted_layouts
 

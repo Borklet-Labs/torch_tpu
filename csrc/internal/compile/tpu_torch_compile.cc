@@ -144,6 +144,48 @@ bool IsValidLayout(const std::vector<int64_t>& layout,  // INT_VEC_OK
   return true;
 }
 
+void ParseTupleLayout(const py::tuple& t, CustomLayout& cl,
+                      std::vector<int64_t>& minor_to_major) {  // INT_VEC_OK
+  if (!t.empty() && !t[0].is_none()) {
+    minor_to_major = t[0].cast<std::vector<int64_t>>();  // INT_VEC_OK
+  }
+  if (t.size() >= 2 && !t[1].is_none()) {
+    auto tiles = t[1].cast<std::vector<std::vector<int64_t>>>();  // INT_VEC_OK
+    for (const auto& tile : tiles) {
+      cl.tiles.push_back(Indices(tile.begin(), tile.end()));
+    }
+  }
+  if (t.size() >= 3 && !t[2].is_none()) {
+    cl.element_size_in_bits = t[2].cast<int64_t>();
+  }
+}
+
+CustomLayout ParseCustomLayout(const py::object& obj, const at::Tensor& tensor,
+                               size_t arg_index) {
+  CustomLayout cl;
+  std::vector<int64_t> minor_to_major;  // INT_VEC_OK
+
+  // Layouts from Python can be specified as:
+  // 1. A tuple: (minor_to_major, tiles, [element_size_in_bits])
+  // 2. A legacy list: [minor_to_major]
+  if (py::isinstance<py::tuple>(obj)) {
+    ParseTupleLayout(obj.cast<py::tuple>(), cl, minor_to_major);
+  } else if (py::isinstance<py::list>(obj)) {
+    minor_to_major = obj.cast<std::vector<int64_t>>();  // INT_VEC_OK
+  }
+
+  if (!minor_to_major.empty()) {
+    int64_t rank = tensor.dim();
+    TT_CHECK_THROW(IsValidLayout(minor_to_major, rank), error::kInvalidArgument)
+        << "expected valid layout for argument " << arg_index << ", got layout "
+        << ToString(minor_to_major) << " for shape "
+        << ToString(tensor.sizes());
+    cl.minor_to_major = Indices(minor_to_major.begin(), minor_to_major.end());
+  }
+
+  return cl;
+}
+
 bool PyIsPinnedHost(const at::Tensor& tensor) {
   if (!tensor.has_storage()) {
     return false;
@@ -184,7 +226,8 @@ at::Tensor PyMakeDynamicPlaceholder(
 }
 
 at::Tensor PyMakePlaceholderLike(const at::Tensor& arg_tensor,
-                                 bool is_pinned_host) {
+                                 bool is_pinned_host,
+                                 const py::object& layout) {
   if (!is_pinned_host) {
     is_pinned_host = PyIsPinnedHost(arg_tensor);
   }
@@ -208,6 +251,14 @@ at::Tensor PyMakePlaceholderLike(const at::Tensor& arg_tensor,
       MakePlaceholder(minimal_base_sizes, arg_tensor.scalar_type(),
                       /*requires_grad=*/false, is_pinned_host),
       _.SetPrepend() << "failed to create placeholder tensor: ");
+
+  // If given, traced ops see the on-device layout of the argument.
+  if (!layout.is_none()) {
+    TT_ASSIGN_OR_THROW(const DeviceBufferRef buffer_ref,
+                       GetBuffer(base_tensor));
+    buffer_ref.set_layout(
+        ParseCustomLayout(layout, base_tensor, /*arg_index=*/0));
+  }
 
   // NOTE: This logic must match the logic from PrepareCompiledModeArguments in
   // compiled_mode.cc
@@ -537,48 +588,6 @@ SharedLoadedExecutableWithMetadata PyCompileMlir(
   return executable;
 }
 
-void ParseTupleLayout(const py::tuple& t, CustomLayout& cl,
-                      std::vector<int64_t>& minor_to_major) {  // INT_VEC_OK
-  if (!t.empty() && !t[0].is_none()) {
-    minor_to_major = t[0].cast<std::vector<int64_t>>();  // INT_VEC_OK
-  }
-  if (t.size() >= 2 && !t[1].is_none()) {
-    auto tiles = t[1].cast<std::vector<std::vector<int64_t>>>();  // INT_VEC_OK
-    for (const auto& tile : tiles) {
-      cl.tiles.push_back(Indices(tile.begin(), tile.end()));
-    }
-  }
-  if (t.size() >= 3 && !t[2].is_none()) {
-    cl.element_size_in_bits = t[2].cast<int64_t>();
-  }
-}
-
-CustomLayout ParseCustomLayout(const py::object& obj, const at::Tensor& tensor,
-                               size_t arg_index) {
-  CustomLayout cl;
-  std::vector<int64_t> minor_to_major;  // INT_VEC_OK
-
-  // Layouts from Python can be specified as:
-  // 1. A tuple: (minor_to_major, tiles, [element_size_in_bits])
-  // 2. A legacy list: [minor_to_major]
-  if (py::isinstance<py::tuple>(obj)) {
-    ParseTupleLayout(obj.cast<py::tuple>(), cl, minor_to_major);
-  } else if (py::isinstance<py::list>(obj)) {
-    minor_to_major = obj.cast<std::vector<int64_t>>();  // INT_VEC_OK
-  }
-
-  if (!minor_to_major.empty()) {
-    int64_t rank = tensor.dim();
-    TT_CHECK_THROW(IsValidLayout(minor_to_major, rank), error::kInvalidArgument)
-        << "expected valid layout for argument " << arg_index << ", got layout "
-        << ToString(minor_to_major) << " for shape "
-        << ToString(tensor.sizes());
-    cl.minor_to_major = Indices(minor_to_major.begin(), minor_to_major.end());
-  }
-
-  return cl;
-}
-
 std::vector<CustomLayout> ConvertArgumentLayouts(
     const std::vector<at::Tensor>& argument_tensors,
     std::optional<std::vector<py::object>> argument_layouts_opt) {
@@ -708,8 +717,8 @@ at::Generator PyMakeExportModeDeviceGenerator(const at::Generator& orig_gen) {
 
   // Set placeholder tensor for export mode generator.
   const at::Tensor device_state_tensor = PyGetDeviceStateTensor(gen);
-  at::Tensor placeholder_tensor =
-      PyMakePlaceholderLike(device_state_tensor, /*is_pinned_host=*/false);
+  at::Tensor placeholder_tensor = PyMakePlaceholderLike(
+      device_state_tensor, /*is_pinned_host=*/false, /*layout=*/py::none());
   PySetDeviceStateTensor(gen, std::move(placeholder_tensor));
 
   return gen;
@@ -2174,7 +2183,7 @@ TT_PYBIND11_MODULE(tpu_torch_compile, m) {
   m.def("placeholder", PyMakePlaceholder, py::arg("sizes"), py::arg("dtype"),
         py::arg("requires_grad") = false, py::arg("is_pinned_host") = false);
   m.def("placeholder_like", PyMakePlaceholderLike, py::arg("arg_tensor"),
-        py::arg("is_pinned_host") = false);
+        py::arg("is_pinned_host") = false, py::arg("layout") = py::none());
   m.def("dynamic_placeholder", PyMakeDynamicPlaceholder, py::arg("sizes"),
         py::arg("dtype"), py::arg("tensor_bounds"),
         py::arg("requires_grad") = false, py::arg("is_pinned_host") = false);

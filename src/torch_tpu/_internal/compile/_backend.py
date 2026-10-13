@@ -30,7 +30,7 @@ The `torch.compile()` function has the following relevant arguments:
     Disables the compilation. No ops for us.
 """
 
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 import concurrent.futures
 import contextlib
 import dataclasses
@@ -49,6 +49,7 @@ from torch._dynamo import source as dynamo_source
 from torch._dynamo.backends import registry
 from torch._dynamo.backends.common import aot_autograd
 from torch._functorch._aot_autograd import autograd_cache as _autograd_cache
+from torch._functorch._aot_autograd import descriptors as _aot_descriptors
 from torch._functorch._aot_autograd import graph_compile as _graph_compile
 from torch._functorch._aot_autograd.schemas import AOTAutogradCacheInfo
 from torch._functorch._aot_autograd.schemas import SerializableAOTDispatchCompiler
@@ -226,6 +227,23 @@ def _mark_pinned_host_inputs(
         or node in reload_placeholders
     ):
       example_input._is_pinned_host = True
+
+
+def _mark_device_layouts(
+    graph_module: torch.fx.GraphModule,
+    example_inputs: Sequence[Any],
+    input_layouts: Mapping[_aot_descriptors.AOTInput, Any],
+) -> None:
+  """Marks example inputs with the layouts of the real inputs they stand for."""
+  if not input_layouts:
+    return
+  placeholders = graph_module.graph.find_nodes(op="placeholder")
+  for node, example_input in zip(placeholders, example_inputs, strict=True):
+    # AOTAutograd describes which input of Dynamo's graph module, if any, each
+    # placeholder is.
+    layout = input_layouts.get(node.meta.get("desc"))
+    if layout is not None and isinstance(example_input, torch.Tensor):
+      example_input._tpu_device_layout = layout
 
 
 @contextlib.contextmanager
@@ -755,6 +773,14 @@ class TpuBackend:
 
     _log_gm_and_inputs("__call__", "Pre", graph_module, example_inputs)
     _guard_input_storage_offsets(graph_module)
+    input_layouts = {}
+    for i, x in enumerate(example_inputs):
+      layout = compiler.get_non_default_device_layout(x)
+      if layout is not None:
+        input_layouts[_aot_descriptors.PlainAOTInput(i)] = layout
+    if input_layouts:
+      # AOTAutogradCache keys don't include device layouts.
+      serializable = False
     custom_module_name = (
         options.get("custom_module_name") or options.get("name")
         if options
@@ -788,6 +814,7 @@ class TpuBackend:
               custom_module_name,
               debug,
               compiled_artifacts,
+              input_layouts,
           ),
       )
     else:
@@ -798,6 +825,7 @@ class TpuBackend:
           custom_module_name,
           debug,
           compiled_artifacts,
+          input_layouts,
       )
 
     bw_compiler = functools.partial(
@@ -807,6 +835,7 @@ class TpuBackend:
         custom_module_name,
         debug,
         compiled_artifacts,
+        input_layouts,
     )
 
     save_context = (
@@ -880,6 +909,7 @@ class TpuBackend:
       custom_module_name: str | None,
       debug: TpuCompileDebug | None,
       compiled_artifacts: list[compiler.CompiledArtifact],
+      input_layouts: Mapping[_aot_descriptors.AOTInput, Any],
       graph_module: torch.fx.GraphModule,
       example_inputs: Sequence[torch.Tensor],
   ) -> Callable[..., Any]:
@@ -895,6 +925,8 @@ class TpuBackend:
         options, if any.
       debug: Container for recording compilation debug artifacts.
       compiled_artifacts: Per-call container tracking compiled artifacts.
+      input_layouts: The non-default on-device layouts of the inputs from
+        Dynamo, keyed by AOTAutograd input descriptors.
       graph_module: The FX graph module to compile.
       example_inputs: Example inputs to the FX graph for tracing (not the actual
         inputs).
@@ -903,6 +935,7 @@ class TpuBackend:
       A function that executes the compiled graph on the TPU.
     """
     _mark_pinned_host_inputs(graph_module, example_inputs)
+    _mark_device_layouts(graph_module, example_inputs, input_layouts)
 
     fwd_or_bwd_str = "FORWARD" if is_fwd else "BACKWARD"
 
