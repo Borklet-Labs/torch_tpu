@@ -26,6 +26,7 @@
 #include "csrc/common/dtype.h"
 #include "csrc/common/error_utils.h"
 #include "csrc/common/to_string.h"
+#include "csrc/common/utils.h"
 #include "csrc/eager/device_buffer.h"
 #include "csrc/eager/op_dispatcher.h"
 #include "csrc/eager/tensor_to_buffer.h"
@@ -42,8 +43,8 @@ namespace {
 // Returns the number of blocks to slide over the input tensor.
 //
 // All of the input arrays should have exactly 2 elements. This condition is
-// directly (by `GetOutputDimensions()` function) or indirectly (by
-// `AtenCol2Im()` function) checked calling the `GetOutputDimensions()`
+// directly (by `GetCol2ImOutputInfo()` function) or indirectly (by
+// `AtenCol2Im()` function) checked calling the `GetCol2ImOutputInfo()`
 // function.
 absl::StatusOr<SmallInt64Vector> ComputeOutputSize(at::IntArrayRef input_size,
                                                    at::IntArrayRef padding,
@@ -69,14 +70,18 @@ absl::StatusOr<SmallInt64Vector> ComputeOutputSize(at::IntArrayRef input_size,
       {compute_size_of_dimension(0), compute_size_of_dimension(1)});
 }
 
-// Returns the output dimensions for a col2im operation, and validates
-// consistency between input shape and output parameters.
-absl::StatusOr<Dimensions> GetOutputDimensions(const at::Tensor& input,
-                                               at::IntArrayRef output_size,
-                                               at::IntArrayRef kernel_size,
-                                               at::IntArrayRef dilation,
-                                               at::IntArrayRef padding,
-                                               at::IntArrayRef stride) {
+// Holds the output dimensions and column size for col2im.
+struct Col2ImOutputInfo {
+  Dimensions output_dims;
+  SmallInt64Vector col_size;
+};
+
+// Returns the output dimensions and column size for a col2im operation, and
+// validates consistency between input shape and output parameters.
+absl::StatusOr<Col2ImOutputInfo> GetCol2ImOutputInfo(
+    const at::Tensor& input, at::IntArrayRef output_size,
+    at::IntArrayRef kernel_size, at::IntArrayRef dilation,
+    at::IntArrayRef padding, at::IntArrayRef stride) {
   TT_ASSIGN_OR_RETURN(const auto elem_dtype,
                       ConvertTo<mlir::ElementType>(input.scalar_type()));
   TT_RET_CHECK(!IsInteger(elem_dtype, /*includeBool=*/false),
@@ -113,7 +118,7 @@ absl::StatusOr<Dimensions> GetOutputDimensions(const at::Tensor& input,
       << kernel_prod << "), got " << c_col;
 
   TT_ASSIGN_OR_RETURN(
-      const auto col_size,
+      auto col_size,
       ComputeOutputSize(output_size, padding, dilation, kernel_size, stride));
 
   const int64_t col_h = col_size[0];
@@ -128,7 +133,10 @@ absl::StatusOr<Dimensions> GetOutputDimensions(const at::Tensor& input,
 
   // C = input(1) / (kernel_size(0) * kernel_size(1))
   const int64_t c = c_col / kernel_prod;
-  return Dimensions{n, c, output_size[0], output_size[1]};
+  return Col2ImOutputInfo{
+      .output_dims = Dimensions{n, c, output_size[0], output_size[1]},
+      .col_size = std::move(col_size),
+  };
 }
 
 absl::StatusOr<DeviceBufferRef> AtenCol2Im(const at::Tensor& input,
@@ -138,29 +146,26 @@ absl::StatusOr<DeviceBufferRef> AtenCol2Im(const at::Tensor& input,
                                            at::IntArrayRef padding,
                                            at::IntArrayRef stride,
                                            OpParamCacheKeys param_keys) {
-  TT_ASSIGN_OR_RETURN(Dimensions output_dims,
-                      GetOutputDimensions(input, output_size, kernel_size,
+  TT_ASSIGN_OR_RETURN(auto output_info,
+                      GetCol2ImOutputInfo(input, output_size, kernel_size,
                                           dilation, padding, stride));
 
-  TT_ASSIGN_OR_RETURN(
-      const auto col_size,
-      ComputeOutputSize(output_size, padding, dilation, kernel_size, stride));
-
-  auto op_builder =
-      [output_size = CopyIntVector(output_size), col_size = std::move(col_size),
-       kernel_size = CopyIntVector(kernel_size),
-       dilation = CopyIntVector(dilation), padding = CopyIntVector(padding),
-       stride = CopyIntVector(stride)](mlir::MlirOp input) {
-        return BuildCol2ImShlo(input, output_size, col_size, kernel_size,
-                               dilation, padding, stride);
-      };
+  auto op_builder = [output_size = CopyIntVector(output_size),
+                     col_size = std::move(output_info.col_size),
+                     kernel_size = CopyIntVector(kernel_size),
+                     dilation = CopyIntVector(dilation),
+                     padding = CopyIntVector(padding),
+                     stride = CopyIntVector(stride)](mlir::MlirOp input) {
+    return BuildCol2ImShlo(input, output_size, col_size, kernel_size, dilation,
+                           padding, stride);
+  };
 
   TT_ASSIGN_OR_RETURN(const auto elem_type,
                       ConvertTo<mlir::ElementType>(input.scalar_type()));
 
   return DispatchOp<1>(std::move(op_builder), {input},
                        {.out_dtype = elem_type,
-                        .out_dims = output_dims,
+                        .out_dims = std::move(output_info.output_dims),
                         .op_param_cache_keys = std::move(param_keys)});
 }
 

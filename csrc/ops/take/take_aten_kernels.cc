@@ -20,7 +20,6 @@
 #include "ATen/core/TensorBody.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "c10/util/Exception.h"
 #include "csrc/common/aten_utils.h"
 #include "csrc/common/cache_key.h"
 #include "csrc/common/dtype.h"
@@ -33,12 +32,9 @@
 #include "csrc/ops/macros/kernel.h"
 #include "csrc/ops/op_builder_utils.h"
 #include "csrc/ops/op_names.h"
-#include "csrc/ops/resize/resize_aten_kernels.h"
 #include "llvm/ADT/ArrayRef.h"
-#include "llvm/ADT/SmallVector.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
-#include "mlir/IR/BuiltinTypes.h"
 #include "stablehlo/dialect/StablehloOps.h"
 #include "stablehlo/integrations/cpp/builder/AttrTypeBuilderUtil.h"
 #include "stablehlo/integrations/cpp/builder/MlirBuilder.h"
@@ -137,6 +133,14 @@ absl::Status ValidateTakeInputs(const at::Tensor& self,
   return absl::OkStatus();
 }
 
+auto GetTakeOpBuilder(int64_t num_elements) {
+  return [num_elements](FixedSizeSpan<mlir::MlirOp, 2> inputs)
+             -> absl::StatusOr<mlir::MlirOp> {
+    auto& [self, index] = inputs;
+    return BuildTakeShlo(num_elements, self, index);
+  };
+}
+
 }  // namespace
 
 at::Tensor AtenTake(const at::Tensor& self, const at::Tensor& index) {
@@ -146,14 +150,9 @@ at::Tensor AtenTake(const at::Tensor& self, const at::Tensor& index) {
                        ConvertTo<mlir::ElementType>(self.scalar_type()));
     TT_ASSIGN_OR_THROW(const int64_t num_elements, NumElements(self));
 
-    auto op_builder = [num_elements](FixedSizeSpan<mlir::MlirOp, 2> inputs)
-        -> absl::StatusOr<mlir::MlirOp> {
-      auto& [self, index] = inputs;
-      return BuildTakeShlo(num_elements, self, index);
-    };
     TT_ASSIGN_OR_THROW(
         auto result,
-        DispatchOp<2>(std::move(op_builder),
+        DispatchOp<2>(GetTakeOpBuilder(num_elements),
                       /*inputs=*/{self, index},
                       {.out_dtype = out_dtype,
                        .out_dims = index.sizes(),
@@ -168,19 +167,13 @@ at::Tensor& AtenTakeOut(const at::Tensor& self, const at::Tensor& index,
     TT_THROW_IF_ERROR(ValidateOutDtype(out, self.scalar_type(),
                                        /*allow_out_dtype_cast=*/false));
     TT_THROW_IF_ERROR(ValidateTakeInputs(self, index));
-    TT_THROW_IF_ERROR(ResizeTensorIfShapeDiffers(out, index.sizes()));
 
     TT_ASSIGN_OR_THROW(auto out_dtype,
                        ConvertTo<mlir::ElementType>(self.scalar_type()));
     TT_ASSIGN_OR_THROW(const int64_t num_elements, NumElements(self));
 
-    auto op_builder = [num_elements](FixedSizeSpan<mlir::MlirOp, 2> inputs)
-        -> absl::StatusOr<mlir::MlirOp> {
-      auto& [self, index] = inputs;
-      return BuildTakeShlo(num_elements, self, index);
-    };
     TT_THROW_IF_ERROR((DispatchOpOut<2, 1>(
-        std::move(op_builder),
+        GetTakeOpBuilder(num_elements),
         /*inputs=*/{self, index}, out,
         {.out_dtype = out_dtype,
          .out_dims = index.sizes(),

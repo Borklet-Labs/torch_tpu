@@ -34,7 +34,6 @@
 #include "csrc/ops/macros/kernel.h"
 #include "csrc/ops/op_builder_utils.h"
 #include "csrc/ops/op_names.h"
-#include "csrc/ops/resize/resize_aten_kernels.h"
 #include "csrc/ops/where/where.h"
 #include "stablehlo/integrations/cpp/builder/AttrTypeBuilderUtil.h"
 #include "stablehlo/integrations/cpp/builder/MlirBuilder.h"
@@ -51,10 +50,8 @@ ReturnType DispatchWhere(const at::Tensor& condition, const at::Tensor& self,
       at::promoteTypes(self.scalar_type(), other.scalar_type());
   TT_ASSIGN_OR_RETURN(const auto output_element_type,
                       ConvertTo<mlir::ElementType>(output_aten_type));
-  TT_ASSIGN_OR_RETURN(auto condition_self_dims,
-                      InferSize(condition.sizes(), self.sizes()));
-  TT_ASSIGN_OR_RETURN(auto output_dims,
-                      InferSize(condition_self_dims, other.sizes()));
+  TT_ASSIGN_OR_RETURN(auto output_dims, InferSize(condition.sizes(),
+                                                  self.sizes(), other.sizes()));
 
   auto op_builder = [output_element_type](
                         FixedSizeSpan<mlir::MlirOp, 3> inputs) {
@@ -107,7 +104,6 @@ at::Tensor& AtenWhereSelfOut(const at::Tensor& condition,
               << ToString(self.scalar_type()) << " and "
               << ToString(other.scalar_type()) << "), got "
               << ToString(out.scalar_type());
-          TT_RETURN_IF_ERROR(ResizeTensorIfShapeDiffers(out, output_dims));
           return DispatchOpOut<3>(
               std::move(op_builder), {condition, self, other}, out,
               {.out_dtype = output_element_type,

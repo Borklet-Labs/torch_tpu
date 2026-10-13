@@ -86,14 +86,16 @@ at::ScalarType GetComputationType(const at::Tensor& self,
 absl::StatusOr<Dimensions> ComputeOutputShape(
     const at::Tensor& self, const std::optional<at::Tensor>& min,
     const std::optional<at::Tensor>& max) {
-  Dimensions output_dims = CopyIntVector(self.sizes());
+  if (min && max) {
+    return InferSize(self.sizes(), min->sizes(), max->sizes());
+  }
   if (min) {
-    TT_ASSIGN_OR_RETURN(output_dims, InferSize(output_dims, min->sizes()));
+    return InferSize(self.sizes(), min->sizes());
   }
   if (max) {
-    TT_ASSIGN_OR_RETURN(output_dims, InferSize(output_dims, max->sizes()));
+    return InferSize(self.sizes(), max->sizes());
   }
-  return output_dims;
+  return CopyIntVector(self.sizes());
 }
 
 absl::Status AtenClampTensorHelper(const at::Tensor& self,
@@ -116,59 +118,37 @@ absl::Status AtenClampTensorHelper(const at::Tensor& self,
   TT_ASSIGN_OR_RETURN(const auto computation_dtype,
                       ConvertTo<mlir::ElementType>(computation_scalar_type));
 
+  DispatchOpOptions<1> options = {
+      .out_dtype = output_dtype,
+      .out_dims = output_dims,
+      .computation_dtype = computation_dtype,
+      .op_param_cache_keys = std::move(param_keys),
+  };
+
   if (min && max) {
     auto op_builder = [](FixedSizeSpan<mlir::MlirOp, 3> inputs) {
       auto& [self, min, max] = inputs;
       return BuildClampShlo(self, min, max);
     };
-
-    DispatchOpOptions<1> options = {
-        .out_dtype = output_dtype,
-        .out_dims = output_dims,
-        .computation_dtype = computation_dtype,
-        .op_param_cache_keys = std::move(param_keys),
-    };
     return DispatchOpOut<3>(std::move(op_builder), {self, *min, *max}, out,
                             std::move(options));
-
   } else if (min) {
     auto op_builder = [](FixedSizeSpan<mlir::MlirOp, 2> inputs) {
       auto& [self, min] = inputs;
       return BuildClampShlo(self, min, std::nullopt);
     };
-    DispatchOpOptions<1> options = {
-        .out_dtype = output_dtype,
-        .out_dims = output_dims,
-        .computation_dtype = computation_dtype,
-        .op_param_cache_keys = std::move(param_keys),
-    };
     return DispatchOpOut<2>(std::move(op_builder), {self, *min}, out,
                             std::move(options));
-
   } else if (max) {
     auto op_builder = [](FixedSizeSpan<mlir::MlirOp, 2> inputs) {
       auto& [input, max] = inputs;
       return BuildClampShlo(input, std::nullopt, max);
     };
-    DispatchOpOptions<1> options = {
-        .out_dtype = output_dtype,
-        .out_dims = output_dims,
-        .computation_dtype = computation_dtype,
-        .op_param_cache_keys = std::move(param_keys),
-    };
     return DispatchOpOut<2>(std::move(op_builder), {self, *max}, out,
                             std::move(options));
-
   } else {
     auto op_builder = [](mlir::MlirOp input) -> absl::StatusOr<mlir::MlirOp> {
       return BuildClampShlo(input, std::nullopt, std::nullopt);
-    };
-
-    DispatchOpOptions<1> options = {
-        .out_dtype = output_dtype,
-        .out_dims = output_dims,
-        .computation_dtype = computation_dtype,
-        .op_param_cache_keys = std::move(param_keys),
     };
     return DispatchOpOut<1>(std::move(op_builder), self, out,
                             std::move(options));

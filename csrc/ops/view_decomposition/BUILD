@@ -241,10 +241,7 @@ torch_tpu_cc_test(
 torch_tpu_cc_library(
     name = "conj_primitive",
     hdrs = ["conj_primitive.h"],
-    deps = [
-        ":strided_layout",
-        "@com_google_absl//absl/status:statusor",
-    ],
+    deps = [":strided_layout"],
 )
 
 torch_tpu_cc_library(
