@@ -146,7 +146,9 @@ def fake_tensor_context() -> Iterator[None]:
   is validated at flag-parse time to be set only with BENCHMARK_PLATFORM=cpu and
   `--run_scope=presubmit`.
 
-  While active, this disables FakeTensor memoization.
+  While active, this disables FakeTensor memoization and makes
+  `torch.nn.init.trunc_normal_` a no-op process-wide (by patching its private
+  helper), so it is not thread-safe.
 
   Yields:
     None.
@@ -155,16 +157,38 @@ def fake_tensor_context() -> Iterator[None]:
   # `nn.Module._apply` (e.g. `model.to(dtype)`) always replaces FakeTensor
   # parameters with `torch.utils.swap_tensors`, whatever the `torch.__future__`
   # conversion flags, and `swap_tensors` refuses tensors that have weakrefs. The
-  # converter keeps weakrefs to every fake it makes in its tensor memo (a
-  # WeakValueDictionary). Dropping the memo and keeping fakes strongly instead
-  # lets the swap succeed. The cost, fine for a one-step smoke: a real tensor
-  # converted twice yields two unrelated fakes, and converted fakes live as long
-  # as the mode.
+  # converter keeps weakrefs to every fake it makes: in its tensor memo (a
+  # WeakValueDictionary) and, for constants such as CLIP's
+  # `torch.tensor(2.6592)` logit scale, in its constant storage mapping.
+  # Dropping both and keeping fakes strongly instead lets the swap succeed. The
+  # cost, fine for a one-step smoke: a real tensor converted twice yields two
+  # unrelated fakes, converted fakes live as long as the mode, and an in-place
+  # op on an aliased constant leaves the other aliases' constant values stale.
+  # These patch converter internals; `test_converts_constant_parameters` in
+  # mode_test is the canary for upstream changes to them.
   mode.fake_tensor_converter.set_tensor_memo = lambda t, v: None
+  mode.fake_tensor_converter.add_constant_storage_mapping = (
+      lambda *args, **kwargs: None
+  )
   mode.fake_tensor_converter.meta_converter.tensor_memo = {}  # pytype: disable=annotation-type-mismatch
 
-  with mode:
-    yield
+  # `trunc_normal_` (e.g. in the HuggingFace ViT position embedding init)
+  # rejection-samples with data-dependent control flow (`.item()`,
+  # `mask.any()`), which FakeTensorMode cannot evaluate. The values do not
+  # matter for fake tensors. This patches the private helper that
+  # `trunc_normal_` calls rather than `trunc_normal_` itself, because modules
+  # such as transformers v5 bind `trunc_normal_` at import time, so patching the
+  # public name would miss them (e.g. v5 ViT). If upstream renames the helper,
+  # this fails loudly with an AttributeError.
+  orig_trunc_normal = torch.nn.init._no_grad_trunc_normal_  # pylint: disable=protected-access
+  torch.nn.init._no_grad_trunc_normal_ = (  # pylint: disable=protected-access
+      lambda tensor, *args, **kwargs: tensor
+  )
+  try:
+    with mode:
+      yield
+  finally:
+    torch.nn.init._no_grad_trunc_normal_ = orig_trunc_normal  # pylint: disable=protected-access
 
 
 def fake_tensor_smoke_enabled() -> bool:

@@ -140,6 +140,24 @@ torch_tpu_py_test(
 )
 
 torch_tpu_py_test(
+    name = "gen_benchmarks_presubmit_scope_test",
+    srcs = ["gen_benchmarks_presubmit_scope_test.py"],
+    deps = [
+        "//perflab:context",
+        "//perflab:flags",
+        "//perflab:registry",
+        "//perflab:target",
+        "//perflab/models",
+        "//shims/absl_py/flags",
+        "//shims/absl_py/testing:absltest",
+        "//shims/absl_py/testing:flagsaver",
+        "//shims/absl_py/testing:parameterized",
+        "//src/torch_tpu",
+        "//tests:seed_test_utils",
+    ],
+)
+
+torch_tpu_py_test(
     name = "step_test",
     srcs = ["step_test.py"],
     tags = ["requires-tpu-v5lite"],

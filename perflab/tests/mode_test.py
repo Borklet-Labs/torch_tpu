@@ -170,10 +170,34 @@ class FakeTensorContextTest(seed_test_utils.RepeatableTest):
       self.assertEqual(x.grad.dtype, torch.bfloat16)
       self.assertEqual(layer.weight.dtype, torch.bfloat16)
 
+  def test_converts_constant_parameters(self):
+    with mode_lib.fake_tensor_context():
+      layer = torch.nn.Linear(8, 4)
+      # A constant like CLIP's logit scale, converted with its own storage.
+      layer.logit_scale = torch.nn.Parameter(torch.tensor(2.6592))
+      layer = layer.to(dtype=torch.bfloat16)
+      self.assertIsInstance(layer.logit_scale, fake_tensor.FakeTensor)
+      self.assertEqual(layer.logit_scale.dtype, torch.bfloat16)
+
   def test_restores_real_tensors_on_exit(self):
     with mode_lib.fake_tensor_context():
       pass
     self.assertNotIsInstance(torch.zeros(4, 4), fake_tensor.FakeTensor)
+
+  def test_trunc_normal_is_a_no_op_inside(self):
+    with mode_lib.fake_tensor_context():
+      layer = torch.nn.Linear(8, 4).to(dtype=torch.bfloat16)
+      # As in HuggingFace ViT's position embedding init. Without the patch, this
+      # would raise DataDependentOutputException.
+      torch.nn.init.trunc_normal_(layer.weight)
+      self.assertIsInstance(layer.weight, fake_tensor.FakeTensor)
+
+  def test_restores_trunc_normal_on_exit(self):
+    with mode_lib.fake_tensor_context():
+      pass
+    x = torch.zeros(4, 4)
+    torch.nn.init.trunc_normal_(x, a=1.0, b=2.0)
+    self.assertTrue(bool((x >= 1.0).all()))
 
 
 if __name__ == "__main__":

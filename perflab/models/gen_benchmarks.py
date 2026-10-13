@@ -14,15 +14,38 @@
 
 """Dynamic registration of benchmarks against static model list."""
 
+import copy
 import itertools
 import sys
 
 from absl import flags
 import torch
 from perflab import context as context_lib
+from perflab import flags as flags_lib
+from perflab import mode as mode_lib
 from perflab import registry as registry_lib
 from perflab import step_lib
 from perflab.gen_utils import gen_utils
+
+# Generated benchmarks that also run in presubmit scope in the FakeTensorMode
+# CPU smoke test (`--fake_tensor_mode`). These are hand-picked representatives,
+# one per architecture family that the hand-written (decoder-only LLM)
+# benchmarks do not cover: a small sample of the models in
+# `gen_utils/models.csv`, chosen to keep presubmit small. The list is not
+# exhaustive and not driven by past breakages. Each has a checked-in config in
+# the module registry's in-tree `model_configs` resources (all under
+# `google/examples/huggingface_transformers/model_configs`), so the smoke test
+# never falls back to GCS. Keep this list short: every entry adds a forward and
+# a training case to presubmit.
+_CPU_PRESUBMIT_MODEL_IDS = frozenset({
+    "facebook/detr-resnet-50",  # Detection with a convolutional backbone.
+    "google-bert/bert-base-uncased",  # Text encoder.
+    "google-t5/t5-small",  # Text encoder-decoder.
+    "google/vit-base-patch16-224-in21k",  # Vision transformer.
+    "microsoft/resnet-50",  # Convolutional vision model.
+    "openai/clip-vit-base-patch32",  # Text-image dual encoder.
+    "openai/whisper-large-v3-turbo",  # Speech encoder-decoder.
+})
 
 
 def _make_factory(
@@ -57,28 +80,44 @@ def _iter_gen_benchmark_specs():
     yield model_gen_spec, is_training, step
 
 
+def _registration_flags() -> tuple[context_lib.RunScope, bool]:
+  """Returns the values of `--run_scope` and `--fake_tensor_mode`.
+
+  Generated benchmarks are registered at import time, usually before
+  `flags.FLAGS` is parsed. These two flags are then parsed from `sys.argv` by
+  absl's parser, so `--`, `--noflag`, `=false` and `--flagfile` work as in the
+  full parse, but into a scratch `FlagValues` that holds copies of just them.
+  Parsing `flags.FLAGS` itself here would mark it parsed with only the flags
+  defined so far, and the full parse in `app.run` would then append the values
+  of multi-value flags a second time. An invalid `--fake_tensor_mode` still
+  fails the full parse.
+  """
+  if flags.FLAGS.is_parsed():
+    return context_lib.RUN_SCOPE.value, mode_lib.fake_tensor_smoke_enabled()
+  flag_values = flags.FlagValues()
+  for flag in (context_lib.RUN_SCOPE, flags_lib.FAKE_TENSOR_MODE):
+    flag_values[flag.name] = copy.deepcopy(flags.FLAGS[flag.name])
+  flag_values(sys.argv, known_only=True)
+  return (
+      getattr(flag_values, context_lib.RUN_SCOPE.name),
+      getattr(flag_values, flags_lib.FAKE_TENSOR_MODE.name),
+  )
+
+
 def _register_gen_benchmarks():
   """Registers generated benchmarks in the global registry."""
-  is_presubmit = False
-  if flags.FLAGS.is_parsed():
-    if context_lib.RUN_SCOPE.value == context_lib.RunScope.PRESUBMIT:
-      is_presubmit = True
-  else:
-    # Fallback for import time before flags are parsed
-    if "--run_scope=presubmit" in sys.argv:
-      is_presubmit = True
-    else:
-      for i, arg in enumerate(sys.argv):
-        if arg == "--run_scope" and i + 1 < len(sys.argv):
-          if sys.argv[i + 1] == "presubmit":
-            is_presubmit = True
-            break
+  run_scope, fake_tensor_mode = _registration_flags()
 
-  if is_presubmit:
-    # We will need to split the target up to prevent timeouts.
-    return
+  model_ids = None
+  if run_scope is context_lib.RunScope.PRESUBMIT:
+    if not fake_tensor_mode:
+      # We will need to split the target up to prevent timeouts.
+      return
+    model_ids = _CPU_PRESUBMIT_MODEL_IDS
 
   for model_gen_spec, is_training, step in _iter_gen_benchmark_specs():
+    if model_ids is not None and model_gen_spec.model_id not in model_ids:
+      continue
     extra_config = model_gen_spec.get_extra_config(is_training, suffix="gen")
     skipped_run_modes = extra_config.skipped_run_modes
     step_kwargs = extra_config.step_kwargs
