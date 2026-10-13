@@ -17,9 +17,12 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <limits>
+#include <numeric>
 #include <string_view>
 #include <tuple>
 #include <utility>
+#include <vector>
 
 #include "ATen/core/ATen_fwd.h"
 #include "ATen/core/IListRef_inl.h"
@@ -55,12 +58,15 @@
 #include "csrc/ops/op_names.h"
 #include "csrc/ops/resize/resize_aten_kernels.h"
 #include "mlir/IR/Attributes.h"
+#include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/TypeRange.h"
+#include "mlir/IR/Types.h"
 #include "mlir/IR/ValueRange.h"
 #include "stablehlo/dialect/StablehloOps.h"
 #include "stablehlo/integrations/cpp/builder/AttrTypeBuilderUtil.h"
 #include "stablehlo/integrations/cpp/builder/MlirBuilder.h"
+#include "stablehlo/integrations/cpp/builder/StablehloBuilder.h"
 #include "torch/headeronly/core/ScalarType.h"
 
 namespace torch_tpu {
@@ -80,6 +86,248 @@ absl::Status ValidateLuSupportedDtype(const at::Tensor& tensor) {
   return absl::OkStatus();
 }
 
+absl::StatusOr<MlirOpResults<2>> BuildComplexL2PivotedLuShlo(
+    mlir::MlirOp input) {
+  mlir::MlirBuilder& builder = input.getBuilder();
+  mlir::OpBuilder& op_builder = builder.getOpBuilder();
+
+  const auto a_type = GetTensorTypeOrDie(input);
+  const auto a_shape = a_type.getShape();
+  const int64_t rank = a_shape.size();
+  const int64_t n = a_shape[rank - 2];
+  const int64_t row_dim = rank - 2;
+  const int64_t col_dim = rank - 1;
+  Dimensions batch_dims(a_shape.begin(), a_shape.begin() + row_dim);
+
+  auto make_shape_1d = [&](int64_t d) {
+    Dimensions s = batch_dims;
+    s.push_back(d);
+    return s;
+  };
+
+  Dimensions batch_dim_indices(row_dim);
+  std::iota(batch_dim_indices.begin(), batch_dim_indices.end(), 0);
+  Dimensions batch_and_row_dims = batch_dim_indices;
+  batch_and_row_dims.push_back(row_dim);
+  Dimensions batch_and_col_dims = batch_dim_indices;
+  batch_and_col_dims.push_back(col_dim);
+  const Dimensions slice_strides(rank, 1);
+
+  mlir::Type complex_type = a_type.getElementType();
+  mlir::Type f32_type = op_builder.getF32Type();
+  mlir::Type i32_type = op_builder.getI32Type();
+
+  mlir::MlirOp zero_f32 = MakeScalarConstant(builder, 0.0f, f32_type);
+  mlir::MlirOp one_f32 = MakeScalarConstant(builder, 1.0f, f32_type);
+  mlir::MlirOp zero_complex = mlir::stablehlo::Complex(zero_f32, zero_f32);
+  mlir::MlirOp one_complex = mlir::stablehlo::Complex(one_f32, zero_f32);
+  mlir::MlirOp zero_c_mat =
+      mlir::stablehlo::BroadcastInDim(a_type, zero_complex, {});
+  mlir::MlirOp neg_inf_f32 = MakeScalarConstant(
+      builder, -std::numeric_limits<float>::infinity(), f32_type);
+
+  auto col_1d_f32_type =
+      mlir::RankedTensorType::get(make_shape_1d(n), f32_type);
+  auto col_1d_i32_type =
+      mlir::RankedTensorType::get(make_shape_1d(n), i32_type);
+  auto mat_i32_type = mlir::RankedTensorType::get(a_shape, i32_type);
+
+  mlir::MlirOp row_iota_1d =
+      mlir::stablehlo::Iota(builder, col_1d_i32_type, row_dim);
+  mlir::MlirOp row_iota_2d =
+      mlir::stablehlo::Iota(builder, mat_i32_type, row_dim);
+  mlir::MlirOp neg_inf_1d =
+      mlir::stablehlo::BroadcastInDim(col_1d_f32_type, neg_inf_f32, {});
+
+  mlir::MlirOp a = input;
+  std::vector<mlir::MlirOp> pivot_slices;
+  pivot_slices.reserve(n);
+
+  for (int64_t k = 0; k < n; ++k) {
+    Dimensions col_starts(rank, 0);
+    col_starts[col_dim] = k;
+    Dimensions col_limits(a_shape.begin(), a_shape.end());
+    col_limits[col_dim] = k + 1;
+    mlir::MlirOp col_k_2d =
+        mlir::stablehlo::Slice(a, col_starts, col_limits, slice_strides);
+    mlir::MlirOp col_k_1d =
+        mlir::stablehlo::Reshape(col_k_2d, make_shape_1d(n));
+    mlir::MlirOp mag_1d = mlir::stablehlo::Abs(col_k_1d);
+
+    mlir::MlirOp k_scalar =
+        MakeScalarConstant(builder, static_cast<int32_t>(k), i32_type);
+    if (k > 0) {
+      mlir::MlirOp k_1d =
+          mlir::stablehlo::BroadcastInDim(col_1d_i32_type, k_scalar, {});
+      mlir::MlirOp valid_mask = mlir::stablehlo::Compare(
+          row_iota_1d, k_1d, mlir::stablehlo::ComparisonDirection::GE);
+      mag_1d = mlir::stablehlo::Select(valid_mask, mag_1d, neg_inf_1d);
+    }
+
+    auto argmax_body = [f32_type, i32_type](mlir::RegionBuilder& rb) {
+      mlir::Type ranked_f32 = mlir::RankedTensorType::get({}, f32_type);
+      mlir::Type ranked_i32 = mlir::RankedTensorType::get({}, i32_type);
+      auto val0 = mlir::Argument(rb, ranked_f32);
+      auto idx0 = mlir::Argument(rb, ranked_i32);
+      auto val1 = mlir::Argument(rb, ranked_f32);
+      auto idx1 = mlir::Argument(rb, ranked_i32);
+      auto is_gt = mlir::stablehlo::Compare(
+          val0, val1, mlir::stablehlo::ComparisonDirection::GT);
+      auto is_eq = mlir::stablehlo::Compare(
+          val0, val1, mlir::stablehlo::ComparisonDirection::EQ);
+      auto lhs_is_nan = mlir::stablehlo::Compare(
+          val0, val0, mlir::stablehlo::ComparisonDirection::NE);
+      auto rhs_is_nan = mlir::stablehlo::Compare(
+          val1, val1, mlir::stablehlo::ComparisonDirection::NE);
+      auto rhs_not_nan = mlir::stablehlo::Compare(
+          val1, val1, mlir::stablehlo::ComparisonDirection::EQ);
+      auto lhs_only_nan = mlir::stablehlo::And(lhs_is_nan, rhs_not_nan);
+      auto both_nan = mlir::stablehlo::And(lhs_is_nan, rhs_is_nan);
+      is_gt = mlir::stablehlo::Or(is_gt, lhs_only_nan);
+      is_eq = mlir::stablehlo::Or(is_eq, both_nan);
+      auto max_val = mlir::stablehlo::Max(val0, val1);
+      auto min_idx = mlir::stablehlo::Min(idx0, idx1);
+      auto gt_idx = mlir::stablehlo::Select(is_gt, idx0, idx1);
+      auto out_idx = mlir::stablehlo::Select(is_eq, min_idx, gt_idx);
+      mlir::stablehlo::Return(rb, {max_val, out_idx});
+    };
+
+    mlir::MlirOp pivot_k_0d = mlir::stablehlo::Reduce(
+        builder, {mag_1d, row_iota_1d}, {neg_inf_f32, k_scalar}, argmax_body,
+        {row_dim})[1];
+    pivot_slices.push_back(
+        mlir::stablehlo::Reshape(pivot_k_0d, make_shape_1d(1)));
+
+    // Swap row k and row pivot_k.
+    Dimensions row_starts(rank, 0);
+    row_starts[row_dim] = k;
+    Dimensions row_limits(a_shape.begin(), a_shape.end());
+    row_limits[row_dim] = k + 1;
+    mlir::MlirOp row_k_slice =
+        mlir::stablehlo::Slice(a, row_starts, row_limits, slice_strides);
+    mlir::MlirOp row_k_1d =
+        mlir::stablehlo::Reshape(row_k_slice, make_shape_1d(n));
+    mlir::MlirOp row_k_2d =
+        mlir::stablehlo::BroadcastInDim(a_type, row_k_1d, batch_and_col_dims);
+
+    mlir::MlirOp pivot_k_2d = mlir::stablehlo::BroadcastInDim(
+        mat_i32_type, pivot_k_0d, batch_dim_indices);
+    mlir::MlirOp is_piv_row = mlir::stablehlo::Compare(
+        row_iota_2d, pivot_k_2d, mlir::stablehlo::ComparisonDirection::EQ);
+    mlir::MlirOp masked_piv =
+        mlir::stablehlo::Select(is_piv_row, a, zero_c_mat);
+    auto sum_complex_body = [complex_type](mlir::RegionBuilder& rb) {
+      mlir::stablehlo::buildReduceBody<mlir::stablehlo::AddOp>(
+          complex_type, rb.getRegion(), rb.getOpBuilder());
+    };
+    mlir::MlirOp row_piv_1d = mlir::stablehlo::Reduce(
+        builder, {masked_piv}, {zero_complex}, sum_complex_body, {row_dim})[0];
+    mlir::MlirOp row_piv_2d =
+        mlir::stablehlo::BroadcastInDim(a_type, row_piv_1d, batch_and_col_dims);
+
+    mlir::MlirOp k_2d =
+        mlir::stablehlo::BroadcastInDim(mat_i32_type, k_scalar, {});
+    mlir::MlirOp is_k_row = mlir::stablehlo::Compare(
+        row_iota_2d, k_2d, mlir::stablehlo::ComparisonDirection::EQ);
+    mlir::MlirOp swapped_piv = mlir::stablehlo::Select(is_piv_row, row_k_2d, a);
+    a = mlir::stablehlo::Select(is_k_row, row_piv_2d, swapped_piv);
+
+    if (k + 1 < n) {
+      const int64_t rem = n - k - 1;
+      Dimensions akk_starts(rank, 0);
+      akk_starts[row_dim] = k;
+      akk_starts[col_dim] = k;
+      Dimensions akk_limits(a_shape.begin(), a_shape.end());
+      akk_limits[row_dim] = k + 1;
+      akk_limits[col_dim] = k + 1;
+      mlir::MlirOp a_kk =
+          mlir::stablehlo::Slice(a, akk_starts, akk_limits, slice_strides);
+      auto akk_type = GetTensorTypeOrDie(a_kk);
+      mlir::MlirOp zero_akk =
+          mlir::stablehlo::BroadcastInDim(akk_type, zero_complex, {});
+      mlir::MlirOp one_akk =
+          mlir::stablehlo::BroadcastInDim(akk_type, one_complex, {});
+      mlir::MlirOp akk_nonzero = mlir::stablehlo::Compare(
+          a_kk, zero_akk, mlir::stablehlo::ComparisonDirection::NE);
+      mlir::MlirOp safe_akk =
+          mlir::stablehlo::Select(akk_nonzero, a_kk, one_akk);
+
+      Dimensions l_starts(rank, 0);
+      l_starts[row_dim] = k + 1;
+      l_starts[col_dim] = k;
+      Dimensions l_limits(a_shape.begin(), a_shape.end());
+      l_limits[row_dim] = n;
+      l_limits[col_dim] = k + 1;
+      mlir::MlirOp sub_col =
+          mlir::stablehlo::Slice(a, l_starts, l_limits, slice_strides);
+      auto l_col_type = GetTensorTypeOrDie(sub_col);
+      mlir::MlirOp safe_akk_1d =
+          mlir::stablehlo::Reshape(safe_akk, make_shape_1d(1));
+      mlir::MlirOp safe_akk_bcast = mlir::stablehlo::BroadcastInDim(
+          l_col_type, safe_akk_1d, batch_and_col_dims);
+      mlir::MlirOp l_col = mlir::stablehlo::Div(sub_col, safe_akk_bcast);
+
+      Dimensions u_starts(rank, 0);
+      u_starts[row_dim] = k;
+      u_starts[col_dim] = k + 1;
+      Dimensions u_limits(a_shape.begin(), a_shape.end());
+      u_limits[row_dim] = k + 1;
+      u_limits[col_dim] = n;
+      mlir::MlirOp u_row =
+          mlir::stablehlo::Slice(a, u_starts, u_limits, slice_strides);
+
+      Dimensions trail_starts(rank, 0);
+      trail_starts[row_dim] = k + 1;
+      trail_starts[col_dim] = k + 1;
+      Dimensions trail_limits(a_shape.begin(), a_shape.end());
+      trail_limits[row_dim] = n;
+      trail_limits[col_dim] = n;
+      mlir::MlirOp trail_sub =
+          mlir::stablehlo::Slice(a, trail_starts, trail_limits, slice_strides);
+      auto trail_type = GetTensorTypeOrDie(trail_sub);
+
+      mlir::MlirOp l_col_1d =
+          mlir::stablehlo::Reshape(l_col, make_shape_1d(rem));
+      mlir::MlirOp u_row_1d =
+          mlir::stablehlo::Reshape(u_row, make_shape_1d(rem));
+      mlir::MlirOp l_bcast = mlir::stablehlo::BroadcastInDim(
+          trail_type, l_col_1d, batch_and_row_dims);
+      mlir::MlirOp u_bcast = mlir::stablehlo::BroadcastInDim(
+          trail_type, u_row_1d, batch_and_col_dims);
+      mlir::MlirOp outer = mlir::stablehlo::Mul(l_bcast, u_bcast);
+      mlir::MlirOp updated_trail = mlir::stablehlo::Subtract(trail_sub, outer);
+
+      mlir::MlirOp bottom_rows = updated_trail;
+      if (k == 0) {
+        bottom_rows = mlir::stablehlo::Concatenate(
+            builder, {l_col, updated_trail}, col_dim);
+      } else {
+        Dimensions left_starts(rank, 0);
+        left_starts[row_dim] = k + 1;
+        Dimensions left_limits(a_shape.begin(), a_shape.end());
+        left_limits[row_dim] = n;
+        left_limits[col_dim] = k;
+        mlir::MlirOp bottom_left =
+            mlir::stablehlo::Slice(a, left_starts, left_limits, slice_strides);
+        bottom_rows = mlir::stablehlo::Concatenate(
+            builder, {bottom_left, l_col, updated_trail}, col_dim);
+      }
+
+      Dimensions top_starts(rank, 0);
+      Dimensions top_limits(a_shape.begin(), a_shape.end());
+      top_limits[row_dim] = k + 1;
+      mlir::MlirOp top_rows =
+          mlir::stablehlo::Slice(a, top_starts, top_limits, slice_strides);
+      a = mlir::stablehlo::Concatenate(builder, {top_rows, bottom_rows},
+                                       row_dim);
+    }
+  }
+
+  mlir::MlirOp pivots =
+      mlir::stablehlo::Concatenate(builder, pivot_slices, row_dim);
+  return {{a, pivots}};
+}
+
 absl::StatusOr<MlirOpResults<2>> LuDecompositionBuilder(mlir::MlirOp input) {
   auto& builder = input.getBuilder();
   auto& op_builder = builder.getOpBuilder();
@@ -97,6 +345,20 @@ absl::StatusOr<MlirOpResults<2>> LuDecompositionBuilder(mlir::MlirOp input) {
   const int m = a_shape[rank - 1];
   const int num_batch_dims = rank - 2;
   Dimensions batch_dims(a_shape.begin(), a_shape.begin() + num_batch_dims);
+  int64_t batch_count = 1;
+  for (int64_t d : batch_dims) {
+    batch_count *= d;
+  }
+
+  // Batched square complex64 LU decomposition (`batch >= 2 && n == m`)
+  // requires selecting pivots using the Euclidean L2 magnitude `|z|_2` instead
+  // of the L1 magnitude `|Re(z)| + |Im(z)|`.
+  if (a_type.hasStaticShape() &&
+      GetElementTypeOrDie(input) == mlir::ElementType::COMPLEXF32 && n == m &&
+      n > 1 && batch_count >= 2 && n <= 64) {
+    return BuildComplexL2PivotedLuShlo(input);
+  }
+
   Dimensions pivot_dims = batch_dims;
   pivot_dims.push_back(std::min(n, m));
   Dimensions perm_dims = batch_dims;
