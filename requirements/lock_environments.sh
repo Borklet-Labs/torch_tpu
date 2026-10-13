@@ -113,15 +113,11 @@ for version in $(uv run --no-project bazel/pytorch_versions.py EXTRA_PYTORCH_VER
   # every wheel for the version (all supported Python versions and platforms);
   # pip/rules_python selects the matching wheel at fetch time.
   # --index-strategy unsafe-best-match lets the "+cpu" local build resolve from
-  # the PyTorch CPU (or RC test) index while PyPI stays the primary index.
-  # TODO(b/571958437): `--extra-index-url https://download.pytorch.org/whl/test/cpu`
-  # is only needed while PyTorch 2.15.0 is a release candidate. Remove it and
-  # re-run this script once PyTorch 2.15.0 final is published to /whl/cpu.
+  # the PyTorch CPU index while PyPI stays the primary index.
   uv pip compile - \
     --no-deps \
     --index-url https://pypi.org/simple \
     --extra-index-url https://download.pytorch.org/whl/cpu \
-    --extra-index-url https://download.pytorch.org/whl/test/cpu \
     --python-platform "$PYTHON_PLATFORM" \
     --index-strategy unsafe-best-match \
     --generate-hashes \

@@ -35,24 +35,14 @@ import nox
 nox.options.default_venv_backend = "uv"
 nox.options.sessions = ["lint"]
 
-# The indexes that may satisfy the `torch` dependency for each variant. The
-# `cpu` and `cuda` variants include PyTorch's RC test channels so release
-# candidates in WHEEL_TORCH_VERSIONS resolve alongside final releases. The
-# `local` variant installs no torch from an index at all: it uses the torch
+# The indexes that may satisfy the `torch` dependency for each variant. Empty
+# means the default index (PyPI), whose Linux wheels bundle CUDA support; the
+# `local` variant installs no torch from an index at all and uses the torch
 # wheel file in dist/local/ that the torch_tpu wheel was built against
 # (--config=local_torch builds).
-# TODO(b/571958437): The `/whl/test/cpu` and `/whl/test/cu130` entries (and the
-# multi-index `/whl/test/` handling in `_torch_index_args` below) are only
-# needed while PyTorch 2.15.0 is a release candidate. Remove them once PyTorch
-# 2.15.0 final is published to PyPI and `download.pytorch.org/whl/cpu`.
 _TORCH_INDEXES: Final[Mapping[str, Sequence[str]]] = {
-    "cpu": (
-        "https://download.pytorch.org/whl/cpu",
-        "https://download.pytorch.org/whl/test/cpu",  # TODO(b/571958437): Remove after 2.15.0 GA.
-    ),
-    "cuda": (
-        "https://download.pytorch.org/whl/test/cu130",  # TODO(b/571958437): Remove after 2.15.0 GA.
-    ),
+    "cpu": ("https://download.pytorch.org/whl/cpu",),
+    "cuda": (),
     "local": (),
     "nightly": ("https://download.pytorch.org/whl/nightly/cpu",),
     "nightly-pinned": ("https://download.pytorch.org/whl/nightly/cpu",),
@@ -67,11 +57,11 @@ def _torch_index_args(variant: str) -> Sequence[str]:
   args: list[str] = []
   for index in indexes:
     args += ["--extra-index-url", index]
-  # --index-strategy unsafe-best-match lets the "+cpu" local build, RC test
-  # build, or newer nightly prerelease resolve across the PyTorch extra indexes
-  # while PyPI stays the primary index for non-torch runtime and PEP 517
-  # build-system dependencies (the PyTorch indexes carry setuptools>=78
-  # alongside an outdated packaging<24.2, which breaks source builds on 3.14t).
+  # --index-strategy unsafe-best-match lets the "+cpu" local build or newer
+  # nightly prerelease resolve across the PyTorch extra indexes while PyPI
+  # stays the primary index for non-torch runtime and PEP 517 build-system
+  # dependencies (the PyTorch indexes carry setuptools>=78 alongside an
+  # outdated packaging<24.2, which breaks source builds on 3.14t).
   args += ["--index-strategy", "unsafe-best-match"]
   return args
 

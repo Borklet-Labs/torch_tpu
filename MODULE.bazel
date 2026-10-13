@@ -185,12 +185,6 @@ _TORCH_BASE_PIP_ARGS = [
 _TORCH_EXTRA_PIP_ARGS = _TORCH_BASE_PIP_ARGS + [
     "--extra-index-url",
     "https://download.pytorch.org/whl/cpu",
-    # TODO(b/571958437): Temporary while PyTorch 2.15.0 is a release candidate.
-    # Once PyTorch 2.15.0 final is published to download.pytorch.org/whl/cpu,
-    # remove this extra-index-url and re-run requirements/lock_environments.sh
-    # to re-lock requirements_torch_2_15_0.txt.
-    "--extra-index-url",
-    "https://download.pytorch.org/whl/test/cpu",
 ]
 
 _TORCH_WHL_MODIFICATIONS = {
@@ -221,7 +215,6 @@ EXTRA_PYTORCH_VERSIONS = [
     "2.12.0",
     "2.13.0",
     "2.14.0",
-    "2.15.0",
 ]
 
 # The release version the nightly channel currently leads up to. Its glue's
