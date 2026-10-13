@@ -68,6 +68,30 @@ def torch_tpu_torch_test_impl(
         "wheel_test_excluded",
     ] + (tags or [])
 
+    deps = [
+        # go/keep-sorted start
+        "//shims/absl_py/testing:absltest",
+        "//shims/absl_py:app",
+        "@pypi//dill",
+        "@pypi//hypothesis",
+        "@pypi//jax",
+        "@pypi//packaging",
+        "@pypi//pytest",
+        "@pypi//scipy",
+        "//shims/torch:tensorboard_support",
+        "//shims/torch:testing_internal",
+        "//src/torch_tpu",
+        "//src/torch_tpu/_internal/utils:annotations",
+        "@pypi//pyyaml",
+        # go/keep-sorted end
+    ]
+
+    # Skip extra dependencies that are already present
+    # since Bazel rejects duplicate labels.
+    for dep in (extra_deps or []):
+        if dep not in deps:
+            deps.append(dep)
+
     torch_tpu_py_test(
         name = name,
         srcs = ["//tests/torch:torch_test_runner.py"],
@@ -81,22 +105,6 @@ def torch_tpu_torch_test_impl(
         shuffle_tests = False,
         tags = tags,
         timeout = kwargs.pop("timeout", "long"),
-        deps = [
-            # go/keep-sorted start
-            "//shims/absl_py/testing:absltest",
-            "//shims/absl_py:app",
-            "@pypi//dill",
-            "@pypi//hypothesis",
-            "@pypi//jax",
-            "@pypi//packaging",
-            "@pypi//pytest",
-            "@pypi//scipy",
-            "//shims/torch:tensorboard_support",
-            "//shims/torch:testing_internal",
-            "//src/torch_tpu",
-            "//src/torch_tpu/_internal/utils:annotations",
-            "@pypi//pyyaml",
-            # go/keep-sorted end
-        ] + (extra_deps or []),
+        deps = deps,
         **kwargs
     )
