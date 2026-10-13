@@ -19,6 +19,7 @@ import json
 from unittest import mock
 
 from absl.testing import absltest
+from absl.testing import parameterized
 import portpicker
 import torch.distributed as dist
 from torch_tpu._internal import env
@@ -318,6 +319,77 @@ class ZMQServerClientTest(seed_test_utils.RepeatableTest):
       client.send(msg)
     with self.assertRaises(zmq.ZMQError):
       client.recv()
+
+
+class HandshakeServerTest(seed_test_utils.RepeatableTest):
+  """Unit tests for _HandshakeServer handling of invalid remote requests."""
+
+  def setUp(self) -> None:
+    super().setUp()
+    handshake._HandshakeServer._reset_instance()
+
+  def tearDown(self) -> None:
+    super().tearDown()
+    handshake._HandshakeServer._reset_instance()
+
+  @parameterized.named_parameters(
+      dict(testcase_name="invalid_json", payload=b"not-valid-json"),
+      dict(testcase_name="invalid_utf8", payload=b"\xff\xfe\xfd"),
+      dict(testcase_name="missing_keys", payload=b"{}"),
+      dict(testcase_name="json_list", payload=b"[]"),
+      dict(
+          testcase_name="rank_out_of_range",
+          payload=_make_request(rank=5, participating_ranks=[5]).to_bytes(),
+      ),
+      dict(
+          testcase_name="non_integer_rank",
+          payload=(
+              b'{"executable_fingerprint": "fp", "rank": 1.5,'
+              b' "pg_collective_counts": [[{"start": 0, "stop": 2}, 0, 2]]}'
+          ),
+      ),
+      dict(
+          testcase_name="participating_rank_out_of_range",
+          payload=_make_request(
+              rank=0, participating_ranks=[0, 1, 5]
+          ).to_bytes(),
+      ),
+  )
+  def test_drops_invalid_request_and_keeps_serving(
+      self, payload: bytes
+  ) -> None:
+    """Tests that an invalid request is dropped without killing server loops."""
+    port = portpicker.pick_unused_port()
+    server = handshake._HandshakeServer(current_rank=0, port=port, world_size=2)
+    # A raw DEALER socket lets us send arbitrary bytes. All requests, including
+    # rank 0's, go over this one connection so they are delivered in order: the
+    # invalid request is always processed before the valid round. The server
+    # replies to rank 0 locally, so `server.recv()` receives rank 0's response.
+    ctx = zmq.Context()
+    sock = ctx.socket(zmq.DEALER)
+    sock.setsockopt(zmq.ROUTING_ID, b"rank-1")
+    sock.setsockopt(zmq.RCVTIMEO, 5000)
+    sock.connect(f"tcp://localhost:{port}")
+    participating_ranks = [0, 1]
+    try:
+      sock.send(payload)
+      for rank in participating_ranks:
+        sock.send(
+            _make_request(
+                rank=rank, participating_ranks=participating_ranks
+            ).to_bytes()
+        )
+
+      self.assertTrue(
+          CollectiveHandshakeResponse.from_bytes(sock.recv()).success
+      )
+      self.assertTrue(server.recv().success)
+      for task in server._get_loop_tasks():
+        self.assertFalse(task.done())
+    finally:
+      sock.close(linger=0)
+      ctx.term()
+      server.close()
 
 
 class HandshakeTest(seed_test_utils.RepeatableTest):

@@ -949,7 +949,12 @@ class _ZMQServer:
     self._socket.bind(f"tcp://*:{self._port}")
 
   async def recv_request(self) -> _CollectiveHandshakeRequestZMQEnvelope | None:
-    """Receives a raw PyZMQ request and returns a _CollectiveHandshakeRequestZMQEnvelope."""
+    """Receives a raw PyZMQ request and returns a _CollectiveHandshakeRequestZMQEnvelope.
+
+    Returns:
+      The received envelope, or None if the received message is malformed and
+      was dropped.
+    """
     with _log_zmq_duration_if_exception(
         "ZMQServer.recv_request", self._recv_timeout_s
     ):
@@ -964,7 +969,21 @@ class _ZMQServer:
       return None
     client_id = frames[0]
     payload = frames[1]
-    req = CollectiveHandshakeRequest.from_bytes(payload)
+    try:
+      req = CollectiveHandshakeRequest.from_bytes(payload)
+    except (
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        KeyError,
+        TypeError,
+        ValueError,
+    ) as e:
+      logging.warning(
+          "ZMQServer dropping malformed request from client %r: %r",
+          client_id,
+          e,
+      )
+      return None
     return _CollectiveHandshakeRequestZMQEnvelope(
         client_id=client_id, request=req
     )
@@ -1108,9 +1127,16 @@ class _HandshakeServer(_HandshakeBackend):
         envelope = await self._zmq_server.recv_request()
         if envelope is None:
           continue
-        await self._handshake_consensus.put_request(
-            envelope.request.rank, envelope
-        )
+        try:
+          await self._handshake_consensus.put_request(
+              envelope.request.rank, envelope
+          )
+        except (ValueError, TypeError) as e:
+          logging.warning(
+              "_HandshakeServer dropping request from client %r: %r",
+              envelope.client_id,
+              e,
+          )
       except asyncio.CancelledError:
         logging.info("_HandshakeServer _listen_loop cancelled.")
         raise
@@ -1241,7 +1267,11 @@ class _HandshakeServer(_HandshakeBackend):
     """Continuously processes consensus rounds and replies to participating ranks."""
     while True:
       try:
-        received_msgs, client_ids = await self._gather_handshake_messages()
+        try:
+          received_msgs, client_ids = await self._gather_handshake_messages()
+        except (ValueError, TypeError) as e:
+          logging.warning("_HandshakeServer dropping handshake request: %r", e)
+          continue
         logging.debug("Received handshake messages: %s", received_msgs)
         first_msg = next(iter(received_msgs.values()))
 
