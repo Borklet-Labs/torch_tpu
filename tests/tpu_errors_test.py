@@ -2778,6 +2778,137 @@ module {
       tt_testing.set_init_default_generator_failure("")
       tt_testing.reset_default_device_generators()
 
+  @et.why_tpu_only("GPU missing check: out-of-bounds read corrupts computation")
+  def test_fused_adamw_mismatched_state_steps_size(self):
+    device = et.device()
+    p1 = torch.tensor([1.0], dtype=torch.float32, device=device)
+    p2 = torch.tensor([2.0], dtype=torch.float32, device=device)
+    g1 = torch.tensor([0.1], dtype=torch.float32, device=device)
+    ea1 = torch.tensor([0.0], dtype=torch.float32, device=device)
+    eas1 = torch.tensor([0.0], dtype=torch.float32, device=device)
+    step1 = torch.tensor(1.0, dtype=torch.float32, device=device)
+
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""fused_adamw_(): expected state_steps to have the same number of tensors as self, got 1""",
+        message_reviewed_by="gunhyun",
+    ):
+      torch.ops.aten._fused_adamw_.default(
+          [p1, p2],
+          [g1, g1],
+          [ea1, ea1],
+          [eas1, eas1],
+          [],
+          [step1],
+          lr=0.001,
+          beta1=0.9,
+          beta2=0.999,
+          weight_decay=0.01,
+          eps=1e-8,
+          amsgrad=False,
+          maximize=False,
+      )
+
+  @et.why_tpu_only("GPU missing check: out-of-bounds read corrupts computation")
+  def test_fused_adam_mismatched_state_steps_size(self):
+    device = et.device()
+    p1 = torch.tensor([1.0], dtype=torch.float32, device=device)
+    p2 = torch.tensor([2.0], dtype=torch.float32, device=device)
+    g1 = torch.tensor([0.1], dtype=torch.float32, device=device)
+    ea1 = torch.tensor([0.0], dtype=torch.float32, device=device)
+    eas1 = torch.tensor([0.0], dtype=torch.float32, device=device)
+    step1 = torch.tensor(1.0, dtype=torch.float32, device=device)
+
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""fused_adam_(): expected state_steps to have the same number of tensors as self, got 1""",
+        message_reviewed_by="gunhyun",
+    ):
+      torch.ops.aten._fused_adam_.default(
+          [p1, p2],
+          [g1, g1],
+          [ea1, ea1],
+          [eas1, eas1],
+          [],
+          [step1],
+          lr=0.001,
+          beta1=0.9,
+          beta2=0.999,
+          weight_decay=0.01,
+          eps=1e-8,
+          amsgrad=False,
+          maximize=False,
+      )
+
+  @et.why_tpu_only("GPU missing check: out-of-bounds read corrupts computation")
+  def test_fused_adagrad_mismatched_state_steps_size(self):
+    device = et.device()
+    p = [
+        torch.tensor([1.0], dtype=torch.float32, device=device),
+        torch.tensor([2.0], dtype=torch.float32, device=device),
+    ]
+    g = [
+        torch.tensor([0.1], dtype=torch.float32, device=device),
+        torch.tensor([0.2], dtype=torch.float32, device=device),
+    ]
+    v = [
+        torch.tensor([0.0], dtype=torch.float32, device=device),
+        torch.tensor([0.0], dtype=torch.float32, device=device),
+    ]
+    s = [torch.tensor([1.0], dtype=torch.float32, device=device)]
+
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""fused_adagrad_(): expected state_steps to have size 2, got 1""",
+        message_reviewed_by="adivinpatel",
+    ):
+      torch.ops.aten._fused_adagrad_.default(
+          p,
+          g,
+          v,
+          s,
+          lr=0.1,
+          lr_decay=0.0,
+          weight_decay=0.01,
+          eps=1e-10,
+          maximize=False,
+      )
+
+  @et.why_tpu_only("GPU missing check: out-of-bounds read corrupts computation")
+  def test_fused_adagrad_tensor_lr_mismatched_state_steps_size(self):
+    device = et.device()
+    p = [
+        torch.tensor([1.0], dtype=torch.float32, device=device),
+        torch.tensor([2.0], dtype=torch.float32, device=device),
+    ]
+    g = [
+        torch.tensor([0.1], dtype=torch.float32, device=device),
+        torch.tensor([0.2], dtype=torch.float32, device=device),
+    ]
+    v = [
+        torch.tensor([0.0], dtype=torch.float32, device=device),
+        torch.tensor([0.0], dtype=torch.float32, device=device),
+    ]
+    s = [torch.tensor([1.0], dtype=torch.float32, device=device)]
+    lr = torch.tensor(0.1, dtype=torch.float32, device=device)
+
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""fused_adagrad_(): expected state_steps to have size 2, got 1""",
+        message_reviewed_by="adivinpatel",
+    ):
+      torch.ops.aten._fused_adagrad_.tensor_lr(
+          p,
+          g,
+          v,
+          s,
+          lr=lr,
+          lr_decay=0.0,
+          weight_decay=0.01,
+          eps=1e-10,
+          maximize=False,
+      )
+
   @et.why_tpu_only(
       "Custom op sparse_dense_matmul_grad_with_adagrad is TPU only."
   )

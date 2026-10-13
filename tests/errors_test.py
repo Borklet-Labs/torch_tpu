@@ -14531,39 +14531,6 @@ Device-side assertion tracking was not enabled by user.""",
       )
 
   @et.gpu_crashes_or_raises(
-      "GPU does not check that state_steps has the same size as params."
-  )
-  def test_fused_adamw_mismatched_state_steps_size(self):
-    device = et.device()
-    p1 = torch.tensor([1.0], dtype=torch.float32, device=device)
-    p2 = torch.tensor([2.0], dtype=torch.float32, device=device)
-    g1 = torch.tensor([0.1], dtype=torch.float32, device=device)
-    ea1 = torch.tensor([0.0], dtype=torch.float32, device=device)
-    eas1 = torch.tensor([0.0], dtype=torch.float32, device=device)
-    step1 = torch.tensor(1.0, dtype=torch.float32, device=device)
-
-    with et.assert_raises_message(
-        RuntimeError,
-        tpu="""fused_adamw_(): expected state_steps to have the same number of tensors as self, got 1""",
-        message_reviewed_by="gunhyun",
-    ):
-      torch.ops.aten._fused_adamw_.default(
-          [p1, p2],
-          [g1, g1],
-          [ea1, ea1],
-          [eas1, eas1],
-          [],
-          [step1],
-          lr=0.001,
-          beta1=0.9,
-          beta2=0.999,
-          weight_decay=0.01,
-          eps=1e-8,
-          amsgrad=False,
-          maximize=False,
-      )
-
-  @et.gpu_crashes_or_raises(
       "GPU does not check that max_exp_avg_sqs has the same size as params."
   )
   def test_fused_adamw_mismatched_max_exp_avg_sqs_size(self):
@@ -14686,39 +14653,6 @@ Device-side assertion tracking was not enabled by user.""",
           [eas1],
           [],
           [step1, step1],
-          lr=0.001,
-          beta1=0.9,
-          beta2=0.999,
-          weight_decay=0.01,
-          eps=1e-8,
-          amsgrad=False,
-          maximize=False,
-      )
-
-  @et.gpu_crashes_or_raises(
-      "GPU does not check that state_steps has the same size as params."
-  )
-  def test_fused_adam_mismatched_state_steps_size(self):
-    device = et.device()
-    p1 = torch.tensor([1.0], dtype=torch.float32, device=device)
-    p2 = torch.tensor([2.0], dtype=torch.float32, device=device)
-    g1 = torch.tensor([0.1], dtype=torch.float32, device=device)
-    ea1 = torch.tensor([0.0], dtype=torch.float32, device=device)
-    eas1 = torch.tensor([0.0], dtype=torch.float32, device=device)
-    step1 = torch.tensor(1.0, dtype=torch.float32, device=device)
-
-    with et.assert_raises_message(
-        RuntimeError,
-        tpu="""fused_adam_(): expected state_steps to have the same number of tensors as self, got 1""",
-        message_reviewed_by="gunhyun",
-    ):
-      torch.ops.aten._fused_adam_.default(
-          [p1, p2],
-          [g1, g1],
-          [ea1, ea1],
-          [eas1, eas1],
-          [],
-          [step1],
           lr=0.001,
           beta1=0.9,
           beta2=0.999,
@@ -14912,79 +14846,6 @@ Device-side assertion tracking was not enabled by user.""",
       )
 
   @et.gpu_crashes_or_raises(
-      "GPU does not check that state_steps has the same size as params."
-  )
-  def test_fused_adagrad_mismatched_state_steps_size(self):
-    device = et.device()
-    p = [
-        torch.tensor([1.0], dtype=torch.float32, device=device),
-        torch.tensor([2.0], dtype=torch.float32, device=device),
-    ]
-    g = [
-        torch.tensor([0.1], dtype=torch.float32, device=device),
-        torch.tensor([0.2], dtype=torch.float32, device=device),
-    ]
-    v = [
-        torch.tensor([0.0], dtype=torch.float32, device=device),
-        torch.tensor([0.0], dtype=torch.float32, device=device),
-    ]
-    s = [torch.tensor([1.0], dtype=torch.float32, device=device)]
-
-    with et.assert_raises_message(
-        RuntimeError,
-        tpu="""fused_adagrad_(): expected state_steps to have size 2, got 1""",
-        message_reviewed_by="adivinpatel",
-    ):
-      torch.ops.aten._fused_adagrad_.default(
-          p,
-          g,
-          v,
-          s,
-          lr=0.1,
-          lr_decay=0.0,
-          weight_decay=0.01,
-          eps=1e-10,
-          maximize=False,
-      )
-
-  @et.gpu_crashes_or_raises(
-      "GPU does not check that state_steps has the same size as params."
-  )
-  def test_fused_adagrad_tensor_lr_mismatched_state_steps_size(self):
-    device = et.device()
-    p = [
-        torch.tensor([1.0], dtype=torch.float32, device=device),
-        torch.tensor([2.0], dtype=torch.float32, device=device),
-    ]
-    g = [
-        torch.tensor([0.1], dtype=torch.float32, device=device),
-        torch.tensor([0.2], dtype=torch.float32, device=device),
-    ]
-    v = [
-        torch.tensor([0.0], dtype=torch.float32, device=device),
-        torch.tensor([0.0], dtype=torch.float32, device=device),
-    ]
-    s = [torch.tensor([1.0], dtype=torch.float32, device=device)]
-    lr = torch.tensor(0.1, dtype=torch.float32, device=device)
-
-    with et.assert_raises_message(
-        RuntimeError,
-        tpu="""fused_adagrad_(): expected state_steps to have size 2, got 1""",
-        message_reviewed_by="adivinpatel",
-    ):
-      torch.ops.aten._fused_adagrad_.tensor_lr(
-          p,
-          g,
-          v,
-          s,
-          lr=lr,
-          lr_decay=0.0,
-          weight_decay=0.01,
-          eps=1e-10,
-          maximize=False,
-      )
-
-  @et.gpu_crashes_or_raises(
       "GPU does not check that grads has the same size as params."
   )
   def test_fused_sgd_mismatched_grads_size(self):
@@ -15051,21 +14912,19 @@ Device-side assertion tracking was not enabled by user.""",
           is_first_step=False,
       )
 
-  @et.gpu_crashes_or_raises(
-      "Upstream CUDA crashes with illegal memory access without host check"
-  )
   def test_fused_moving_avg_obs_fq_helper_invalid_quant_min_max(self):
     dev = et.device()
     self_t = torch.ones((2, 3), dtype=torch.float32, device=dev)
     observer_on = torch.tensor([1], dtype=torch.int32, device=dev)
     fake_quant_on = torch.tensor([1], dtype=torch.int32, device=dev)
-    running_min = torch.empty((0,), dtype=torch.float32, device=dev)
-    running_max = torch.empty((0,), dtype=torch.float32, device=dev)
-    scale = torch.empty((0,), dtype=torch.float32, device=dev)
-    zero_point = torch.empty((0,), dtype=torch.int32, device=dev)
+    running_min = torch.zeros((1,), dtype=torch.float32, device=dev)
+    running_max = torch.zeros((1,), dtype=torch.float32, device=dev)
+    scale = torch.ones((1,), dtype=torch.float32, device=dev)
+    zero_point = torch.zeros((1,), dtype=torch.int32, device=dev)
     with et.assert_raises_message(
         RuntimeError,
         tpu="""fused_moving_avg_obs_fq_helper(): expected quant_min to be strictly less than quant_max, got quant_min=10 and quant_max=0""",
+        gpu="""`quant_min` should be less than or         equal to `quant_max`.""",
     ):
       torch.ops.aten._fused_moving_avg_obs_fq_helper(
           self_t,
