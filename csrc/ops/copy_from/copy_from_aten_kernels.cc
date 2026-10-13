@@ -156,6 +156,9 @@ at::Tensor CopySparseTensor(const at::Tensor& src_sparse,
 
 void CopyTensorGrad(const at::Tensor& src, const at::Tensor& self_dest,
                     CopyType to_copy_type, bool non_blocking) {
+  if (src.requires_grad() && !src.is_leaf() && !src.retains_grad()) {
+    return;
+  }
   if (!src.grad().defined()) {
     return;
   }

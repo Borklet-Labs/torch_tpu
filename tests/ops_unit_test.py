@@ -23,12 +23,14 @@ import itertools
 import math
 import os
 import plistlib
+import re
 import threading
 import time
 import typing
 from typing import Any
 import unittest
 from unittest import mock
+import warnings
 
 from absl.testing import absltest
 from absl.testing import flagsaver
@@ -19434,6 +19436,30 @@ class OpsGradUnitTest(TorchTpuVsCpuTestBase):
               )
             else:
               self.assertTrue(tpu_grad is None or not tpu_grad.defined())
+
+  def test_materialize_non_leaf_tensor_does_not_warn(self):
+    """Verifies copying a non-leaf tensor with requires_grad does not warn."""
+    device = torch.device("tpu")
+    x = torch.ones(1, requires_grad=True, device=device)
+    y = x * 2
+    y.backward()
+    with warnings.catch_warnings(record=True) as w:
+      warnings.simplefilter("always")
+      _ = y.item()
+      _ = y.cpu()
+      grad_warnings = [
+          warning
+          for warning in w
+          if issubclass(warning.category, UserWarning)
+          and re.search(r"\bgrad\b", str(warning.message))
+      ]
+      self.assertEmpty(
+          grad_warnings,
+          msg=(
+              "Materializing non-leaf tensor emitted spurious UserWarning about"
+              " accessing .grad"
+          ),
+      )
 
 
 class OpTestingFrameworkTest(op_testing.OpInfoTestBase):
