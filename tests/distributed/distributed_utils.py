@@ -52,20 +52,67 @@ _picked_slicebuilder_addresses: set[str] = set()
 _picked_topologies: set[str] = set()
 
 
-def _worker_fn(
-    local_rank: int,
-    nproc_per_node: int,
-    default_master_port: int,
-    base_seed: int,
-    fn: Callable[..., Any],
-    args: tuple[Any, ...],
-    kwargs: dict[str, Any],
-) -> None:
-  """Worker function for mp.spawn."""
-  # Parse absl flags inside each mp.spawn child subprocess so tests can pass
-  # `fn` directly to `dist_run`.
-  multiprocessing.parse_absl_flags()
+def set_launch_env(nproc_per_node: int) -> bool:
+  """Sets the environment all ranks must agree on, before spawning workers.
 
+  Call this in the parent process. Bootstraps the TPU launch environment
+  (`set_tpu_launch_env`) when TPU hardware or a multi-host TPU job environment
+  is present, and is a no-op otherwise.
+
+  Args:
+    nproc_per_node: The number of processes to spawn on the current node.
+
+  Returns:
+    Whether slicebuilder ports were picked for this run and should be repicked
+    on retry.
+  """
+  multiprocessing.init_spawn()
+
+  repick_slicebuilder_ports = False
+  if (
+      hardware.get_tpu_device_count()
+      or env.get_str_env_once("JOB_COMPLETION_INDEX") is not None
+  ):
+    # Imported lazily so GPU runs (TORCH_DEVICE_BACKEND_AUTOLOAD=0) never depend
+    # on `torch.tpu`, which only exists once the TorchTPU backend is loaded.
+    from torch.tpu import distributed  # pylint: disable=g-import-not-at-top  # pyrefly: ignore[missing-import]
+
+    # Read through `os.environ` rather than `env.get_str_env_once()`, which
+    # would memoize the variable as unset before `set_tpu_launch_env` sets it.
+    # Addresses picked by an earlier `dist_run` in this process are ours to
+    # replace; only a value set by someone else counts as pinned.
+    current_addresses = os.environ.get(  # PY_ENVIRON_OK=must not memoize.
+        _SLICEBUILDER_ADDRESSES_ENV
+    )
+    repick_slicebuilder_ports = (
+        current_addresses is None
+        or current_addresses in _picked_slicebuilder_addresses
+    ) and _is_single_host()
+    if repick_slicebuilder_ports:
+      _set_fresh_slicebuilder_addresses(nproc_per_node)
+      _set_topology_unless_pinned(nproc_per_node)
+
+    distributed.set_tpu_launch_env(nproc_per_node=nproc_per_node)
+
+  return repick_slicebuilder_ports
+
+
+def set_worker_env(
+    local_rank: int, nproc_per_node: int, default_master_port: int
+) -> int:
+  """Sets the per-rank environment variables in a spawned worker process.
+
+  Preserves multi-host environment variables (MASTER_ADDR, MASTER_PORT,
+  NODE_RANK, WORLD_SIZE) if already present in os.environ.
+
+  Args:
+    local_rank: The rank of this worker on the current node.
+    nproc_per_node: The number of processes on the current node.
+    default_master_port: The MASTER_PORT to use if it is not already set.
+
+  Returns:
+    The global rank of this worker.
+  """
   node_rank = int(os.environ.get("NODE_RANK", "0"))
   if "WORLD_SIZE" in os.environ:
     world_size = int(os.environ["WORLD_SIZE"])
@@ -96,6 +143,24 @@ def _worker_fn(
   if "XLA_FLAGS" in os.environ:
     os.environ["XLA_FLAGS"] = os.path.expandvars(os.environ["XLA_FLAGS"])
 
+  return global_rank
+
+
+def _worker_fn(
+    local_rank: int,
+    nproc_per_node: int,
+    default_master_port: int,
+    base_seed: int,
+    fn: Callable[..., Any],
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+) -> None:
+  """Worker function for mp.spawn."""
+  # Parse absl flags inside each mp.spawn child subprocess so tests can pass
+  # `fn` directly to `dist_run`.
+  multiprocessing.parse_absl_flags()
+
+  global_rank = set_worker_env(local_rank, nproc_per_node, default_master_port)
   seed_test_utils.seed_rngs(base_seed + global_rank)
 
   fn(*args, **kwargs)
@@ -137,33 +202,7 @@ def dist_run(
       failing to come up before the workers rendezvoused.
     **kwargs: Keyword arguments to pass to the function.
   """
-  multiprocessing.init_spawn()
-
-  repick_slicebuilder_ports = False
-  if (
-      hardware.get_tpu_device_count()
-      or env.get_str_env_once("JOB_COMPLETION_INDEX") is not None
-  ):
-    # Imported lazily so GPU runs (TORCH_DEVICE_BACKEND_AUTOLOAD=0) never depend
-    # on `torch.tpu`, which only exists once the TorchTPU backend is loaded.
-    from torch.tpu import distributed  # pylint: disable=g-import-not-at-top  # pyrefly: ignore[missing-import]
-
-    # Read through `os.environ` rather than `env.get_str_env_once()`, which
-    # would memoize the variable as unset before `set_tpu_launch_env` sets it.
-    # Addresses picked by an earlier `dist_run` in this process are ours to
-    # replace; only a value set by someone else counts as pinned.
-    current_addresses = os.environ.get(  # PY_ENVIRON_OK=must not memoize.
-        _SLICEBUILDER_ADDRESSES_ENV
-    )
-    repick_slicebuilder_ports = (
-        current_addresses is None
-        or current_addresses in _picked_slicebuilder_addresses
-    ) and _is_single_host()
-    if repick_slicebuilder_ports:
-      _set_fresh_slicebuilder_addresses(nproc_per_node)
-      _set_topology_unless_pinned(nproc_per_node)
-
-    distributed.set_tpu_launch_env(nproc_per_node=nproc_per_node)
+  repick_slicebuilder_ports = set_launch_env(nproc_per_node)
 
   if base_seed is None:
     base_seed = seed_test_utils.RepeatableTest.choose_seed()
