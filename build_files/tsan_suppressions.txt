@@ -33,6 +33,9 @@ race:aten/src/ATen/native/cpu/CopyKernel
 race:third_party/hwloc/hwloc-master/hwloc/topology-linux.c
 
 # Data race in PyTorch core default dtype setting during Dynamo tracing restoration.
+# Fixed upstream in https://github.com/pytorch/pytorch/pull/198893 (base CL 998040743).
+# TODO: Remove these suppressions once the upstream PR is merged and the commit is
+# in the pinned version of PyTorch in TorchTPU.
 race:c10::set_default_dtype
 race:DefaultDtype.cpp
 
