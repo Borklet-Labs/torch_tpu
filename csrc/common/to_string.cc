@@ -105,31 +105,42 @@ std::string ToString(const at::Tensor& tensor, const std::string_view name) {
     absl::StrAppend(&result, "undefined");
     return result;
   }
+  // Only the sym_*() accessors are safe on tensors with symbolic sizes/strides
+  // (the FakeTensors Dynamo traces with under torch.compile dynamic shapes):
+  // sizes()/strides() materialize the symbols through guard_int(), which
+  // silently specializes the dynamic dimensions, and numel()/storage_offset()
+  // throw. They print the same concrete integers for static tensors.
   if (tensor.is_sparse()) {
-    absl::StrAppend(                                            //
-        &result,                                                //
-        "shape=[", absl::StrJoin(tensor.sizes(), ", "), "], ",  //
-        "layout=Sparse, ",                                      //
-        "numel=", tensor.numel(), ", ",                         //
-        "dtype=", tensor.scalar_type(), ", ",                   //
-        "device=", ToString(tensor.device()), ", ",             //
-        "sparse_dim=", tensor.sparse_dim(), ", ",               //
-        "dense_dim=", tensor.dense_dim(), ", ",                 //
+    absl::StrAppend(                                   //
+        &result,                                       //
+        "shape=", ToString(tensor.sym_sizes()), ", ",  //
+        "layout=Sparse, ",                             //
+        "numel=", ToString(tensor.sym_numel()), ", ",  //
+        "dtype=", tensor.scalar_type(), ", ",          //
+        "device=", ToString(tensor.device()), ", ",    //
+        "sparse_dim=", tensor.sparse_dim(), ", ",      //
+        "dense_dim=", tensor.dense_dim(), ", ",        //
         "nnz=", tensor._nnz());
     return result;
   }
-  absl::StrAppend(                                                //
-      &result,                                                    //
-      "shape=[", absl::StrJoin(tensor.sizes(), ", "), "], ",      //
-      "strides=[", absl::StrJoin(tensor.strides(), ", "), "], ",  //
-      "numel=", tensor.numel(), ", ",                             //
-      "dtype=", tensor.scalar_type(), ", ",                       //
-      "device=", ToString(tensor.device()), ", ",                 //
-      "is_contiguous=", tensor.is_contiguous(), ", ",             //
-      "is_cpu=", tensor.is_cpu(), ", ",                           //
-      "is_cuda=", tensor.is_cuda(), ", ",                         //
-      "is_meta=", tensor.is_meta(), ", ",                         //
-      "storage_offset=", tensor.storage_offset(), ", ");
+  absl::StrAppend(                                       //
+      &result,                                           //
+      "shape=", ToString(tensor.sym_sizes()), ", ",      //
+      "strides=", ToString(tensor.sym_strides()), ", ",  //
+      "numel=", ToString(tensor.sym_numel()), ", ",      //
+      "dtype=", tensor.scalar_type(), ", ",              //
+      "device=", ToString(tensor.device()), ", ");
+  if (!tensor.unsafeGetTensorImpl()->has_symbolic_sizes_strides()) {
+    // Contiguity of a symbolic tensor is itself a symbolic expression whose
+    // evaluation installs guards, so it is only reported for static shapes.
+    absl::StrAppend(&result, "is_contiguous=", tensor.is_contiguous(), ", ");
+  }
+  absl::StrAppend(                         //
+      &result,                             //
+      "is_cpu=", tensor.is_cpu(), ", ",    //
+      "is_cuda=", tensor.is_cuda(), ", ",  //
+      "is_meta=", tensor.is_meta(), ", ",  //
+      "storage_offset=", ToString(tensor.sym_storage_offset()), ", ");
 
   if (tensor.defined() && tensor.storage().unsafeGetStorageImpl() != nullptr) {
     absl::StrAppend(&result, "storage_use_count=", tensor.storage().use_count(),

@@ -813,6 +813,21 @@ torch_tpu_cc_library(
     ],
 )
 
+torch_tpu_cc_test(
+    name = "to_string_test",
+    srcs = ["to_string_test.cc"],
+    deps = [
+        ":to_string",
+        "//csrc/common:oss_test_main",
+        "//shims/torch",
+        "//shims/torch:aten",
+        "//shims/torch:aten_headers",
+        "//shims/torch/c10/core:base_headers",
+        "//shims/torch/c10/util:base_headers",
+        "@com_google_absl//absl/strings",
+    ],
+)
+
 torch_tpu_cc_library(
     name = "utils",
     srcs = ["utils.cc"],

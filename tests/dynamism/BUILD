@@ -233,4 +233,22 @@ torch_tpu_py_test(
     ],
 )
 
+torch_tpu_py_test(
+    name = "sdpa_vlog_test",
+    srcs = ["sdpa_vlog_test.py"],
+    # TT_KERNEL logs its arguments at VLOG(1).
+    args = ["--vmodule=scaled_dot_product_attention_aten_kernels=1"],
+    notest_oss = True,  # NOTEST_OSS_OK=The C++ --vmodule flag is only bridged into absl.flags in internal test binaries.
+    tags = ["requires-tpu-v5lite"],
+    deps = [
+        "//shims/absl_py/flags",
+        "//shims/absl_py/testing:absltest",
+        "//shims/torch:pytorch",
+        "//src/torch_tpu",
+        "//src/torch_tpu/_internal/utils:test_utils",
+        "//tests:oss_utils",
+        "//tests:seed_test_utils",
+    ],
+)
+
 torch_tpu_package_end()
