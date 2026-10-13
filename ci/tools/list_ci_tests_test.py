@@ -807,6 +807,70 @@ jobs:
 
     self.assertEqual(rbe_configs & ci_configs.keys(), {"ci_rbe_presubmit"})
 
+  def test_real_bazelrc_v5_presubmit_partition(self):
+    """Verifies ci_rbe_presubmit and ci_tpu_v5_presubmit partition v5 tests."""
+    bazelrc_path = list_ci_tests.get_bazelrc_path(self.repo_root)
+    ci_configs = list_ci_tests.parse_bazelrc_tag_filters(bazelrc_path)
+    rbe_filters = ci_configs["ci_rbe_presubmit"]
+    v5_filters = ci_configs["ci_tpu_v5_presubmit"]
+
+    cases = [
+        (
+            "single_chip_v5",
+            {"requires-tpu", "requires-tpu-v5lite", "presubmit-v5"},
+            True,
+            False,
+        ),
+        (
+            "v5_4chip",
+            {"requires-tpu", "requires-tpu-v5lite:4", "presubmit-v5"},
+            False,
+            True,
+        ),
+        (
+            "v5_8chip",
+            {"requires-tpu", "requires-tpu-v5lite:8", "presubmit-v5"},
+            False,
+            True,
+        ),
+        (
+            "v5p_4chip",
+            {"requires-tpu", "requires-tpu-v5p:4", "presubmit-v5"},
+            False,
+            True,
+        ),
+        (
+            "v5_no_remote_exec",
+            {
+                "requires-tpu",
+                "requires-tpu-v5lite",
+                "no-remote-exec",
+                "presubmit-v5",
+            },
+            False,
+            True,
+        ),
+        (
+            "v7_no_remote_exec_excluded_from_both",
+            {
+                "requires-tpu",
+                "requires-tpu-v7x",
+                "no-remote-exec",
+                "presubmit-v7",
+            },
+            False,
+            False,
+        ),
+    ]
+    for name, tags, expected_rbe, expected_v5 in cases:
+      with self.subTest(case=name):
+        self.assertEqual(
+            list_ci_tests.matches_tag_filters(tags, rbe_filters), expected_rbe
+        )
+        self.assertEqual(
+            list_ci_tests.matches_tag_filters(tags, v5_filters), expected_v5
+        )
+
   def test_format_output_with_machine_info(self):
     """Verifies output formatters incorporate machine type details."""
     targets = [

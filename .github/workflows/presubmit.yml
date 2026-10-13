@@ -38,7 +38,7 @@ on:
         description: 'Run the presubmit on RBE'
         required: false
         type: boolean
-        default: false
+        default: true
       rbe_region:
         description: 'RBE region for the RBE presubmit'
         type: choice
@@ -138,8 +138,9 @@ jobs:
           extra_bazel_flags: ${{ matrix.job_info.extra_flags }}
           test_all: ${{ contains(github.event.pull_request.labels.*.name, 'ci:disable-bazel-diff') }}
 
-  # Shadow run that doesn't gate submit. Runs on every same-repo PR, never on
-  # fork PRs, and on workflow_dispatch only when `run_rbe_presubmit` is set.
+  # Runs CPU and single-chip TPU v5e presubmit tests on RBE. Runs on every
+  # same-repo PR, never on fork PRs, and on workflow_dispatch when
+  # `run_rbe_presubmit` is set.
   rbe_presubmit:
     name: "Presubmit on RBE"
     timeout-minutes: 120
