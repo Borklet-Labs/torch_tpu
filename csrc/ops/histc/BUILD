@@ -57,6 +57,7 @@ torch_tpu_cc_library(
     hdrs = ["histc.h"],
     deps = [
         "//csrc/common:dimension_types",
+        "//csrc/common:error_utils",
         "//csrc/ops:op_builder_utils",
         "@com_google_absl//absl/status:statusor",
         "@llvm-project//mlir:IR",

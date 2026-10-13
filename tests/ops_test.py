@@ -2467,8 +2467,6 @@ class TestOps(op_testing.OpInfoTestBase):
             "cpu": INTEGRAL_DTYPES + (torch.float16, torch.bfloat16),
             "gpu": (torch.float16,),
         },
-        # TODO(b/542534758): `histc()` does not support dynamism.
-        check_dynamism=False,
     )
 
   def test_histc_skip_value_check_due_to_precision_variations(self):
@@ -2485,8 +2483,6 @@ class TestOps(op_testing.OpInfoTestBase):
             ),
         },
         check_value=CheckValueMode.SKIP,
-        # TODO(b/542534758): `histc()` does not support dynamism.
-        check_dynamism=False,
     )
 
   def test_index_add(self):

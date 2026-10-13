@@ -17,10 +17,10 @@
 #include "csrc/ops/histc/histc.h"
 
 #include <cstdint>
-#include <numeric>
 
 #include "absl/status/statusor.h"
 #include "csrc/common/dimension_types.h"
+#include "csrc/common/error_utils.h"
 #include "csrc/ops/op_builder_utils.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/Builders.h"
@@ -94,31 +94,16 @@ void AdjustMinMaxForEq(mlir::MlirOp& min_op, mlir::MlirOp& max_op) {
   max_op = stablehlo::Select(cond_op, max_op_plus_one, max_op);
 }
 
-// Broadcasts the input tensor to a given shape using BroadcastInDim.
-mlir::MlirOp BuildBroadcastToShape(mlir::MlirOp input_op,
-                                   llvm::ArrayRef<int64_t> shape) {
-  const mlir::RankedTensorType input_type = GetTensorTypeOrDie(input_op);
-  const auto output_type = input_type.clone(shape);
-  const int64_t input_rank = input_type.getRank();
-  const int64_t output_rank = shape.size();
-  Dimensions broadcast_dims(input_rank);
-  std::iota(broadcast_dims.begin(), broadcast_dims.end(),
-            output_rank - input_rank);
-  return mlir::stablehlo::BroadcastInDim(output_type, input_op, broadcast_dims);
-}
-
 // Computes bin indices for each element in input_op.
 mlir::MlirOp BuildIndices(mlir::MlirOp input_op, mlir::MlirOp min_op,
-                          mlir::MlirOp max_op, int64_t bins,
-                          mlir::MlirBuilder& builder) {
+                          mlir::MlirOp max_op, int64_t bins) {
   // floor((input_op - min) * bins / (max - min))
   mlir::MlirOp numerator = stablehlo::Subtract(input_op, min_op);
   mlir::MlirOp denominator = stablehlo::Subtract(max_op, min_op);
-  mlir::RankedTensorType input_op_type = GetTensorTypeOrDie(input_op);
-  mlir::MlirOp bins_op = MakeConstant(builder, bins, input_op_type);
+  mlir::MlirOp bins_op = MakeConstantLike(input_op, bins);
   mlir::MlirOp mul_bins = stablehlo::Mul(numerator, bins_op);
   mlir::MlirOp div = stablehlo::Div(mul_bins, denominator);
-  if (input_op_type.getElementType().isInteger()) {
+  if (GetTensorTypeOrDie(input_op).getElementType().isInteger()) {
     return stablehlo::ConvertElementType(div, mlir::ElementType::I32);
   }
   mlir::MlirOp indices = stablehlo::Floor(div);
@@ -126,14 +111,14 @@ mlir::MlirOp BuildIndices(mlir::MlirOp input_op, mlir::MlirOp min_op,
 }
 
 // Clamps the indices to the range [0, bins - 1].
-mlir::MlirOp BuildClampedIndices(mlir::MlirOp indices, int64_t bins,
-                                 mlir::MlirBuilder& builder) {
+mlir::MlirOp BuildClampedIndices(mlir::MlirOp indices, int64_t bins) {
   // clamped_indices = clamp(indices, 0, bins - 1)
-  const mlir::RankedTensorType indices_type = GetTensorTypeOrDie(indices);
-  mlir::MlirOp zero_indices = MakeConstant(builder, 0, indices_type);
-  mlir::MlirOp bins_minus_1_indices =
-      MakeConstant(builder, bins - 1, indices_type);
-  return stablehlo::Clamp(zero_indices, indices, bins_minus_1_indices);
+  // Use Min and Max instead of Clamp because stablehlo::Clamp drops dynamic
+  // bounds.
+  mlir::MlirOp zero_indices = MakeConstantLike(indices, 0);
+  mlir::MlirOp bins_minus_1_indices = MakeConstantLike(indices, bins - 1);
+  mlir::MlirOp min_indices = stablehlo::Min(indices, bins_minus_1_indices);
+  return stablehlo::Max(min_indices, zero_indices);
 }
 
 // Returns a boolean tensor that is true for elements in [min_op, max_op].
@@ -154,27 +139,23 @@ mlir::MlirOp BuildInRange(mlir::MlirOp input_op, mlir::MlirOp min_op,
 mlir::MlirOp BuildScatterAdd(mlir::MlirOp clamped_indices,
                              mlir::MlirOp in_range, int64_t bins,
                              mlir::Type out_dtype, mlir::MlirBuilder& builder) {
-  const mlir::RankedTensorType clamped_indices_type =
-      GetTensorTypeOrDie(clamped_indices);
-  int64_t num_inputs = 1;
-  for (auto dim_size : clamped_indices_type.getShape()) {
-    num_inputs *= dim_size;
-  }
   // Flatten indices and in_range tensors to 1D to be used in scatter.
-  auto clamped_indices_flat = stablehlo::Reshape(clamped_indices, {num_inputs});
-  auto in_range_flat = stablehlo::Reshape(in_range, {num_inputs});
+  mlir::MlirOp clamped_indices_flat = clamped_indices;
+  mlir::MlirOp in_range_flat = in_range;
+  if (GetTensorTypeOrDie(clamped_indices).getRank() != 1) {
+    clamped_indices_flat = Flatten(clamped_indices);
+    in_range_flat = Flatten(in_range);
+  }
 
   // The output histogram tensor of size `bins` is initialized to zeros.
   Dimensions output_dims = {bins};
-  auto empty_output = MakeConstant(builder, 0, out_dtype, output_dims);
-  // Scatter indices must be of shape {num_updates, 1} to update a 1D tensor.
-  auto scatter_indices =
-      stablehlo::Reshape(clamped_indices_flat, {num_inputs, 1});
+  mlir::MlirOp empty_output = MakeConstant(builder, 0, out_dtype, output_dims);
+  // Scatter indices can be 1D when index_vector_dim = 1.
+  mlir::MlirOp scatter_indices = clamped_indices_flat;
 
   // Contribution to histogram is 1 if element is in range, 0 otherwise.
-  mlir::MlirOp one = MakeConstant(builder, 1, out_dtype, {num_inputs});
-  mlir::MlirOp zero = MakeConstant(builder, 0, out_dtype, {num_inputs});
-  mlir::MlirOp scatter_update = stablehlo::Select(in_range_flat, one, zero);
+  mlir::MlirOp scatter_update =
+      stablehlo::ConvertElementType(in_range_flat, out_dtype);
 
   // Create a region builder callback for scatter-add.
   // The scatter operation will compute:
@@ -230,26 +211,20 @@ absl::StatusOr<mlir::MlirOp> BuildHistcShlo(mlir::MlirOp input_op, int64_t bins,
   }
 
   // Broadcast min and max to the shape of the input tensor.
-  min_op = BuildBroadcastToShape(
-      min_op, GetTensorTypeOrDie(compute_input_op).getShape());
-  max_op = BuildBroadcastToShape(
-      max_op, GetTensorTypeOrDie(compute_input_op).getShape());
+  TT_ASSIGN_OR_RETURN(min_op, BroadcastIfNeeded(min_op, compute_input_op));
+  TT_ASSIGN_OR_RETURN(max_op, BroadcastIfNeeded(max_op, compute_input_op));
 
   // Compute bin indices:
   //   indices = floor((input - min) * bins / (max - min))
-  mlir::MlirOp indices =
-      BuildIndices(compute_input_op, min_op, max_op, bins, builder);
+  mlir::MlirOp indices = BuildIndices(compute_input_op, min_op, max_op, bins);
   // Then clamp indices to [0, bins - 1].
-  mlir::MlirOp clamped_indices = BuildClampedIndices(indices, bins, builder);
+  mlir::MlirOp clamped_indices = BuildClampedIndices(indices, bins);
 
   // Values outside of [min_op, max_op] are ignored, which mirrors the PyTorch
   // implementation.
   mlir::MlirOp in_range = BuildInRange(compute_input_op, min_op, max_op);
   // Scatter-add to accumulate counts.
-  mlir::MlirOp hist =
-      BuildScatterAdd(clamped_indices, in_range, bins, input_dtype, builder);
-
-  return hist;
+  return BuildScatterAdd(clamped_indices, in_range, bins, input_dtype, builder);
 }
 
 }  // namespace torch_tpu
