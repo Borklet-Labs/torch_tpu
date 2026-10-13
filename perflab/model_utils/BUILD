@@ -99,6 +99,8 @@ internal_target(
     torch_tpu_py_test,
     name = "torchtitan_muse_glimmer_test",
     srcs = ["torchtitan_muse_glimmer_test.py"],
+    # Disable `use_precompile`, otherwise the test fails with `INPUTS_TOO_LARGE`.
+    use_precompile = False,
     deps = [
         ":torchtitan_muse_glimmer",
         "//shims/absl_py/testing:absltest",
