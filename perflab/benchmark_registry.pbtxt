@@ -28,7 +28,7 @@ benchmarks {
     runner_label: "linux-x86-a4-224-b200-8gpu"
     container_image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build-cuda13.2-cudnn9.15:latest"
     workload_action_inputs { key: "torch_spec" value: "torch==2.14.0" }
-    workload_action_inputs { key: "env_vars_hw" value: "BENCHMARK_PLATFORM=b200_1,TORCH_DEVICE_BACKEND_AUTOLOAD=0" }
+    workload_action_inputs { key: "env_vars_hw" value: "BENCHMARK_PLATFORM=b200_1,TORCH_DEVICE_BACKEND_AUTOLOAD=0,TPU_SKIP_MDS_QUERY=1" }
   }
 
   metrics { pattern: ".*/post_warmup_step_time_seconds$" unit: "s" stats { stat: LAST_VALUE } }
@@ -70,7 +70,7 @@ benchmarks {
     runner_label: "linux-x86-a4-224-b200-8gpu"
     container_image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build-cuda13.2-cudnn9.15:latest"
     workload_action_inputs { key: "torch_spec" value: "torch==2.14.0" }
-    workload_action_inputs { key: "env_vars_hw" value: "BENCHMARK_PLATFORM=b200_1,TORCH_DEVICE_BACKEND_AUTOLOAD=0" }
+    workload_action_inputs { key: "env_vars_hw" value: "BENCHMARK_PLATFORM=b200_1,TORCH_DEVICE_BACKEND_AUTOLOAD=0,TPU_SKIP_MDS_QUERY=1" }
   }
 
   metrics { pattern: ".*/post_warmup_step_time_seconds$" unit: "s" stats { stat: LAST_VALUE } }
@@ -112,7 +112,7 @@ benchmarks {
     runner_label: "linux-x86-a4-224-b200-8gpu"
     container_image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build-cuda13.2-cudnn9.15:latest"
     workload_action_inputs { key: "torch_spec" value: "torch==2.14.0" }
-    workload_action_inputs { key: "env_vars_hw" value: "BENCHMARK_PLATFORM=b200_1,TORCH_DEVICE_BACKEND_AUTOLOAD=0" }
+    workload_action_inputs { key: "env_vars_hw" value: "BENCHMARK_PLATFORM=b200_1,TORCH_DEVICE_BACKEND_AUTOLOAD=0,TPU_SKIP_MDS_QUERY=1" }
   }
 
   metrics { pattern: ".*/post_warmup_step_time_seconds$" unit: "s" stats { stat: LAST_VALUE } }
@@ -154,7 +154,7 @@ benchmarks {
     runner_label: "linux-x86-a4-224-b200-8gpu"
     container_image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build-cuda13.2-cudnn9.15:latest"
     workload_action_inputs { key: "torch_spec" value: "torch==2.14.0" }
-    workload_action_inputs { key: "env_vars_hw" value: "BENCHMARK_PLATFORM=b200_1,TORCH_DEVICE_BACKEND_AUTOLOAD=0" }
+    workload_action_inputs { key: "env_vars_hw" value: "BENCHMARK_PLATFORM=b200_1,TORCH_DEVICE_BACKEND_AUTOLOAD=0,TPU_SKIP_MDS_QUERY=1" }
   }
 
   metrics { pattern: ".*/post_warmup_step_time_seconds$" unit: "s" stats { stat: LAST_VALUE } }
@@ -196,7 +196,7 @@ benchmarks {
     runner_label: "linux-x86-a4-224-b200-8gpu"
     container_image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build-cuda13.2-cudnn9.15:latest"
     workload_action_inputs { key: "torch_spec" value: "torch==2.14.0" }
-    workload_action_inputs { key: "env_vars_hw" value: "BENCHMARK_PLATFORM=b200_1,TORCH_DEVICE_BACKEND_AUTOLOAD=0" }
+    workload_action_inputs { key: "env_vars_hw" value: "BENCHMARK_PLATFORM=b200_1,TORCH_DEVICE_BACKEND_AUTOLOAD=0,TPU_SKIP_MDS_QUERY=1" }
   }
 
   metrics { pattern: ".*/post_warmup_step_time_seconds$" unit: "s" stats { stat: LAST_VALUE } }
@@ -238,7 +238,7 @@ benchmarks {
     runner_label: "linux-x86-a4-224-b200-8gpu"
     container_image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build-cuda13.2-cudnn9.15:latest"
     workload_action_inputs { key: "torch_spec" value: "torch==2.14.0" }
-    workload_action_inputs { key: "env_vars_hw" value: "BENCHMARK_PLATFORM=b200_1,TORCH_DEVICE_BACKEND_AUTOLOAD=0" }
+    workload_action_inputs { key: "env_vars_hw" value: "BENCHMARK_PLATFORM=b200_1,TORCH_DEVICE_BACKEND_AUTOLOAD=0,TPU_SKIP_MDS_QUERY=1" }
   }
 
   metrics { pattern: ".*/post_warmup_step_time_seconds$" unit: "s" stats { stat: LAST_VALUE } }
@@ -280,7 +280,7 @@ benchmarks {
     runner_label: "linux-x86-a4-224-b200-8gpu"
     container_image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build-cuda13.2-cudnn9.15:latest"
     workload_action_inputs { key: "torch_spec" value: "torch==2.14.0" }
-    workload_action_inputs { key: "env_vars_hw" value: "BENCHMARK_PLATFORM=b200_1,TORCH_DEVICE_BACKEND_AUTOLOAD=0" }
+    workload_action_inputs { key: "env_vars_hw" value: "BENCHMARK_PLATFORM=b200_1,TORCH_DEVICE_BACKEND_AUTOLOAD=0,TPU_SKIP_MDS_QUERY=1" }
   }
 
   metrics { pattern: ".*/post_warmup_step_time_seconds$" unit: "s" stats { stat: LAST_VALUE } }
@@ -322,7 +322,7 @@ benchmarks {
     runner_label: "linux-x86-a4-224-b200-8gpu"
     container_image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build-cuda13.2-cudnn9.15:latest"
     workload_action_inputs { key: "torch_spec" value: "torch==2.14.0" }
-    workload_action_inputs { key: "env_vars_hw" value: "BENCHMARK_PLATFORM=b200_1,TORCH_DEVICE_BACKEND_AUTOLOAD=0" }
+    workload_action_inputs { key: "env_vars_hw" value: "BENCHMARK_PLATFORM=b200_1,TORCH_DEVICE_BACKEND_AUTOLOAD=0,TPU_SKIP_MDS_QUERY=1" }
   }
 
   metrics { pattern: ".*/post_warmup_step_time_seconds$" unit: "s" stats { stat: LAST_VALUE } }
@@ -364,7 +364,7 @@ benchmarks {
     runner_label: "linux-x86-a4-224-b200-8gpu"
     container_image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build-cuda13.2-cudnn9.15:latest"
     workload_action_inputs { key: "torch_spec" value: "torch==2.14.0" }
-    workload_action_inputs { key: "env_vars_hw" value: "BENCHMARK_PLATFORM=b200_1,TORCH_DEVICE_BACKEND_AUTOLOAD=0" }
+    workload_action_inputs { key: "env_vars_hw" value: "BENCHMARK_PLATFORM=b200_1,TORCH_DEVICE_BACKEND_AUTOLOAD=0,TPU_SKIP_MDS_QUERY=1" }
   }
 
   metrics { pattern: ".*/post_warmup_step_time_seconds$" unit: "s" stats { stat: LAST_VALUE } }
@@ -406,7 +406,7 @@ benchmarks {
     runner_label: "linux-x86-a4-224-b200-8gpu"
     container_image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build-cuda13.2-cudnn9.15:latest"
     workload_action_inputs { key: "torch_spec" value: "torch==2.14.0" }
-    workload_action_inputs { key: "env_vars_hw" value: "BENCHMARK_PLATFORM=b200_1,TORCH_DEVICE_BACKEND_AUTOLOAD=0" }
+    workload_action_inputs { key: "env_vars_hw" value: "BENCHMARK_PLATFORM=b200_1,TORCH_DEVICE_BACKEND_AUTOLOAD=0,TPU_SKIP_MDS_QUERY=1" }
   }
 
   metrics { pattern: ".*/post_warmup_step_time_seconds$" unit: "s" stats { stat: LAST_VALUE } }
@@ -448,7 +448,7 @@ benchmarks {
     runner_label: "linux-x86-a4-224-b200-8gpu"
     container_image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build-cuda13.2-cudnn9.15:latest"
     workload_action_inputs { key: "torch_spec" value: "torch==2.14.0" }
-    workload_action_inputs { key: "env_vars_hw" value: "BENCHMARK_PLATFORM=b200_1,TORCH_DEVICE_BACKEND_AUTOLOAD=0" }
+    workload_action_inputs { key: "env_vars_hw" value: "BENCHMARK_PLATFORM=b200_1,TORCH_DEVICE_BACKEND_AUTOLOAD=0,TPU_SKIP_MDS_QUERY=1" }
   }
 
   metrics { pattern: ".*/post_warmup_step_time_seconds$" unit: "s" stats { stat: LAST_VALUE } }
@@ -490,7 +490,7 @@ benchmarks {
     runner_label: "linux-x86-a4-224-b200-8gpu"
     container_image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build-cuda13.2-cudnn9.15:latest"
     workload_action_inputs { key: "torch_spec" value: "torch==2.14.0" }
-    workload_action_inputs { key: "env_vars_hw" value: "BENCHMARK_PLATFORM=b200_1,TORCH_DEVICE_BACKEND_AUTOLOAD=0" }
+    workload_action_inputs { key: "env_vars_hw" value: "BENCHMARK_PLATFORM=b200_1,TORCH_DEVICE_BACKEND_AUTOLOAD=0,TPU_SKIP_MDS_QUERY=1" }
   }
 
   metrics { pattern: ".*/post_warmup_step_time_seconds$" unit: "s" stats { stat: LAST_VALUE } }
@@ -532,7 +532,7 @@ benchmarks {
     runner_label: "linux-x86-a4-224-b200-8gpu"
     container_image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build-cuda13.2-cudnn9.15:latest"
     workload_action_inputs { key: "torch_spec" value: "torch==2.14.0" }
-    workload_action_inputs { key: "env_vars_hw" value: "BENCHMARK_PLATFORM=b200_1,TORCH_DEVICE_BACKEND_AUTOLOAD=0" }
+    workload_action_inputs { key: "env_vars_hw" value: "BENCHMARK_PLATFORM=b200_1,TORCH_DEVICE_BACKEND_AUTOLOAD=0,TPU_SKIP_MDS_QUERY=1" }
   }
 
   metrics { pattern: ".*/post_warmup_step_time_seconds$" unit: "s" stats { stat: LAST_VALUE } }
@@ -574,7 +574,7 @@ benchmarks {
     runner_label: "linux-x86-a4-224-b200-8gpu"
     container_image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build-cuda13.2-cudnn9.15:latest"
     workload_action_inputs { key: "torch_spec" value: "torch==2.14.0" }
-    workload_action_inputs { key: "env_vars_hw" value: "BENCHMARK_PLATFORM=b200_1,TORCH_DEVICE_BACKEND_AUTOLOAD=0" }
+    workload_action_inputs { key: "env_vars_hw" value: "BENCHMARK_PLATFORM=b200_1,TORCH_DEVICE_BACKEND_AUTOLOAD=0,TPU_SKIP_MDS_QUERY=1" }
   }
 
   metrics { pattern: ".*/post_warmup_step_time_seconds$" unit: "s" stats { stat: LAST_VALUE } }
@@ -616,7 +616,7 @@ benchmarks {
     runner_label: "linux-x86-a4-224-b200-8gpu"
     container_image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build-cuda13.2-cudnn9.15:latest"
     workload_action_inputs { key: "torch_spec" value: "torch==2.14.0" }
-    workload_action_inputs { key: "env_vars_hw" value: "BENCHMARK_PLATFORM=b200_1,TORCH_DEVICE_BACKEND_AUTOLOAD=0" }
+    workload_action_inputs { key: "env_vars_hw" value: "BENCHMARK_PLATFORM=b200_1,TORCH_DEVICE_BACKEND_AUTOLOAD=0,TPU_SKIP_MDS_QUERY=1" }
   }
 
   metrics { pattern: ".*/post_warmup_step_time_seconds$" unit: "s" stats { stat: LAST_VALUE } }
@@ -658,7 +658,7 @@ benchmarks {
     runner_label: "linux-x86-a4-224-b200-8gpu"
     container_image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build-cuda13.2-cudnn9.15:latest"
     workload_action_inputs { key: "torch_spec" value: "torch==2.14.0" }
-    workload_action_inputs { key: "env_vars_hw" value: "BENCHMARK_PLATFORM=b200_1,TORCH_DEVICE_BACKEND_AUTOLOAD=0" }
+    workload_action_inputs { key: "env_vars_hw" value: "BENCHMARK_PLATFORM=b200_1,TORCH_DEVICE_BACKEND_AUTOLOAD=0,TPU_SKIP_MDS_QUERY=1" }
   }
 
   metrics { pattern: ".*/post_warmup_step_time_seconds$" unit: "s" stats { stat: LAST_VALUE } }
@@ -699,7 +699,7 @@ benchmarks {
     runner_label: "linux-x86-a4-224-b200-8gpu"
     container_image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build-cuda13.2-cudnn9.15:latest"
     workload_action_inputs { key: "torch_spec" value: "torch==2.14.0" }
-    workload_action_inputs { key: "env_vars_hw" value: "BENCHMARK_PLATFORM=b200_8,TORCH_DEVICE_BACKEND_AUTOLOAD=0" }
+    workload_action_inputs { key: "env_vars_hw" value: "BENCHMARK_PLATFORM=b200_8,TORCH_DEVICE_BACKEND_AUTOLOAD=0,TPU_SKIP_MDS_QUERY=1" }
   }
 
   metrics { pattern: ".*/post_warmup_step_time_seconds$" unit: "s" stats { stat: LAST_VALUE } }
@@ -740,7 +740,7 @@ benchmarks {
     runner_label: "linux-x86-a4-224-b200-8gpu"
     container_image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build-cuda13.2-cudnn9.15:latest"
     workload_action_inputs { key: "torch_spec" value: "torch==2.14.0" }
-    workload_action_inputs { key: "env_vars_hw" value: "BENCHMARK_PLATFORM=b200_2,TORCH_DEVICE_BACKEND_AUTOLOAD=0" }
+    workload_action_inputs { key: "env_vars_hw" value: "BENCHMARK_PLATFORM=b200_2,TORCH_DEVICE_BACKEND_AUTOLOAD=0,TPU_SKIP_MDS_QUERY=1" }
   }
 
   metrics { pattern: ".*/post_warmup_step_time_seconds$" unit: "s" stats { stat: LAST_VALUE } }
@@ -781,7 +781,7 @@ benchmarks {
     runner_label: "linux-x86-a4-224-b200-8gpu"
     container_image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build-cuda13.2-cudnn9.15:latest"
     workload_action_inputs { key: "torch_spec" value: "torch==2.14.0" }
-    workload_action_inputs { key: "env_vars_hw" value: "BENCHMARK_PLATFORM=b200_4,TORCH_DEVICE_BACKEND_AUTOLOAD=0" }
+    workload_action_inputs { key: "env_vars_hw" value: "BENCHMARK_PLATFORM=b200_4,TORCH_DEVICE_BACKEND_AUTOLOAD=0,TPU_SKIP_MDS_QUERY=1" }
   }
 
   metrics { pattern: ".*/post_warmup_step_time_seconds$" unit: "s" stats { stat: LAST_VALUE } }
