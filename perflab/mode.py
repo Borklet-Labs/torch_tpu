@@ -170,7 +170,7 @@ def fake_tensor_context() -> Iterator[None]:
   mode.fake_tensor_converter.add_constant_storage_mapping = (
       lambda *args, **kwargs: None
   )
-  mode.fake_tensor_converter.meta_converter.tensor_memo = {}  # pytype: disable=annotation-type-mismatch
+  mode.fake_tensor_converter.meta_converter.tensor_memo = {}  # pyrefly: ignore[bad-assignment]
 
   # `trunc_normal_` (e.g. in the HuggingFace ViT position embedding init)
   # rejection-samples with data-dependent control flow (`.item()`,
