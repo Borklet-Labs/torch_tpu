@@ -312,8 +312,12 @@ def _get_splash_op(**splash_kwargs):
 
   torch_fwd_fn.register_autograd(backward, setup_context=setup_context)
 
-  _splash_op_cache[cache_key] = torch_fwd_fn
-  return torch_fwd_fn
+  # Return the registered op name rather than the `CustomOpDef` object.
+  # TorchDynamo cannot install guards on `CustomOpDef` objects returned from an
+  # `assume_constant_result` function, which breaks `torch.compile`. Strings
+  # are trivially guardable; callers look the op up via `torch.ops.pallas`.
+  _splash_op_cache[cache_key] = op_fwd_name
+  return op_fwd_name
 
 
 def splash_sdpa(
@@ -327,7 +331,7 @@ def splash_sdpa(
     enable_gqa: bool = False,
     block_q: int = 512,
     block_kv: int = 512,
-    block_dkv: int = 512,
+    block_dkv: int | None = None,
     block_kv_compute: int = 512,
     block_q_dkv: int = 512,
     block_kv_dkv: int = 512,
@@ -357,7 +361,8 @@ def splash_sdpa(
       enabled.
     block_q: Query tile size for the forward pass (adjusted to divide seq_len).
     block_kv: Key/Value tile size for the forward pass.
-    block_dkv: Override tile size for dK/dV backward tiles when != 512.
+    block_dkv: If set, overrides both `block_q_dkv` and `block_kv_dkv` with this
+      tile size. The `SPLASH_BLOCK_DKV` environment variable takes precedence.
     block_kv_compute: Key/Value compute sub-tile size for the forward pass.
     block_q_dkv: Query tile size for the dK/dV backward pass.
     block_kv_dkv: Key/Value tile size for the dK/dV backward pass.
@@ -378,7 +383,17 @@ def splash_sdpa(
   """
   block_q = int(os.environ.get("SPLASH_BLOCK_Q", block_q))
   block_kv = int(os.environ.get("SPLASH_BLOCK_KV", block_kv))
-  block_dkv = int(os.environ.get("SPLASH_BLOCK_DKV", block_dkv))
+  # `block_dkv` is a shorthand that sets both dK/dV backward tile sizes at once.
+  # The kernel only reads `block_q_dkv` and `block_kv_dkv`, so the shorthand
+  # has to be copied into them. It is applied only when set (by argument or by
+  # `SPLASH_BLOCK_DKV`), so explicit `block_q_dkv`/`block_kv_dkv` values are
+  # otherwise left untouched.
+  dkv_env = os.environ.get("SPLASH_BLOCK_DKV")
+  if dkv_env is not None:
+    block_dkv = int(dkv_env)
+  if block_dkv is not None:
+    block_q_dkv = block_dkv
+    block_kv_dkv = block_dkv
 
   batch, n_heads, seq_len, head_dim = q.shape
   n_kv_heads = k.shape[1]
@@ -393,7 +408,6 @@ def splash_sdpa(
 
   block_q = _adjust_block(block_q, seq_len)
   block_kv = _adjust_block(block_kv, seq_len)
-  block_dkv = _adjust_block(block_dkv, seq_len)
   block_kv_compute = _adjust_block(block_kv_compute, seq_len)
   block_q_dkv = _adjust_block(block_q_dkv, seq_len)
   block_kv_dkv = _adjust_block(block_kv_dkv, seq_len)
@@ -429,7 +443,10 @@ def splash_sdpa(
       k_layout=k_layout,
       v_layout=v_layout,
   )
-  torch_fwd_fn = _get_splash_op(**splash_args)
+  # `_get_splash_op` returns the registered op name rather than the op object
+  # so that it stays guardable under `torch.compile` (see `_get_splash_op`).
+  # Look the op up by name through the `torch.ops.pallas` namespace.
+  torch_fwd_fn = getattr(torch.ops.pallas, _get_splash_op(**splash_args))
 
   if scale is not None:
     default_scale = 1.0 / math.sqrt(head_dim)

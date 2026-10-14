@@ -40,27 +40,27 @@ step) for a single `DoubleStreamBlock`:
 :                           :                      :                  :                        :           : Step     : vs        :                                :
 :                           :                      :                  :                        :           : Time     : Baseline  :                                :
 | :------------------------ | :------------------: | :--------------: | :--------------------: | :-------: | -------: | --------: | :----------------------------- |
-| **1. Baseline Reference   | ❌ False              | ❌ False          | ❌ False                | ❌ False   | **178.61 | 1.00x     | Reference baseline             |
+| **1. Baseline Reference   | ❌ False              | ❌ False          | ❌ False                | ❌ False   | **176.05 | 1.00x     | Reference baseline             |
 : (Eager)**                 :                      :                  :                        :           : ms**     : (ref)     :                                :
-| [**2. Standalone          | ❌ False              | ❌ False          | ✅ True                 | ❌ False   | **149.81 | **1.19x** | [Milestone 4:                  |
+| [**2. Standalone          | ❌ False              | ❌ False          | ✅ True                 | ❌ False   | **147.50 | **1.19x** | [Milestone 4:                  |
 : SplashAttention           :                      :                  :                        :           : ms**     :           : SplashAttention](#milestone-4) :
 : (Eager)**](#milestone-4)  :                      :                  :                        :           :          :           :                                :
-| [**3. Zero-Copy Views     | ✅ True               | ❌ False          | ❌ False                | ❌ False   | **178.30 | **1.00x** | [Milestone 1: Zero-Copy        |
+| [**3. Zero-Copy Views     | ✅ True               | ❌ False          | ❌ False                | ❌ False   | **175.39 | **1.00x** | [Milestone 1: Zero-Copy        |
 : Only                      :                      :                  :                        :           : ms**     :           : Views](#milestone-1)           :
 : (Eager)**](#milestone-1)  :                      :                  :                        :           :          :           :                                :
-| [**4. Compile Only        | ❌ False              | ❌ False          | ❌ False                | ✅ True    | **159.33 | **1.12x** | [Milestone 3: XLA              |
+| [**4. Compile Only        | ❌ False              | ❌ False          | ❌ False                | ✅ True    | **157.33 | **1.12x** | [Milestone 3: XLA              |
 : (Unoptimized              :                      :                  :                        :           : ms**     :           : Compilation](#milestone-3)     :
 : Graph)**](#milestone-3)   :                      :                  :                        :           :          :           :                                :
-| [**5. Zero-Copy + Fused   | ✅ True               | ✅ True           | ✅ True                 | ❌ False   | **156.73 | **1.14x** | [Milestones 1](#milestone-1),  |
+| [**5. Zero-Copy + Fused   | ✅ True               | ✅ True           | ✅ True                 | ❌ False   | **153.60 | **1.15x** | [Milestones 1](#milestone-1),  |
 : RoPE + SplashAttention    :                      :                  :                        :           : ms**     :           : [2](#milestone-2) &            :
 : (Eager)**](#milestone-4)  :                      :                  :                        :           :          :           : [4](#milestone-4)              :
-| [**6. Zero-Copy Views +   | ✅ True               | ❌ False          | ❌ False                | ✅ True    | **159.08 | **1.12x** | [Milestone 1](#milestone-1) +  |
+| [**6. Zero-Copy Views +   | ✅ True               | ❌ False          | ❌ False                | ✅ True    | **156.56 | **1.12x** | [Milestone 1](#milestone-1) +  |
 : Compile**](#milestone-1)  :                      :                  :                        :           : ms**     :           : [Milestone 3](#milestone-3)    :
-| [**7. Fully Optimized     | ✅ True               | ✅ True           | ✅ True                 | ✅ True    | **122.51 | **1.46x** | [Milestones 1](#milestone-1),  |
+| [**7. Fully Optimized     | ✅ True               | ✅ True           | ✅ True                 | ✅ True    | **119.35 | **1.48x** | [Milestones 1](#milestone-1),  |
 : (Zero-Copy + Fused RoPE + :                      :                  :                        :           : ms**     :           : [2](#milestone-2),             :
 : SplashAttention +         :                      :                  :                        :           :          :           : [3](#milestone-3) &            :
 : Compile)**](#milestone-4) :                      :                  :                        :           :          :           : [4](#milestone-4)              :
-| [**8. Zero-Copy + Fused   | ✅ True               | ✅ True           | ❌ False                | ✅ True    | **153.60 | **1.16x** | [Milestones 1](#milestone-1),  |
+| [**8. Zero-Copy + Fused   | ✅ True               | ✅ True           | ❌ False                | ✅ True    | **151.27 | **1.16x** | [Milestones 1](#milestone-1),  |
 : RoPE + Compile (Standard  :                      :                  :                        :           : ms**     :           : [2](#milestone-2) &            :
 : SDPA)**](#milestone-2)    :                      :                  :                        :           :          :           : [3](#milestone-3)              :
 
@@ -75,9 +75,11 @@ step) for a single `DoubleStreamBlock`:
 -   **Precision:** bfloat16 block parameters and inputs.
 -   **SplashAttention block sizes:** 2048 for `block_q`, `block_kv`, and the
     dK/dV backward tiles.
--   **Timing:** 3 warmup steps followed by 10 timed steps. Each timed step ends
-    with `torch.accelerator.synchronize()` so that it includes device execution,
-    and the profiler is disabled during the timed steps.
+-   **Timing:** 3 warmup steps followed by 10 timed steps. The timed steps are
+    dispatched back to back and `torch.accelerator.synchronize()` runs once
+    after the last one, so the mean step time (total time divided by the number
+    of steps) includes device execution. The profiler is disabled during the
+    timed steps.
 
 > [!NOTE]
 >
@@ -185,7 +187,7 @@ attn = attn.transpose(1, 2).reshape(b, l, -1)
 > storage offsets and strides without moving a single byte in TPU HBM. The
 > layout copy that `einops.rearrange` introduces in the backward pass is
 > removed. In the benchmark matrix, this is a small fraction of the step:
-> **178.61 ms to 178.30 ms** in eager mode and **159.33 ms to 159.08 ms** under
+> **176.05 ms to 175.39 ms** in eager mode and **157.33 ms to 156.56 ms** under
 > compilation. The benefit grows with the amount of QKV data moved per step,
 > such as in full models with many blocks.
 
@@ -285,7 +287,7 @@ def apply_rope(xq: Tensor, xk: Tensor, freqs_cis: Tensor) -> tuple[Tensor, Tenso
 > 50%, while the algebraic rotation `(x0*cos - x1*sin, x0*sin + x1*cos)` maps
 > directly to native Fused Multiply-Add (FMA) instructions. When compiled, this
 > enables seamless fusion into upstream projection and downstream attention
-> kernels, reducing the compiled step time from **159.08 ms to 153.60 ms (a 3.4%
+> kernels, reducing the compiled step time from **156.56 ms to 151.27 ms (a 3.4%
 > improvement)** in the benchmark matrix.
 
 --------------------------------------------------------------------------------
@@ -340,7 +342,7 @@ faster computation.
 > `DoubleStreamBlock` larger XLA computation graph. The XLA compiler fuses
 > sequences of elementwise operations, normalizations, and residual additions.
 > Compilation also enables automatic buffer donation and asynchronous
-> instruction pipelining, reducing the step time from **178.61 ms to 159.33 ms
+> instruction pipelining, reducing the step time from **176.05 ms to 157.33 ms
 > (1.12x)** in the benchmark matrix. Because attention dominates the step at a
 > sequence length of 32,768, the compiler has less to fuse. At a sequence length
 > of 640, the same change is about 3x faster.
@@ -381,8 +383,8 @@ attn = splash_sdpa(q_sdpa, k_sdpa, v_sdpa, is_causal=False)
 > materialization of intermediate attention scores in HBM, reducing memory
 > scaling from O(S^2) to O(S). At a sequence length of 32,768 in bfloat16 with
 > 2048-token blocks, SplashAttention is faster than standard SDPA in both eager
-> (**182.61 ms to 156.73 ms, 1.17x**) and compiled (**153.60 ms to 122.51 ms,
-> 1.25x**) modes, with zero-copy views and fused RoPE enabled in both cases.
+> (**181.67 ms to 153.60 ms, 1.18x**) and compiled (**151.27 ms to 119.35 ms,
+> 1.27x**) modes, with zero-copy views and fused RoPE enabled in both cases.
 >
 > **Tuning SplashAttention**: Block sizes and precision have a large effect. At
 > the same sequence length, the default 512-token blocks were about 10% slower
@@ -415,16 +417,20 @@ essential:
     HLO compilation on the first forward/backward invocation. `flux_test.py`
     runs dedicated warmup steps *before* starting the benchmark timer so that
     `Mean Step Time` reflects true steady-state TPU hardware execution.
-2.  **Zero-Sync Device Profiling (`torch.profiler.profile`)**: During timed
-    benchmark iterations, inserting explicit host-side synchronization calls
-    (such as `torch.cuda.synchronize()` or printing tensor values mid-step)
-    breaks asynchronous XLA execution pipelines. Instead, `flux_test.py` wraps
-    the benchmark loop in
+2.  **Synchronizing Once After the Timed Loop
+    (`torch.accelerator.synchronize()`)**: TPU execution is asynchronous, so the
+    host can return from a step before the device has finished it. As in a real
+    training loop, `flux_test.py` dispatches the timed steps back to back and
+    synchronizes once after the last step, so that `Mean Step Time` (total time
+    divided by the number of steps) includes all device execution rather than
+    just host dispatch.
+3.  **Profiling Outside the Timed Loop (`--enable_profiler`)**: The profiler
+    adds host overhead, so `flux_test.py` runs it on a few extra, untimed steps
+    after the benchmark, wrapped in
     `torch.profiler.profile(activities=[ProfilerActivity.CPU,
-    ProfilerActivity.TPU])` and calls `prof.step()` at step boundaries. After
-    the timed loop completes, `format_tpu_operator_table(prof)` aggregates
+    ProfilerActivity.TPU])`. `format_tpu_operator_table(prof)` then aggregates
     device-side `self_device_time_total` microseconds to display the top TPU
-    operators without distorting runtime measurements.
+    operators.
 
 ### 1. Running on TPU:
 
@@ -447,7 +453,7 @@ bazel test \
 You can run `flux_test` directly on a TPU host and toggle individual
 optimization flags via CLI arguments. The commands below use a sequence length
 of 640 for faster iteration. To match the sequence length used in the benchmark
-matrix, pass `--img_seq_len=32256 --txt_seq_len=512` instead:
+matrix, pass `--img_seq_len=32256 --txt_seq_len=512 --dtype=bfloat16` instead:
 
 ```bash
 # Configuration 1: Unoptimized Baseline (Eager)

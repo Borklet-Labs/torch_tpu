@@ -6,7 +6,7 @@ torch_tpu_version: 0.1.1.dev20260922
 
 This case study walks through how we took a reference PyTorch implementation of
 the [FLUX](https://github.com/black-forest-labs/flux) diffusion transformer
-`DoubleStreamBlock` and made a training step **1.46x faster** on Cloud TPU with
+`DoubleStreamBlock` and made a training step **1.48x faster** on Cloud TPU with
 TorchTPU at a sequence length of 32,768.
 
 This page is a condensed companion to the full tutorial. It highlights the key
@@ -33,16 +33,16 @@ single `DoubleStreamBlock`:
 
 | Configuration                       | Mean Step Time | Speedup vs. Baseline |
 | :---------------------------------- | -------------: | -------------------: |
-| Baseline reference (eager)          | 178.61 ms      | 1.00x                |
-| Pallas SplashAttention only (eager) | 149.81 ms      | 1.19x                |
-| Zero-copy views only (eager)        | 178.30 ms      | 1.00x                |
-| `torch.compile` only                | 159.33 ms      | 1.12x                |
-| Zero-copy views + fused RoPE +      | 156.73 ms      | 1.14x                |
+| Baseline reference (eager)          | 176.05 ms      | 1.00x                |
+| Pallas SplashAttention only (eager) | 147.50 ms      | 1.19x                |
+| Zero-copy views only (eager)        | 175.39 ms      | 1.00x                |
+| `torch.compile` only                | 157.33 ms      | 1.12x                |
+| Zero-copy views + fused RoPE +      | 153.60 ms      | 1.15x                |
 : Pallas SplashAttention (eager)      :                :                      :
-| Zero-copy views + `torch.compile`   | 159.08 ms      | 1.12x                |
-| Zero-copy views + fused RoPE +      | 153.60 ms      | 1.16x                |
+| Zero-copy views + `torch.compile`   | 156.56 ms      | 1.12x                |
+| Zero-copy views + fused RoPE +      | 151.27 ms      | 1.16x                |
 : `torch.compile`                     :                :                      :
-| **Zero-copy views + fused RoPE +    | **122.51 ms**  | **1.46x**            |
+| **Zero-copy views + fused RoPE +    | **119.35 ms**  | **1.48x**            |
 : Pallas SplashAttention +            :                :                      :
 : `torch.compile`**                   :                :                      :
 
@@ -57,9 +57,11 @@ single `DoubleStreamBlock`:
 -   **Precision:** bfloat16 block parameters and inputs.
 -   **SplashAttention block sizes:** 2048 for `block_q`, `block_kv`, and the
     dK/dV backward tiles.
--   **Timing:** 3 warmup steps followed by 10 timed steps. Each timed step ends
-    with `torch.accelerator.synchronize()` so that it includes device execution,
-    and the profiler is disabled during the timed steps.
+-   **Timing:** 3 warmup steps followed by 10 timed steps. The timed steps are
+    dispatched back to back and `torch.accelerator.synchronize()` runs once
+    after the last one, so the mean step time (total time divided by the number
+    of steps) includes device execution. The profiler is disabled during the
+    timed steps.
 
 At this sequence length, attention dominates the step, so SplashAttention and
 compilation give the largest gains. At shorter sequence lengths, compilation
@@ -140,8 +142,8 @@ print(f"q shape: {tuple(q_before.shape)}")
 The optimized implementation keeps the `3` axis adjacent to `(H, D)` and splits
 it with `torch.unbind`. The backward pass then stacks the Q, K, and V gradients
 directly into the original layout, so no extra copy is needed. In the results
-table, the effect on step time is small (**178.61 ms to 178.30 ms** in eager
-mode, **159.33 ms to 159.08 ms** compiled) because the copy is a small fraction
+table, the effect on step time is small (**176.05 ms to 175.39 ms** in eager
+mode, **157.33 ms to 156.56 ms** compiled) because the copy is a small fraction
 of the step, but it is removed at no cost.
 
 > [!NOTE] The cells in this milestone only show that the two approaches produce
@@ -228,7 +230,7 @@ xq_out_1 = xq_0 * sin + xq_1 * cos
 This halves the positional embedding footprint, maps to fused multiply-add
 instructions, and fuses with the surrounding projection and attention ops under
 compilation. On top of zero-copy views and `torch.compile`, it reduces the step
-time from **159.08 ms to 153.60 ms (3.4%)**.
+time from **156.56 ms to 151.27 ms (3.4%)**.
 
 Because both versions perform the same multiplications and additions on the same
 operands, they produce identical results. The cell below runs the optimized
@@ -295,7 +297,7 @@ torch.testing.assert_close(
 In eager mode, every PyTorch operation launches an independent TPU program, so
 intermediate activations round-trip through HBM and the host frequently stalls
 on dispatch. In the results table, the baseline `DoubleStreamBlock` takes
-**178.61 ms** per step in eager mode.
+**176.05 ms** per step in eager mode.
 
 The cell below runs the fused RoPE from Milestone 2 eagerly, op by op:
 
@@ -325,7 +327,7 @@ block = DoubleStreamBlock(
 compiled_block = block.maybe_compile()  # Wraps the block in torch.compile(backend="tpu").
 ```
 
-Compilation brings the step time from **178.61 ms to 159.33 ms (1.12x)**. The
+Compilation brings the step time from **176.05 ms to 157.33 ms (1.12x)**. The
 gain is modest at a sequence length of 32,768 because attention dominates the
 step. At a sequence length of 640, compilation is about 3x faster.
 
@@ -413,9 +415,9 @@ torch_fwd_fn.register_autograd(backward, setup_context=setup_context)
 > kernel runs directly on `torch.Tensor` TPU buffers.
 
 **Results**: In the results table, SplashAttention alone is **1.19x** faster
-than the eager baseline (178.61 ms to 149.81 ms). With zero-copy views and fused
-RoPE enabled, it is faster than standard SDPA in both eager (**182.61 ms to
-156.73 ms, 1.17x**) and compiled (**153.60 ms to 122.51 ms, 1.25x**) modes.
+than the eager baseline (176.05 ms to 147.50 ms). With zero-copy views and fused
+RoPE enabled, it is faster than standard SDPA in both eager (**181.67 ms to
+153.60 ms, 1.18x**) and compiled (**151.27 ms to 119.35 ms, 1.27x**) modes.
 
 These results depend on configuring the kernel for the workload. With the
 default 512-token blocks, SplashAttention was about 10% slower than standard

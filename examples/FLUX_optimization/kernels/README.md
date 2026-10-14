@@ -256,9 +256,11 @@ Because Pallas kernels are specialized on static parameters (such as `seq_len`,
 `n_heads`, and `block_sizes`), `_get_splash_op` in
 [`splash_attention.py`](splash_attention.py) hashes the configuration parameters
 to register a unique operator per configuration, connects the backward pass via
-`register_autograd`, and caches the resulting `CustomOpDef`. Adding
+`register_autograd`, and caches the registered operator **name**. Adding
 `@torch._dynamo.assume_constant_result` allows TorchDynamo to treat the operator
-lookup as a compile-time constant:
+lookup as a compile-time constant. Returning a string rather than the
+`CustomOpDef` object matters: TorchDynamo cannot install guards on the
+`CustomOpDef` object, so returning it directly breaks `torch.compile`.
 
 ```python
 # Inside _get_splash_op(**splash_kwargs) in splash_attention.py:
@@ -283,8 +285,8 @@ def backward(ctx, grad_out, grad_lse):
 
 torch_fwd_fn.register_autograd(backward, setup_context=setup_context)
 
-_splash_op_cache[cache_key] = torch_fwd_fn
-return torch_fwd_fn
+_splash_op_cache[cache_key] = op_fwd_name
+return op_fwd_name
 ```
 
 --------------------------------------------------------------------------------
@@ -297,8 +299,8 @@ The public entry point `splash_sdpa` in
 
 1.  Adjusts tile sizes via `_adjust_block` so `seq_len` is evenly divisible by
     the chosen block sizes.
-2.  Retrieves the cached custom op from `_get_splash_op` and invokes it
-    directly.
+2.  Looks up the cached custom op by name under `torch.ops.pallas` and invokes
+    it directly.
 
 ```python
 # Inside splash_sdpa(...) in splash_attention.py:
@@ -317,7 +319,7 @@ block_q = _adjust_block(block_q, seq_len)
 block_kv = _adjust_block(block_kv, seq_len)
 # ... (adjust remaining block sizes) ...
 
-torch_fwd_fn = _get_splash_op(**splash_args)
+torch_fwd_fn = getattr(torch.ops.pallas, _get_splash_op(**splash_args))
 
 result, _ = torch_fwd_fn(q, k, v)
 ```

@@ -28,21 +28,31 @@ Key Benchmarking Principles Demonstrated:
    before starting the benchmark timer ensures that `Mean Step Time` reflects
    true steady-state TPU execution rather than one-time compiler overhead.
 
-2. Asynchronous Device Profiling (`torch.profiler.profile`):
-   Inserting explicit host synchronizations (e.g., printing tensor values mid-step)
-   breaks the asynchronous TPU execution pipeline. Instead, this benchmark uses
-   `torch.profiler.profile(activities=[CPU, TPU])` with `prof.step()` markers and
-   post-processes `self_device_time_total` microseconds via `format_tpu_operator_table`
-   to inspect hardware-level kernel execution times cleanly.
+2. Synchronized Step Timing (`torch.accelerator.synchronize()`):
+   TPU execution is asynchronous, so the host can return from a step before the
+   device has finished it. As in a real training loop, the host dispatches the
+   timed steps back to back, and `torch.accelerator.synchronize()` runs once
+   after the last step so that `Mean Step Time` (total time divided by the
+   number of steps) includes all device execution, not just host dispatch.
+
+3. Profiling Outside the Timed Loop (`--enable_profiler`):
+   The profiler adds host overhead, so it runs on a few extra, untimed steps
+   after the benchmark. `format_tpu_operator_table` post-processes
+   `self_device_time_total` to show the top TPU operators.
 
 ================================================================================
-EXPECTED BENCHMARK RESULTS ON CLOUD TPU (batch_size=2, seq_len=640, heads=8)
+EXPECTED BENCHMARK RESULTS ON A SINGLE TPU v6e CHIP
+(bfloat16, batch_size=2, hidden_size=1024, heads=8, seq_len=32768,
+SplashAttention blocks of 2048)
 ================================================================================
-  1. Baseline (Eager Reference):              1576.01 ms (1.00x)
-  2. Zero-Copy Views Only (.view+unbind):      578.03 ms (2.72x speedup)
-  3. Compile Only (Unoptimized Graph):         344.50 ms (4.57x speedup)
-  4. Zero-Copy Views + Compile:                113.31 ms (13.91x speedup)
-  5. Zero-Copy + Fused 2D RoPE + Compile:       69.16 ms (22.79x speedup)
+  1. Baseline (Eager Reference):                    176.05 ms (1.00x)
+  2. SplashAttention Only (Eager):                  147.50 ms (1.19x)
+  3. Zero-Copy Views Only (Eager):                  175.39 ms (1.00x)
+  4. Compile Only:                                  157.33 ms (1.12x)
+  5. Zero-Copy + RoPE + SplashAttention (Eager):    153.60 ms (1.15x)
+  6. Zero-Copy Views + Compile:                     156.56 ms (1.12x)
+  7. Zero-Copy + RoPE + SplashAttention + Compile:  119.35 ms (1.48x)
+  8. Zero-Copy + RoPE + Compile (Standard SDPA):    151.27 ms (1.16x)
 
 ================================================================================
 HOW TO RUN
@@ -51,16 +61,21 @@ Run test suite via Bazel:
   bazel test \\
     //examples/FLUX_optimization:flux_test
 
-Run interactive benchmark with custom flags:
+Run interactive benchmark with custom flags (the configuration used for the
+results above):
   bazel run \\
     //examples/FLUX_optimization:flux_test -- \\
-    --batch_size=2 --img_seq_len=512 --txt_seq_len=128 --hidden_size=1024 \\
-    --use_zero_copy_view=true --use_fused_rope=true --compile=true \\
-    --num_warmup_steps=2 --num_benchmark_steps=10
+    --batch_size=2 --img_seq_len=32256 --txt_seq_len=512 --hidden_size=1024 \\
+    --dtype=bfloat16 --use_zero_copy_view=true --use_fused_rope=true \\
+    --use_splash_attention=true --compile=true \\
+    --num_warmup_steps=3 --num_benchmark_steps=10 --enable_profiler=false
+
+SplashAttention block sizes can be overridden with the `SPLASH_BLOCK_Q`,
+`SPLASH_BLOCK_KV`, and `SPLASH_BLOCK_DKV` environment variables. The results
+above use 2048 for all three.
 """
 
-import contextlib
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 import time
 from absl import flags
 from absl import logging
@@ -89,6 +104,10 @@ _ENABLE_PROFILER = flags.DEFINE_bool(
     "Whether to capture in-memory execution traces for operator breakdown"
     " logging.",
 )
+
+# Number of extra, untimed steps run under the profiler when
+# `--enable_profiler` is set.
+_NUM_PROFILED_STEPS = 2
 
 _BATCH_SIZE = flags.DEFINE_integer(
     "batch_size",
@@ -147,6 +166,13 @@ _COMPILE = flags.DEFINE_bool(
     " torch.compile(backend='tpu').",
 )
 
+_DTYPE = flags.DEFINE_enum(
+    "dtype",
+    "float32",
+    ["float32", "bfloat16"],
+    "Data type for the benchmark's block parameters and inputs.",
+)
+
 
 # ==============================================================================
 # STEP 1: BENCHMARK METRICS & DEVICE PROFILER FORMATTING
@@ -159,14 +185,14 @@ class BenchmarkMetrics:
 
   mode: str = "Baseline (rearrange)"
   warmup_time_ms: float = 0.0
-  step_times_ms: list[float] = field(default_factory=list)
+  num_steps: int = 0
   total_execution_time_s: float = 0.0
 
   @property
   def mean_step_time_ms(self) -> float:
     return (
-        sum(self.step_times_ms) / len(self.step_times_ms)
-        if self.step_times_ms
+        self.total_execution_time_s * 1000 / self.num_steps
+        if self.num_steps
         else 0.0
     )
 
@@ -179,7 +205,7 @@ class BenchmarkMetrics:
     logging.info(
         "  Total Measured Runtime: %.4f s (%d steps)",
         self.total_execution_time_s,
-        len(self.step_times_ms),
+        self.num_steps,
     )
     logging.info("  Mean Step Time:         %.2f ms", self.mean_step_time_ms)
     logging.info("%s\n", border)
@@ -409,6 +435,7 @@ class FluxBaselineTest(absltest.TestCase):
 
   def test_baseline_double_stream_block_training_step_and_profile(self):
     """Runs a full training step benchmark and profiles TPU device operators."""
+    dtype = getattr(torch, _DTYPE.value)
     img, txt, vec, pe = flux.generate_baseline_inputs(
         batch_size=self.batch_size,
         img_seq_len=self.img_seq_len,
@@ -417,6 +444,7 @@ class FluxBaselineTest(absltest.TestCase):
         num_heads=self.num_heads,
         axes_dim=self.axes_dim,
         device=self.device,
+        dtype=dtype,
         use_fused_rope=_USE_FUSED_ROPE.value,
     )
 
@@ -432,7 +460,8 @@ class FluxBaselineTest(absltest.TestCase):
         mlp_ratio=4.0,
         qkv_bias=True,
         config=opt_config,
-    ).to(self.device)
+    ).to(device=self.device, dtype=dtype)
+    logging.info("Benchmark dtype: %s", dtype)
 
     optimizer = torch.optim.AdamW(block.parameters(), lr=1e-3)
 
@@ -440,16 +469,24 @@ class FluxBaselineTest(absltest.TestCase):
     target_img = torch.randn_like(img)
     target_txt = torch.randn_like(txt)
 
+    def train_step() -> torch.Tensor:
+      optimizer.zero_grad()
+      with torch.profiler.record_function("FLUX_Forward"):
+        out_img, out_txt = block(img=img, txt=txt, vec=vec, pe=pe)
+      with torch.profiler.record_function("FLUX_Backward"):
+        loss = F.mse_loss(out_img, target_img) + F.mse_loss(out_txt, target_txt)
+        loss.backward()
+      with torch.profiler.record_function("FLUX_Optimizer"):
+        optimizer.step()
+      return loss
+
     # --------------------------------------------------------------------------
     # 1. Warmup Iterations (Absorbs XLA JIT Compilation & Memory Allocation)
     # --------------------------------------------------------------------------
     warmup_start = time.perf_counter()
     for _ in range(_NUM_WARMUP_STEPS.value):
-      optimizer.zero_grad()
-      out_img, out_txt = block(img=img, txt=txt, vec=vec, pe=pe)
-      loss = F.mse_loss(out_img, target_img) + F.mse_loss(out_txt, target_txt)
-      loss.backward()
-      optimizer.step()
+      train_step()
+    torch.accelerator.synchronize()
     warmup_time_ms = (time.perf_counter() - warmup_start) * 1000
 
     modes = []
@@ -472,51 +509,37 @@ class FluxBaselineTest(absltest.TestCase):
     )
 
     # --------------------------------------------------------------------------
-    # 2. Steady-State Timed Benchmark Loop with Native TPU Profiler
+    # 2. Steady-State Timed Benchmark Loop
     # --------------------------------------------------------------------------
-    activities = [torch.profiler.ProfilerActivity.CPU]
-    if hasattr(torch.profiler.ProfilerActivity, "TPU"):
-      activities.append(torch.profiler.ProfilerActivity.TPU)
-
+    # TPU execution is asynchronous: the host dispatches work and returns before
+    # the device finishes it. As in a real training loop, the host is allowed
+    # to dispatch the next step while the TPU is still running the previous
+    # one, and the TPU is synchronized once after the last step so that the
+    # total includes all device execution. The profiler is kept out of this
+    # loop so that its overhead does not skew the timings.
     bench_start_total = time.perf_counter()
-
-    # Pure end-to-end execution without disk trace dumps or graph-breaking host syncs
-    with torch.profiler.profile(
-        activities=activities,
-        record_shapes=True,
-        with_stack=False,
-    ) if _ENABLE_PROFILER.value else contextlib.nullcontext() as prof:
-
-      for step_idx in range(_NUM_BENCHMARK_STEPS.value):
-        step_start = time.perf_counter()
-
-        optimizer.zero_grad()
-        with torch.profiler.record_function("FLUX_Forward"):
-          out_img, out_txt = block(img=img, txt=txt, vec=vec, pe=pe)
-
-        with torch.profiler.record_function("FLUX_Backward"):
-          loss = F.mse_loss(out_img, target_img) + F.mse_loss(
-              out_txt, target_txt
-          )
-          loss.backward()
-
-        with torch.profiler.record_function("FLUX_Optimizer"):
-          optimizer.step()
-
-        step_total_ms = (time.perf_counter() - step_start) * 1000
-        metrics.step_times_ms.append(step_total_ms)
-
-        if prof is not None:
-          prof.step()
-
-        logging.info("Step %d: total=%.2f ms", step_idx + 1, step_total_ms)
-
+    for _ in range(_NUM_BENCHMARK_STEPS.value):
+      loss = train_step()
+    torch.accelerator.synchronize()
     metrics.total_execution_time_s = time.perf_counter() - bench_start_total
+    metrics.num_steps = _NUM_BENCHMARK_STEPS.value
 
     # --------------------------------------------------------------------------
-    # 3. Output In-Memory TPU Operator Breakdown & Benchmark Summary
+    # 3. Untimed Profiled Steps for the TPU Operator Breakdown
     # --------------------------------------------------------------------------
-    if prof is not None:
+    if _ENABLE_PROFILER.value:
+      activities = [torch.profiler.ProfilerActivity.CPU]
+      if hasattr(torch.profiler.ProfilerActivity, "TPU"):
+        activities.append(torch.profiler.ProfilerActivity.TPU)
+      with torch.profiler.profile(
+          activities=activities,
+          record_shapes=True,
+          with_stack=False,
+      ) as prof:
+        for _ in range(_NUM_PROFILED_STEPS):
+          train_step()
+          prof.step()
+        torch.accelerator.synchronize()
       try:
         table_summary = format_tpu_operator_table(prof)
         logging.info(
@@ -529,7 +552,7 @@ class FluxBaselineTest(absltest.TestCase):
     metrics.print_summary()
 
     # Functional Assertions
-    self.assertEqual(len(metrics.step_times_ms), _NUM_BENCHMARK_STEPS.value)
+    self.assertEqual(metrics.num_steps, _NUM_BENCHMARK_STEPS.value)
     self.assertTrue(torch.isfinite(loss.detach().cpu()).item())
     self.assertGreater(metrics.mean_step_time_ms, 0.0)
 

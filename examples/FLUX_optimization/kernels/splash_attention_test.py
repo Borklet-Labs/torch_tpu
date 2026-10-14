@@ -173,6 +173,41 @@ class SplashAttentionTest(absltest.TestCase):
     )
     logging.info("MHA backward gradient parity passed.")
 
+  def test_compiled_forward_backward_matches_eager(self):
+    """splash_sdpa works under torch.compile and matches eager fwd + bwd."""
+    b, n_heads, seq_len, head_dim = 2, 8, 128, 64
+
+    torch.manual_seed(42)
+    q, k, v = (
+        torch.randn(
+            b,
+            n_heads,
+            seq_len,
+            head_dim,
+            dtype=torch.float32,
+            device=self.device,
+        )
+        for _ in range(3)
+    )
+
+    def attention_loss(q, k, v):
+      return splash_sdpa(q, k, v, is_causal=False, enable_gqa=False).sum()
+
+    compiled_attention_loss = torch.compile(attention_loss, backend="tpu")
+
+    results = []
+    for fn in (attention_loss, compiled_attention_loss):
+      q_i, k_i, v_i = (t.clone().requires_grad_(True) for t in (q, k, v))
+      loss = fn(q_i, k_i, v_i)
+      loss.backward()
+      results.append((loss.detach(), q_i.grad, k_i.grad, v_i.grad))
+
+    for eager, compiled in zip(*results):
+      torch.testing.assert_close(
+          compiled.cpu(), eager.cpu(), rtol=1e-2, atol=1e-2
+      )
+    logging.info("Compiled splash attention fwd + bwd matches eager.")
+
 
 if __name__ == "__main__":
   absltest.main()
