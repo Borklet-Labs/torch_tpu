@@ -700,6 +700,13 @@ def main(argv: Sequence[str]) -> None:
         results.append(
             _TargetResult(target_name, TargetStatus.SKIPPED, reason, duration)
         )
+        if node_rank == 0:
+          export_lib.export_skip(
+              spec_name=spec.name,
+              platform=platform,
+              framework=_FRAMEWORK,
+              run_mode=mode,
+          )
       else:
         results.append(
             _TargetResult(target_name, TargetStatus.PASSED, "", duration)

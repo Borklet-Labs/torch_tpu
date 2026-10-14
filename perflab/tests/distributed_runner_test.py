@@ -911,7 +911,13 @@ class DistributedRunnerTest(seed_test_utils.RepeatableTest):
     ):
       distributed_runner._shard_env()
 
-  def test_main_reports_factory_unsupported_benchmark_as_skipped(self):
+  @parameterized.named_parameters(
+      ("node_0", "0", True),
+      ("node_1", "1", False),
+  )
+  def test_main_reports_factory_unsupported_benchmark_as_skipped(
+      self, node_rank, exports_skip
+  ):
     fake_dist_run = _FakeDistRun(
         failing_specs=set(), unsupported_specs=frozenset({"too_big"})
     )
@@ -931,17 +937,30 @@ class DistributedRunnerTest(seed_test_utils.RepeatableTest):
                 # even a non-first shard reports them.
                 "TEST_TOTAL_SHARDS": "2",
                 "TEST_SHARD_INDEX": "1",
+                "NODE_RANK": node_rank,
             },
         ),
         mock.patch.object(
             distributed_runner.distributed_utils, "dist_run", fake_dist_run
         ),
         mock.patch.object(distributed_runner, "_shard_targets", lambda t: t),
+        mock.patch.object(
+            export_lib, "export_skip", autospec=True
+        ) as mock_export_skip,
         self.assertLogs(level="INFO") as logs,
     ):
       distributed_runner.main(["distributed_runner"])
 
     self.assertEqual(fake_dist_run.ran, ["too_big", "healthy"])
+    if exports_skip:
+      mock_export_skip.assert_called_once_with(
+          spec_name="too_big",
+          platform=target_lib.Platform.B200_8,
+          framework=mode_lib.Framework.TORCH,
+          run_mode=common.RunMode.COMPILED,
+      )
+    else:
+      mock_export_skip.assert_not_called()
     summary = "\n".join(logs.output)
     self.assertRegex(
         summary, r"too_big_compiled\s+SKIPPED\s+too_big needs more chips"
