@@ -1122,9 +1122,9 @@ presubmit {
   }
 }
 
-# Checks for BUILD and .bzl files.
+# Checks for BUILD, BUILD.bazel and .bzl files.
 presubmit {
-  path_regexp: "torch_tpu/.*(BUILD|\\.bzl)"
+  path_regexp: "torch_tpu/.*(BUILD|BUILD\\.bazel|\\.bzl)"
 
   # Prevent new uses of notest_oss.
   check_contents {
