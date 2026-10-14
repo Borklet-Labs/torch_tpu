@@ -272,6 +272,7 @@ torch_tpu_cc_library(
 torch_tpu_cc_test(
     name = "device_buffer_test",
     srcs = ["device_buffer_test.cc"],
+    exec_properties = {"cpp_link.mem": "16g"},
     requires_libtpu = True,
     deps = [
         ":device_buffer",
