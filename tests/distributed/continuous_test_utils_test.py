@@ -1,0 +1,86 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Tests for `continuous_test_utils`."""
+
+from typing import Final
+import unittest
+
+from absl.testing import absltest
+import torch
+from torch import distributed as dist
+import torch.multiprocessing as mp
+from torch_tpu._internal.distributed import multiprocessing
+from tests import seed_test_utils
+from tests.distributed import continuous_test_utils
+
+_FAILURE_MESSAGE: Final[str] = "DELIBERATE_FAILURE_ON_RANK_3"
+
+
+class _FailsOnOneRank(continuous_test_utils.TpuMultiProcContinuousTest):
+  """Fails on a single rank, after a collective.
+
+  Its method has no `test` prefix, so the test runner doesn't collect it.
+  `TpuMultiProcContinuousTestTest` runs it explicitly.
+  """
+
+  world_size = 8
+
+  def fail_on_rank_3(self) -> None:
+    dist.all_reduce(torch.ones(1, device="tpu"))
+    if self.rank == 3:
+      raise AssertionError(_FAILURE_MESSAGE)
+
+
+class TpuMultiProcContinuousTestTest(
+    seed_test_utils.MultiProcessRepeatableTest
+):
+
+  def test_single_rank_failure_is_reported_without_hanging(self) -> None:
+    """A failure on one rank is reported, and the workers shut down.
+
+    Guards the failure handling in `TpuMultiProcContinuousTest`:
+    - The barrier between tests also runs when a test fails. Otherwise the other
+      ranks block in it and the failure is never reported.
+    - `tearDownClass()` kills the workers after a failure. Otherwise it waits
+      forever for workers that can't exit cleanly.
+
+    A regression shows up as this test timing out.
+    """
+    result = unittest.TestResult()
+    unittest.TestSuite([_FailsOnOneRank("fail_on_rank_3")]).run(result)
+
+    problems = result.errors + result.failures
+    self.assertLen(problems, 1)
+    _, traceback_str = problems[0]
+    self.assertIn(_FAILURE_MESSAGE, traceback_str)
+
+  def test_contract_invariants(self):
+    """Guards against regressions in MultiProcessRepeatableTest invariants.
+
+    If someone enables `seed_in_setup` or `synchronize_tensors_in_tear_down`,
+    the main process will initialize the PJRT client / claim TPU devices,
+    preventing child workers from acquiring them.
+    """
+    test_instance = _FailsOnOneRank("fail_on_rank_3")
+    self.assertFalse(test_instance.seed_in_setup)
+    self.assertFalse(test_instance.synchronize_tensors_in_tear_down)
+    self.assertIsInstance(
+        test_instance, seed_test_utils.MultiProcessRepeatableTest
+    )
+
+
+if __name__ == "__main__":
+  mp.set_start_method("spawn")
+  multiprocessing.handle_test_main(absltest.main)

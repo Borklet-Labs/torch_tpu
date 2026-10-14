@@ -98,7 +98,9 @@ def set_launch_env(nproc_per_node: int) -> bool:
 
 
 def set_worker_env(
-    local_rank: int, nproc_per_node: int, default_master_port: int
+    local_rank: int,
+    nproc_per_node: int,
+    default_master_port: int | None = None,
 ) -> int:
   """Sets the per-rank environment variables in a spawned worker process.
 
@@ -108,7 +110,8 @@ def set_worker_env(
   Args:
     local_rank: The rank of this worker on the current node.
     nproc_per_node: The number of processes on the current node.
-    default_master_port: The MASTER_PORT to use if it is not already set.
+    default_master_port: The MASTER_PORT to use if it is not already set. Must
+      be provided if MASTER_PORT is not in os.environ.
 
   Returns:
     The global rank of this worker.
@@ -132,6 +135,11 @@ def set_worker_env(
   if "MASTER_ADDR" not in os.environ:
     os.environ["MASTER_ADDR"] = "localhost"
   if "MASTER_PORT" not in os.environ:
+    if default_master_port is None:
+      raise ValueError(
+          "default_master_port must be set when MASTER_PORT is not in"
+          " os.environ"
+      )
     os.environ["MASTER_PORT"] = str(default_master_port)
 
   os.environ["RANK"] = str(global_rank)

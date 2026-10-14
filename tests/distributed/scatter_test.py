@@ -12,69 +12,50 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
 from absl.testing import absltest
 import torch
-from torch import distributed as dist
 import torch.multiprocessing as mp
 from torch_tpu._internal.utils import test_utils as utils
 from torch_tpu._internal.distributed import multiprocessing
-from tests import seed_test_utils
-from tests.distributed import distributed_utils
+from tests.distributed import continuous_test_utils
 
 
-def run_scatter() -> None:
-  """Tests scatter functionality."""
-  dist.init_process_group(backend="tpu_dist")
-  rank = int(os.environ["RANK"])
-  world_size = int(os.environ["WORLD_SIZE"])
-  src_rank = 0
-  size = 5
-  inputs = None
-  if rank == src_rank:
-    inputs = [
-        torch.full((size,), i, device="tpu", dtype=torch.float32)
-        for i in range(world_size)
-    ]
-  output = torch.empty(size, device="tpu", dtype=torch.float32)
+class ScatterTest(continuous_test_utils.TpuMultiProcContinuousTest):
 
-  torch.distributed.scatter(output, inputs, src=src_rank)
-  expected = torch.full((size,), fill_value=rank, dtype=torch.float32)
-  utils.assert_close(output.cpu(), expected)
+  @property
+  def world_size(self) -> int:
+    return 8
 
+  def test_scatter_tensor(self) -> None:
+    """Tests scatter functionality."""
+    src_rank = 0
+    size = 5
+    inputs = None
+    if self.rank == src_rank:
+      inputs = [
+          torch.full((size,), i, device="tpu", dtype=torch.float32)
+          for i in range(self.world_size)
+      ]
+    output = torch.empty(size, device="tpu", dtype=torch.float32)
 
-def run_scatter_scalar() -> None:
-  """Tests scatter on scalar input."""
-  dist.init_process_group(backend="tpu_dist")
-  rank = int(os.environ["RANK"])
-  world_size = int(os.environ["WORLD_SIZE"])
-  src_rank = 0
-  inputs = None
-  if rank == src_rank:
-    inputs = [
-        torch.tensor(i, device="tpu", dtype=torch.float32)
-        for i in range(world_size)
-    ]
-  output = torch.tensor(-1, device="tpu", dtype=torch.float32)
+    torch.distributed.scatter(output, inputs, src=src_rank)
+    expected = torch.full((size,), fill_value=self.rank, dtype=torch.float32)
+    utils.assert_close(output.cpu(), expected)
 
-  torch.distributed.scatter(output, inputs, src=src_rank)
-  expected = torch.tensor(rank, dtype=torch.float32)
-  utils.assert_close(output.cpu(), expected)
+  def test_scatter_scalar(self) -> None:
+    """Tests scatter on scalar input."""
+    src_rank = 0
+    inputs = None
+    if self.rank == src_rank:
+      inputs = [
+          torch.tensor(i, device="tpu", dtype=torch.float32)
+          for i in range(self.world_size)
+      ]
+    output = torch.tensor(-1, device="tpu", dtype=torch.float32)
 
-
-class ScatterTest(seed_test_utils.MultiProcessRepeatableTest):
-
-  def test_scatter_tensor(self):
-    distributed_utils.dist_run(
-        nproc_per_node=8,
-        fn=run_scatter,
-    )
-
-  def test_scatter_scalar(self):
-    distributed_utils.dist_run(
-        nproc_per_node=8,
-        fn=run_scatter_scalar,
-    )
+    torch.distributed.scatter(output, inputs, src=src_rank)
+    expected = torch.tensor(self.rank, dtype=torch.float32)
+    utils.assert_close(output.cpu(), expected)
 
 
 if __name__ == "__main__":

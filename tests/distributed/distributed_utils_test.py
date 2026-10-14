@@ -147,6 +147,25 @@ class DistributedUtilsTest(seed_test_utils.MultiProcessRepeatableTest):
         _worker_env_check,
     )
 
+  def test_set_worker_env_master_port(self) -> None:
+    """Verifies default_master_port handling in set_worker_env."""
+    with mock.patch.dict(os.environ, {}, clear=True):
+      distributed_utils.set_worker_env(
+          local_rank=0, nproc_per_node=2, default_master_port=12345
+      )
+      self.assertEqual(os.environ["MASTER_PORT"], "12345")
+
+    with mock.patch.dict(os.environ, {"MASTER_PORT": "54321"}, clear=True):
+      # When MASTER_PORT is already set, default_master_port is optional.
+      distributed_utils.set_worker_env(local_rank=0, nproc_per_node=2)
+      self.assertEqual(os.environ["MASTER_PORT"], "54321")
+
+    with mock.patch.dict(os.environ, {}, clear=True):
+      with self.assertRaisesRegex(  # ASSERT_RAISES_OK=Validates test helper.
+          ValueError, "default_master_port must be set"
+      ):
+        distributed_utils.set_worker_env(local_rank=0, nproc_per_node=2)
+
   def test_xla_flags_expansion(self) -> None:
     """Verifies that $RANK / ${RANK} in XLA_FLAGS is expanded per worker."""
     output_dir = self.create_tempdir().full_path
