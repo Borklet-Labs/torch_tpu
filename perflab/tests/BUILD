@@ -128,6 +128,9 @@ torch_tpu_py_test(
 torch_tpu_py_test(
     name = "mode_test",
     srcs = ["mode_test.py"],
+    tags = [
+        "nomsan",  # 3p 'py/torch' error: use-of-uninitialized-value in reduced_float_type_copy
+    ],
     deps = [
         "//perflab:common",
         "//perflab:mode",
