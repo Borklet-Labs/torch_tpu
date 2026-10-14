@@ -1103,30 +1103,24 @@ class ModuleRegistryTest(seed_test_utils.RepeatableTest):
         "torchvision.models.get_model", return_value=mock.MagicMock()
     ) as mock_get_model:
       module_spec = self.module_registry.get_module_spec(
-          "torchvision", "resnet50"
+          "torchvision", "fasterrcnn_resnet50_fpn"
       )
       model = module_spec.module_factory()
       self.assertIsNotNone(model)
       mock_get_model.assert_called_once_with(
-          "resnet50", weights=None, weights_backbone=None
+          "fasterrcnn_resnet50_fpn", weights=None, weights_backbone=None
       )
 
-  def test_torchvision_weights_backbone_type_error_fallback(self):
-    def fake_get_model(name, weights=None, **kwargs):
-      del name, weights
-      if "weights_backbone" in kwargs:
-        raise TypeError("unexpected keyword argument 'weights_backbone'")
-      return mock.MagicMock()
-
+  def test_torchvision_without_weights_backbone_parameter(self):
     with mock.patch(
-        "torchvision.models.get_model", side_effect=fake_get_model
+        "torchvision.models.get_model", return_value=mock.MagicMock()
     ) as mock_get_model:
       module_spec = self.module_registry.get_module_spec(
-          "torchvision", "simple_model"
+          "torchvision", "resnet50"
       )
       model = module_spec.module_factory()
       self.assertIsNotNone(model)
-      self.assertEqual(mock_get_model.call_count, 2)
+      mock_get_model.assert_called_once_with("resnet50", weights=None)
 
   def test_diffusers_dynamic_subfolder_resolution_via_model_index(self):
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -2231,6 +2225,34 @@ class ModuleRegistryTest(seed_test_utils.RepeatableTest):
     for res in results:
       self.assertIs(res, fake_tokenizer)
     self.assertIs(spec.preprocessor_factory(), fake_tokenizer)
+
+  def test_resolve_diffusers_model_class(self):
+    cls_name, model_cls = module_registry._resolve_diffusers_model_class(
+        "stabilityai/stable-diffusion-xl-base-1.0",
+        {"_class_name": "UNet2DConditionModel"},
+    )
+    self.assertEqual(cls_name, "UNet2DConditionModel")
+    self.assertIs(model_cls, module_registry.diffusers.UNet2DConditionModel)
+
+    cls_name_tr, model_cls_tr = module_registry._resolve_diffusers_model_class(
+        "nvidia/cosmos-transformer", {}
+    )
+    self.assertEqual(cls_name_tr, "Transformer2DModel")
+    self.assertIs(model_cls_tr, module_registry.diffusers.Transformer2DModel)
+
+    cls_name_remap, model_cls_remap = (
+        module_registry._resolve_diffusers_model_class(
+            "PixArt-alpha/PixArt-XL-2-1024-MS",
+            {
+                "_class_name": "Transformer2DModel",
+                "norm_type": "ada_norm_single",
+            },
+        )
+    )
+    self.assertEqual(cls_name_remap, "PixArtTransformer2DModel")
+    self.assertIs(
+        model_cls_remap, module_registry.diffusers.PixArtTransformer2DModel
+    )
 
 
 if __name__ == "__main__":

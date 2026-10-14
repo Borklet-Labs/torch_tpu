@@ -1358,6 +1358,24 @@ class BaseProvider(abc.ABC):
     pass
 
 
+def _create_torchvision_model(name: str) -> torch.nn.Module:
+  """Deterministically instantiates a Torchvision model without weights."""
+  tv_api = getattr(getattr(torchvision, "models", None), "_api", None)
+  builtin_models = getattr(tv_api, "BUILTIN_MODELS", {})
+  model_fn = (
+      builtin_models.get(name) or builtin_models.get(name.lower())
+      if isinstance(builtin_models, Mapping)
+      else None
+  )
+  if callable(model_fn):
+    params = inspect.signature(model_fn).parameters
+    if "weights_backbone" in params:
+      return torchvision.models.get_model(
+          name, weights=None, weights_backbone=None
+      )
+  return torchvision.models.get_model(name, weights=None)
+
+
 class TorchvisionProvider(BaseProvider):
   """Provider for standard Torchvision models."""
 
@@ -1392,7 +1410,12 @@ class TorchvisionProvider(BaseProvider):
           f"load_weights cannot be set to True for {name} when no cache"
           " directory is available."
       )
-    default_shape = (1, 3, 224, 224)
+    if any(
+        k in name.lower() for k in ("mvit", "r3d", "mc3", "r2plus1d", "s3d")
+    ):
+      default_shape = (1, 3, 16, 224, 224)
+    else:
+      default_shape = (1, 3, 224, 224)
 
     def _torchvision_input_factory(shape=None, device="cpu"):
       g = torch.Generator(device="cpu").manual_seed(42)
@@ -1417,12 +1440,7 @@ class TorchvisionProvider(BaseProvider):
               break
 
         if local_checkpoint and local_checkpoint.exists():
-          try:
-            model = torchvision.models.get_model(
-                name, weights=None, weights_backbone=None
-            )
-          except TypeError:
-            model = torchvision.models.get_model(name, weights=None)
+          model = _create_torchvision_model(name)
 
           with local_checkpoint.open("rb") as f:
             if local_checkpoint.suffix == ".safetensors":
@@ -1438,12 +1456,7 @@ class TorchvisionProvider(BaseProvider):
           )
 
       # If weights are not loaded, instantiate model with random weights
-      try:
-        return torchvision.models.get_model(
-            name, weights=None, weights_backbone=None
-        )
-      except TypeError:
-        return torchvision.models.get_model(name, weights=None)
+      return _create_torchvision_model(name)
 
     return ModuleSpec(
         _module_factory,
@@ -1501,13 +1514,22 @@ class TimmProvider(BaseProvider):
           " directory is available."
       )
 
-    try:
-      config = timm.models.get_pretrained_cfg(name)
-    except (RuntimeError, ValueError):
+    timm_name = (
+        f"hf-hub:{name}"
+        if ("/" in name and not name.startswith(("hf-hub:", "local-dir:")))
+        else name
+    )
+
+    if timm.models.is_model(timm_name) and (
+        "." not in timm_name
+        or timm_name in timm.models.get_arch_pretrained_cfgs(timm_name)
+    ):
+      config = timm.models.get_pretrained_cfg(timm_name)
+    else:
       config = None
       logging.warning(
           "Couldn't find config for %s.",
-          name,
+          timm_name,
       )
 
     if config and modify_config_hook is not None:
@@ -1535,11 +1557,11 @@ class TimmProvider(BaseProvider):
               f" {bin_checkpoint}."
           )
 
-        model = timm.create_model(name, pretrained=False)
+        model = timm.create_model(timm_name, pretrained=False)
         model.load_state_dict(state_dict)
         return model
 
-      return timm.create_model(name, pretrained=False)
+      return timm.create_model(timm_name, pretrained=False)
 
     def _input_factory(shape=None, device="cpu"):
       g = torch.Generator(device="cpu").manual_seed(42)
@@ -3472,6 +3494,74 @@ def _extract_diffusers_subfolder_candidates(
   return candidates
 
 
+def _resolve_diffusers_model_class(
+    name: str, config_dict: Mapping[str, Any]
+) -> tuple[str, type[Any]]:
+  """Deterministically resolves the Diffusers model class name and class."""
+  class_name = config_dict.get("_class_name")
+  if not class_name:
+    if "transformer" in name.lower() or "cosmos" in name.lower():
+      class_name = "Transformer2DModel"
+    else:
+      class_name = "UNet2DConditionModel"
+  model_cls = getattr(diffusers, class_name, None)
+  if model_cls is None:
+    logging.warning(
+        "Could not find diffusers model class %s, falling back to"
+        " UNet2DConditionModel.",
+        class_name,
+    )
+    model_cls = diffusers.UNet2DConditionModel
+  if hasattr(diffusers, "models") and hasattr(
+      diffusers.models, "model_loading_utils"
+  ):
+    remapping_dict = getattr(
+        diffusers.models.model_loading_utils, "_CLASS_REMAPPING_DICT", {}
+    )
+    if class_name in remapping_dict:
+      norm_type = config_dict.get("norm_type")
+      remapped = remapping_dict[class_name].get(norm_type)
+      if remapped and hasattr(diffusers, remapped):
+        class_name = remapped
+        model_cls = getattr(diffusers, remapped)
+  return class_name, model_cls
+
+
+def _patch_ernie_rope_if_needed() -> None:
+  """Patches ErnieImageTransformer2DModel.rope for meta and non-autocast devices."""
+  if (
+      importlib_util.find_spec(
+          "diffusers.models.transformers.transformer_ernie_image"
+      )
+      is None
+  ):
+    return
+  # pylint: disable=g-import-not-at-top
+  import diffusers.models.transformers.transformer_ernie_image as ernie_module
+
+  if hasattr(ernie_module, "rope") and not getattr(
+      ernie_module, "_torch_tpu_patched", False
+  ):
+    _orig_rope = ernie_module.rope
+
+    def _safe_rope(pos: torch.Tensor, dim: int, theta: int) -> torch.Tensor:
+      if pos.device.type == "meta" or not getattr(
+          torch.amp, "is_autocast_available", lambda dt: False
+      )(pos.device.type):
+        assert dim % 2 == 0
+        scale = (
+            torch.arange(0, dim, 2, dtype=torch.float32, device=pos.device)
+            / dim
+        )
+        omega = 1.0 / (theta**scale)
+        out = torch.einsum("...n,d->...nd", pos, omega)
+        return out.float()
+      return _orig_rope(pos, dim, theta)
+
+    setattr(ernie_module, "rope", _safe_rope)
+    setattr(ernie_module, "_torch_tpu_patched", True)
+
+
 class DiffusersProvider(BaseProvider):
   """Provider for Hugging Face Diffusers models.
 
@@ -3516,76 +3606,59 @@ class DiffusersProvider(BaseProvider):
       resolved_subfolder = subfolder
       model_path = None
 
-      # Candidate subfolders for diffusers pipelines and standalone models
       if subfolder:
-        candidate_subfolders = [subfolder]
+        candidate_subfolders: list[str | None] = [subfolder]
       else:
         candidate_subfolders = []
-        if self.has_cache_dir:
-          # pyrefly: ignore[unsupported-operation]
+        if self.has_cache_dir and self._base_path is not None:
           model_path = self._base_path / name
-          if model_path.exists():
+          if model_path.exists() and model_path.is_dir():
             index_path = model_path / "model_index.json"
             if index_path.exists():
-              try:
-                with open(index_path, "r") as fp:
-                  candidate_subfolders.extend(
-                      _extract_diffusers_subfolder_candidates(json.load(fp))
-                  )
-              except Exception:  # pylint: disable=broad-except
-                pass
-            # Support nested candidate subfolders
-            try:
-              for sub_dir in model_path.iterdir():
-                if sub_dir.is_dir():
-                  for sub_target in ("transformer", "unet"):
-                    if (sub_dir / sub_target / "config.json").exists():
-                      nested_cand = f"{sub_dir.name}/{sub_target}"
-                      if nested_cand not in candidate_subfolders:
-                        candidate_subfolders.append(nested_cand)
-            except Exception:  # pylint: disable=broad-except
-              pass
+              with index_path.open("r", encoding="utf-8") as fp:
+                candidate_subfolders.extend(
+                    _extract_diffusers_subfolder_candidates(json.load(fp))
+                )
+            for sub_dir in model_path.iterdir():
+              if sub_dir.is_dir():
+                for sub_target in ("transformer", "unet"):
+                  if (sub_dir / sub_target / "config.json").exists():
+                    nested_cand = f"{sub_dir.name}/{sub_target}"
+                    if nested_cand not in candidate_subfolders:
+                      candidate_subfolders.append(nested_cand)
         for cand in _DEFAULT_DIFFUSERS_SUBFOLDERS:
           if cand not in candidate_subfolders:
             candidate_subfolders.append(cand)
 
-      if self.has_cache_dir:
-        # pyrefly: ignore[unsupported-operation]
+      if self.has_cache_dir and self._base_path is not None:
         model_path = self._base_path / name
-        try:
-          if model_path.exists():
-            for cand in candidate_subfolders:
-              try:
-                raw_config = auto_model.AutoModel.load_config(
-                    str(model_path), subfolder=cand
-                )
-                resolved_subfolder = cand
-                break
-              except Exception:  # pylint: disable=broad-except
-                pass
-        except Exception as exc:  # pylint: disable=broad-except
-          logging.warning(
-              "Failed to access %s in cache, falling back to local resources."
-              " Error: %s",
-              model_path,
-              exc,
-          )
+        if model_path.exists() and model_path.is_dir():
+          for cand in candidate_subfolders:
+            cfg_file = (
+                model_path / cand / "config.json"
+                if cand
+                else model_path / "config.json"
+            )
+            if cfg_file.exists():
+              raw_config = auto_model.AutoModel.load_config(
+                  str(model_path), subfolder=cand
+              )
+              resolved_subfolder = cand
+              break
 
-      if raw_config is None and not load_weights:  # Fallback to local resources
+      if raw_config is None and not load_weights:
         model_dir = pathlib.Path(name)
         local_candidates = list(candidate_subfolders)
         index_file = self._FILES.joinpath(str(model_dir / "model_index.json"))
-        try:
+        if index_file.is_file():
           with resources.as_file(index_file) as f:
             if f.is_file():
-              with open(f, "r") as fp:
+              with open(f, "r", encoding="utf-8") as fp:
                 for key in _extract_diffusers_subfolder_candidates(
                     json.load(fp)
                 ):
                   if key not in local_candidates:
                     local_candidates.insert(0, key)
-        except Exception:  # pylint: disable=broad-except
-          pass
 
         for cand in local_candidates:
           target_rel = (
@@ -3593,28 +3666,22 @@ class DiffusersProvider(BaseProvider):
               if cand
               else model_dir / "config.json"
           )
-          try:
-            with resources.as_file(self._FILES.joinpath(str(target_rel))) as f:
+          traversable = self._FILES.joinpath(str(target_rel))
+          if traversable.is_file():
+            with resources.as_file(traversable) as f:
               if f.is_file():
                 raw_config = auto_model.AutoModel.load_config(str(f.parent))
                 resolved_subfolder = cand
                 break
-          except Exception:  # pylint: disable=broad-except
-            pass
 
-      if (
-          raw_config is None and not load_weights
-      ):  # Fallback to downloading from GCS
-        gcs_candidates = []
+      if raw_config is None and not load_weights:
+        gcs_candidates: list[str | None] = []
         dest_index = self.fetch_gcs_file(f"{name}/model_index.json")
         if dest_index and dest_index.exists():
-          try:
-            with open(dest_index, "r") as fp:
-              gcs_candidates.extend(
-                  _extract_diffusers_subfolder_candidates(json.load(fp))
-              )
-          except Exception:  # pylint: disable=broad-except
-            pass
+          with open(dest_index, "r", encoding="utf-8") as fp:
+            gcs_candidates.extend(
+                _extract_diffusers_subfolder_candidates(json.load(fp))
+            )
         for cand in candidate_subfolders:
           if cand not in gcs_candidates:
             gcs_candidates.append(cand)
@@ -3625,22 +3692,14 @@ class DiffusersProvider(BaseProvider):
           )
           dest_config = self.fetch_gcs_file(gcs_rel)
           if dest_config and dest_config.exists():
-            try:
-              raw_config = auto_model.AutoModel.load_config(
-                  str(dest_config.parent)
-              )
-              resolved_subfolder = cand
-              break
-            except Exception as exc:  # pylint: disable=broad-except
-              logging.warning(
-                  "Failed to load GCS diffusers config from %s: %s",
-                  dest_config.parent,
-                  exc,
-              )
+            raw_config = auto_model.AutoModel.load_config(
+                str(dest_config.parent)
+            )
+            resolved_subfolder = cand
+            break
 
       if raw_config is None:
         if load_weights:
-          # Pretrained weights are not available in local resources or GCS.
           raise ValueError(
               f"load_weights cannot be set to True for {name} when model is"
               " not available in cache."
@@ -3703,6 +3762,8 @@ class DiffusersProvider(BaseProvider):
         )
       raw_config = modify_config_hook(raw_config)
     config_dict = dict(raw_config)
+    if config_dict.get("encoder_hid_dim_type") == "ip_image_proj":
+      config_dict["encoder_hid_dim_type"] = None
 
     def _module_factory():
       if load_weights:
@@ -3712,20 +3773,18 @@ class DiffusersProvider(BaseProvider):
             subfolder=subfolder,
         )
       else:
-        class_name = config_dict.get("_class_name")
-        if not class_name:
-          if "transformer" in name.lower() or "cosmos" in name.lower():
-            class_name = "Transformer2DModel"
-          else:
-            class_name = "UNet2DConditionModel"
-        model_cls = getattr(diffusers, class_name, None)
-        if model_cls is None:
-          logging.warning(
-              "Could not find diffusers model class %s, falling back to"
-              " UNet2DConditionModel.",
-              class_name,
-          )
-          model_cls = diffusers.UNet2DConditionModel
+        class_name, model_cls = _resolve_diffusers_model_class(
+            name, config_dict
+        )
+        if class_name == "UNet2DConditionModel" or model_cls == getattr(
+            diffusers, "UNet2DConditionModel", None
+        ):
+          if "num_attention_heads" in config_dict:
+            head_val = config_dict.pop("num_attention_heads")
+            if "attention_head_dim" not in config_dict:
+              config_dict["attention_head_dim"] = head_val
+        if class_name == "ErnieImageTransformer2DModel":
+          _patch_ernie_rope_if_needed()
         model = model_cls.from_config(config_dict)
         if isinstance(model, tuple):
           model = model[0]
@@ -3762,40 +3821,73 @@ class DiffusersProvider(BaseProvider):
         ):
           latent_dims = (2,) + latent_dims  # Default 2 frames
 
-      noisy_latents = torch.randn(
-          (batch_size, latent_channels, *latent_dims),
-          generator=g,
-          dtype=d_type,
-      ).to(device)
+      class_name, model_cls = _resolve_diffusers_model_class(name, cfg)
+      forward_params = inspect.signature(model_cls.forward).parameters
+
+      if len(latent_dims) == 2 and (
+          class_name in ("UNet3DConditionModel", "I2VGenXLUNet")
+          or "3D" in str(class_name)
+          or "fps" in forward_params
+          or any(
+              "3d" in str(b).lower() for b in cfg.get("down_block_types") or []
+          )
+      ):
+        latent_dims = (2,) + latent_dims  # Default 2 frames
+
+      rope_kwargs = {}
+      if "img_ids" in forward_params and "txt_ids" in forward_params:
+        # Transformer-based diffusion models (Flux, Chroma, Bria) expect
+        # 3D flattened patch token sequence [batch_size, seq_len_img,
+        # in_channels] rather than 4D spatial tensors [batch_size, in_channels,
+        # height, width].
+        latent_h = 4
+        latent_w = 4
+        seq_len_img = latent_h * latent_w
+        noisy_latents = torch.randn(
+            (batch_size, seq_len_img, latent_channels),
+            generator=g,
+            dtype=d_type,
+        ).to(device)
+
+        axes_dims_rope = cfg.get("axes_dims_rope")
+        num_axes = len(axes_dims_rope) if axes_dims_rope else 3
+        img_ids = torch.zeros(
+            (seq_len_img, num_axes), device=device, dtype=d_type
+        )
+        txt_ids = torch.zeros((seq_len, num_axes), device=device, dtype=d_type)
+        rope_kwargs["img_ids"] = img_ids
+        rope_kwargs["txt_ids"] = txt_ids
+      elif "img_shapes" in forward_params:
+        # Transformer-based models with image shape tuples (e.g. QwenImage).
+        latent_h = 4
+        latent_w = 4
+        seq_len_img = latent_h * latent_w
+        noisy_latents = torch.randn(
+            (batch_size, seq_len_img, latent_channels),
+            generator=g,
+            dtype=d_type,
+        ).to(device)
+        rope_kwargs["img_shapes"] = [[(1, latent_h, latent_w)]] * batch_size
+      else:
+        noisy_latents = torch.randn(
+            (batch_size, latent_channels, *latent_dims),
+            generator=g,
+            dtype=d_type,
+        ).to(device)
 
       # standard num_train_timesteps for diffusion models is typically 1000
       timesteps = torch.randint(
           0, 1000, (batch_size,), generator=g, dtype=torch.long
       ).to(device)
 
-      # Dynamically get the model class to inspect its signature
-      class_name = cfg.get("_class_name")
-      if not class_name:
-        if "transformer" in name.lower() or "cosmos" in name.lower():
-          class_name = "Transformer2DModel"
-        else:
-          class_name = "UNet2DConditionModel"
-      model_cls = getattr(diffusers, class_name, None)
-      if model_cls is None:
-        logging.warning(
-            "Could not find diffusers model class %s, falling back to"
-            " UNet2DConditionModel.",
-            class_name,
-        )
-        model_cls = diffusers.UNet2DConditionModel
-      forward_params = inspect.signature(model_cls.forward).parameters
-
       # Fallback to encoder_hid_dim / text_dim / joint_attention_dim if
       # cross_attention_dim is not specified in config.
       cross_attention_dim = (
-          cfg.get("encoder_hid_dim")
+          cfg.get("caption_channels")
+          or cfg.get("encoder_hid_dim")
           or cfg.get("cross_attention_dim")
           or cfg.get("joint_attention_dim")
+          or cfg.get("text_embed_dim")
           or cfg.get("text_dim")
       )
       if cross_attention_dim is None:
@@ -3809,6 +3901,17 @@ class DiffusersProvider(BaseProvider):
           cross_attention_dim = 2048
       if isinstance(cross_attention_dim, (list, tuple)):
         cross_attention_dim = cross_attention_dim[0]
+
+      if class_name == "CogVideoXTransformer3DModel":
+        seq_len = cfg.get("max_text_seq_length", 226)
+        num_frames = 2
+        h = cfg.get("sample_height", 60)
+        w = cfg.get("sample_width", 90)
+        noisy_latents = torch.randn(
+            (batch_size, num_frames, latent_channels, h, w),
+            generator=g,
+            dtype=d_type,
+        ).to(device)
 
       # Encoder hidden states - These would be per token text embeddings
       # returned by CLIP-ViT/L text encoder
@@ -3834,11 +3937,138 @@ class DiffusersProvider(BaseProvider):
               " parameter found in forward signature."
           )
 
-      kwargs = {
-          primary_input_key: noisy_latents,
-          "timestep": timesteps,
-          "encoder_hidden_states": dummy_encoder_hidden_states,
-      }
+      if class_name == "Cosmos3OmniTransformer":
+        p = cfg.get("latent_patch_size", 2)
+        c = cfg.get("latent_channel", 48)
+        t_frames, h, w = 1, p, p
+        t_patches = t_frames
+        h_patches = h // p
+        w_patches = w // p
+        num_patches = t_patches * h_patches * w_patches
+        und_len = 4
+        seq_len = und_len + num_patches
+        input_ids = torch.randint(
+            0,
+            cfg.get("vocab_size", 151936),
+            (und_len,),
+            device=device,
+            dtype=torch.long,
+        )
+        text_indexes = torch.arange(und_len, device=device, dtype=torch.long)
+        position_ids = torch.zeros(
+            (3, seq_len), device=device, dtype=torch.long
+        )
+        vision_tokens = [
+            torch.randn(
+                (1, c, t_frames, h, w), generator=g, dtype=d_type, device=device
+            )
+        ]
+        vision_token_shapes = [(t_patches, h_patches, w_patches)]
+        vision_sequence_indexes = torch.arange(
+            und_len, seq_len, device=device, dtype=torch.long
+        )
+        vision_mse_loss_indexes = vision_sequence_indexes
+        vision_timesteps = torch.tensor([1.0], device=device, dtype=d_type)
+        vision_noisy_frame_indexes = [
+            torch.tensor([0], device=device, dtype=torch.long)
+        ]
+        return (), {
+            "input_ids": input_ids,
+            "text_indexes": text_indexes,
+            "position_ids": position_ids,
+            "und_len": und_len,
+            "sequence_length": seq_len,
+            "vision_tokens": vision_tokens,
+            "vision_token_shapes": vision_token_shapes,
+            "vision_sequence_indexes": vision_sequence_indexes,
+            "vision_mse_loss_indexes": vision_mse_loss_indexes,
+            "vision_timesteps": vision_timesteps,
+            "vision_noisy_frame_indexes": vision_noisy_frame_indexes,
+        }
+
+      if "cap_feats" in forward_params and "t" in forward_params:
+        cap_feat_dim = (
+            cfg.get("cap_feat_dim") or cfg.get("joint_attention_dim") or 2560
+        )
+        h, w = 16, 16
+        z_x = [
+            torch.randn(
+                (latent_channels, 1, h, w),
+                generator=g,
+                dtype=d_type,
+            ).to(device)
+            for _ in range(batch_size)
+        ]
+        z_cap_feats = [
+            torch.randn(
+                (seq_len, cap_feat_dim),
+                generator=g,
+                dtype=d_type,
+            ).to(device)
+            for _ in range(batch_size)
+        ]
+        z_t = torch.tensor([0.0], device=device, dtype=d_type).expand(
+            batch_size
+        )
+        kwargs = {
+            "x": z_x,
+            "t": z_t,
+            "cap_feats": z_cap_feats,
+        }
+      else:
+        kwargs = {
+            primary_input_key: noisy_latents,
+            "timestep": timesteps,
+            "encoder_hidden_states": dummy_encoder_hidden_states,
+        }
+        kwargs.update(rope_kwargs)
+
+      if "guidance" in forward_params and cfg.get("guidance_embeds", False):
+        kwargs["guidance"] = torch.tensor(
+            [1.0], device=device, dtype=d_type
+        ).expand(batch_size)
+
+      if "pooled_projections" in forward_params:
+        proj_dim = (
+            cfg.get("pooled_projection_dim")
+            or cfg.get("projection_class_embeddings_input_dim")
+            or 32
+        )
+        kwargs["pooled_projections"] = torch.randn(
+            (batch_size, proj_dim), generator=g, dtype=d_type
+        ).to(device)
+
+      if "additional_t_cond" in forward_params:
+        kwargs["additional_t_cond"] = torch.zeros(
+            (batch_size,), device=device, dtype=torch.long
+        )
+
+      if "proj_embedding" in forward_params:
+        emb_dim = cfg.get("embedding_dim", 768)
+        num_emb = cfg.get("num_embeddings", 77)
+        kwargs["hidden_states"] = torch.randn(
+            (batch_size, emb_dim), generator=g, dtype=d_type
+        ).to(device)
+        kwargs["proj_embedding"] = torch.randn(
+            (batch_size, emb_dim), generator=g, dtype=d_type
+        ).to(device)
+        kwargs["encoder_hidden_states"] = torch.randn(
+            (batch_size, num_emb, emb_dim), generator=g, dtype=d_type
+        ).to(device)
+
+      if "prior_token_id" in forward_params:
+        kwargs["prior_token_id"] = torch.zeros(
+            (batch_size,), device=device, dtype=torch.long
+        )
+        kwargs["prior_token_drop"] = torch.zeros(
+            (batch_size,), device=device, dtype=torch.bool
+        )
+        kwargs["target_size"] = torch.tensor(
+            [[1024, 1024]] * batch_size, dtype=torch.float32, device=device
+        )
+        kwargs["crop_coords"] = torch.tensor(
+            [[0, 0]] * batch_size, dtype=torch.float32, device=device
+        )
 
       # Create dummy additional conditioning inputs which would be expected in
       # an SDXL pipeline.
@@ -3865,6 +4095,80 @@ class DiffusersProvider(BaseProvider):
             "text_embeds": dummy_pooled_embeds,
             "time_ids": dummy_time_ids,
         }
+      elif cfg.get("addition_embed_type") == "text_image":
+        img_dim = cfg.get("cross_attention_dim") or cross_attention_dim
+        if isinstance(img_dim, (list, tuple)):
+          img_dim = img_dim[0]
+        kwargs["added_cond_kwargs"] = {
+            "text_embeds": (
+                torch.randn(
+                    (batch_size, img_dim), generator=g, dtype=d_type
+                ).to(device)
+            ),
+            "image_embeds": (
+                torch.randn(
+                    (batch_size, img_dim), generator=g, dtype=d_type
+                ).to(device)
+            ),
+        }
+      elif cfg.get("addition_embed_type") == "image":
+        img_dim = (
+            cfg.get("encoder_hid_dim")
+            or cfg.get("cross_attention_dim")
+            or cross_attention_dim
+        )
+        if isinstance(img_dim, (list, tuple)):
+          img_dim = img_dim[0]
+        kwargs["added_cond_kwargs"] = {
+            "image_embeds": (
+                torch.randn(
+                    (batch_size, img_dim), generator=g, dtype=d_type
+                ).to(device)
+            ),
+        }
+      elif cfg.get("addition_embed_type") == "image_hint":
+        img_dim = (
+            cfg.get("encoder_hid_dim")
+            or cfg.get("cross_attention_dim")
+            or cross_attention_dim
+        )
+        if isinstance(img_dim, (list, tuple)):
+          img_dim = img_dim[0]
+        hint_h = latent_dims[-2] * 8 if len(latent_dims) >= 2 else 512
+        hint_w = latent_dims[-1] * 8 if len(latent_dims) >= 1 else 512
+        kwargs["added_cond_kwargs"] = {
+            "image_embeds": (
+                torch.randn(
+                    (batch_size, img_dim), generator=g, dtype=d_type
+                ).to(device)
+            ),
+            "hint": (
+                torch.randn(
+                    (batch_size, 3, hint_h, hint_w), generator=g, dtype=d_type
+                ).to(device)
+            ),
+        }
+      elif "added_cond_kwargs" in forward_params:
+        if cfg.get("sample_size") == 128 or cfg.get(
+            "use_additional_conditions"
+        ):
+          h = latent_dims[-2] if len(latent_dims) >= 2 else 128
+          w = latent_dims[-1] if len(latent_dims) >= 2 else 128
+          resolution = torch.tensor(
+              [float(h), float(w)], device=device, dtype=d_type
+          ).repeat(batch_size, 1)
+          aspect_ratio = torch.tensor(
+              [float(h / w)], device=device, dtype=d_type
+          ).repeat(batch_size, 1)
+          kwargs["added_cond_kwargs"] = {
+              "resolution": resolution,
+              "aspect_ratio": aspect_ratio,
+          }
+        else:
+          kwargs["added_cond_kwargs"] = {
+              "resolution": None,
+              "aspect_ratio": None,
+          }
 
       if "encoder_hidden_states" not in forward_params:
         kwargs.pop("encoder_hidden_states", None)
@@ -3872,10 +4176,221 @@ class DiffusersProvider(BaseProvider):
         kwargs.pop("added_cond_kwargs", None)
       if "timestep" not in forward_params:
         kwargs.pop("timestep", None)
-      if "class_labels" in forward_params or cfg.get("num_class_embeds"):
-        kwargs["class_labels"] = torch.zeros(
-            (batch_size,), dtype=torch.long, device=device
+      if "class_labels" in forward_params:
+        if (
+            cfg.get("num_class_embeds") is not None
+            or cfg.get("class_embed_type") is not None
+        ):
+          if cfg.get("class_embed_type") == "projection":
+            proj_dim = cfg.get("projection_class_embeddings_input_dim", 512)
+            kwargs["class_labels"] = torch.zeros(
+                (batch_size, proj_dim), dtype=d_type, device=device
+            )
+          elif cfg.get("class_embed_type") == "timestep":
+            kwargs["class_labels"] = torch.zeros(
+                (batch_size,), dtype=d_type, device=device
+            )
+          else:
+            kwargs["class_labels"] = torch.zeros(
+                (batch_size,), dtype=torch.long, device=device
+            )
+
+      if "controlnet_cond" in forward_params:
+        if "img_shapes" in forward_params:
+          latent_h, latent_w = 4, 4
+          seq_len_img = latent_h * latent_w
+          extra_channels = cfg.get("extra_condition_channels", 0)
+          kwargs["controlnet_cond"] = torch.randn(
+              (batch_size, seq_len_img, latent_channels + extra_channels),
+              generator=g,
+              dtype=d_type,
+          ).to(device)
+        elif (
+            "img_ids" in forward_params
+            and "txt_ids" in forward_params
+            and cfg.get("conditioning_embedding_channels") is None
+        ):
+          latent_h, latent_w = 4, 4
+          seq_len_img = latent_h * latent_w
+          kwargs["controlnet_cond"] = torch.randn(
+              (batch_size, seq_len_img, latent_channels),
+              generator=g,
+              dtype=d_type,
+          ).to(device)
+        elif class_name == "SD3ControlNetModel":
+          patch_size = cfg.get("patch_size", 2)
+          latent_h = 16
+          latent_w = 16
+          cond_channels = cfg.get("in_channels", 16) + cfg.get(
+              "extra_conditioning_channels", 0
+          )
+          kwargs["controlnet_cond"] = torch.randn(
+              (batch_size, cond_channels, latent_h, latent_w),
+              generator=g,
+              dtype=d_type,
+          ).to(device)
+          if not cfg.get("use_pos_embed", True):
+            inner_dim = cfg.get("num_attention_heads", 18) * cfg.get(
+                "attention_head_dim", 64
+            )
+            num_patches = (latent_h // patch_size) * (latent_w // patch_size)
+            kwargs[primary_input_key] = torch.randn(
+                (batch_size, num_patches, inner_dim),
+                generator=g,
+                dtype=d_type,
+            ).to(device)
+          else:
+            kwargs[primary_input_key] = torch.randn(
+                (batch_size, latent_channels, latent_h, latent_w),
+                generator=g,
+                dtype=d_type,
+            ).to(device)
+          if cfg.get("joint_attention_dim") is None:
+            kwargs.pop("encoder_hidden_states", None)
+        else:
+          cond_channels = cfg.get("conditioning_channels", 3)
+          out_channels = cfg.get("conditioning_embedding_out_channels") or (
+              16,
+              32,
+              96,
+              256,
+          )
+          factor = 2 ** (len(out_channels) - 1)
+          if len(latent_dims) == 2:
+            cond_h = latent_dims[0] * factor
+            cond_w = latent_dims[1] * factor
+          else:
+            cond_h, cond_w = 64 * factor, 64 * factor
+          kwargs["controlnet_cond"] = torch.randn(
+              (batch_size, cond_channels, cond_h, cond_w),
+              generator=g,
+              dtype=d_type,
+          ).to(device)
+
+      if "controlnet_mode" in forward_params:
+        kwargs["controlnet_mode"] = torch.zeros(
+            (batch_size, 1), dtype=torch.long, device=device
         )
+
+      if "fps" in forward_params:
+        kwargs["fps"] = torch.tensor(
+            [16], device=device, dtype=torch.long
+        ).expand(batch_size)
+      if "image_latents" in forward_params:
+        kwargs["image_latents"] = torch.randn(
+            (batch_size, latent_channels, *latent_dims),
+            generator=g,
+            dtype=d_type,
+        ).to(device)
+      if "image_embeddings" in forward_params:
+        kwargs["image_embeddings"] = torch.randn(
+            (batch_size, cross_attention_dim),
+            generator=g,
+            dtype=d_type,
+        ).to(device)
+
+      if (
+          "encoder_hidden_states_t5" in forward_params
+          and "encoder_hidden_states_llama3" in forward_params
+      ):
+        caption_channels = cfg.get("caption_channels") or [4096, 2048]
+        t5_dim = caption_channels[0]
+        llama_dim = (
+            caption_channels[1]
+            if len(caption_channels) > 1
+            else caption_channels[0]
+        )
+        llama_layers = cfg.get("llama_layers") or [0, 1]
+        num_llama_layers = max(llama_layers) + 1
+        text_emb_dim = cfg.get("text_emb_dim") or 2048
+
+        kwargs["encoder_hidden_states_t5"] = torch.randn(
+            (batch_size, seq_len, t5_dim), generator=g, dtype=d_type
+        ).to(device)
+        kwargs["encoder_hidden_states_llama3"] = torch.randn(
+            (num_llama_layers, batch_size, seq_len, llama_dim),
+            generator=g,
+            dtype=d_type,
+        ).to(device)
+        kwargs["pooled_embeds"] = torch.randn(
+            (batch_size, text_emb_dim), generator=g, dtype=d_type
+        ).to(device)
+        if "timesteps" in forward_params:
+          kwargs["timesteps"] = timesteps
+        kwargs.pop("encoder_hidden_states", None)
+
+      if (
+          "encoder_hidden_states_t5" in forward_params
+          and "image_meta_size" in forward_params
+      ):
+        text_len = cfg.get("text_len", 77)
+        text_len_t5 = cfg.get("text_len_t5", 256)
+        cross_attention_dim = cfg.get("cross_attention_dim", 1024)
+        cross_attention_dim_t5 = cfg.get("cross_attention_dim_t5", 2048)
+
+        kwargs["encoder_hidden_states"] = torch.randn(
+            (batch_size, text_len, cross_attention_dim),
+            generator=g,
+            dtype=d_type,
+        ).to(device)
+        kwargs["text_embedding_mask"] = torch.ones(
+            (batch_size, text_len), device=device, dtype=torch.bool
+        )
+        kwargs["encoder_hidden_states_t5"] = torch.randn(
+            (batch_size, text_len_t5, cross_attention_dim_t5),
+            generator=g,
+            dtype=d_type,
+        ).to(device)
+        kwargs["text_embedding_mask_t5"] = torch.ones(
+            (batch_size, text_len_t5), device=device, dtype=torch.bool
+        )
+        kwargs["image_meta_size"] = torch.tensor(
+            [[1024.0, 1024.0, 1024.0, 1024.0, 0.0, 0.0]],
+            device=device,
+            dtype=d_type,
+        ).repeat(batch_size, 1)
+        if "style" in forward_params:
+          kwargs["style"] = torch.zeros(
+              (batch_size,), device=device, dtype=torch.long
+          )
+        if "timestep" in forward_params:
+          kwargs["timestep"] = timesteps.to(dtype=d_type)
+        if "controlnet_cond" in forward_params:
+          kwargs["controlnet_cond"] = torch.randn(
+              (batch_size, latent_channels, *latent_dims),
+              generator=g,
+              dtype=d_type,
+          ).to(device)
+
+      if "text_bth" in forward_params and "text_lens" in forward_params:
+        text_in_dim = (
+            cfg.get("text_in_dim")
+            or cfg.get("hidden_size")
+            or cross_attention_dim
+        )
+        kwargs["text_bth"] = torch.randn(
+            (batch_size, seq_len, text_in_dim),
+            generator=g,
+            dtype=d_type,
+        ).to(device)
+        kwargs["text_lens"] = torch.tensor(
+            [seq_len] * batch_size, device=device, dtype=torch.long
+        )
+        kwargs.pop("encoder_hidden_states", None)
+
+      if "text_encoder_layers" in forward_params:
+        num_layers = (cfg.get("num_layers") or 19) + (
+            cfg.get("num_single_layers") or 38
+        )
+        text_encoder_dim = cfg.get("text_encoder_dim") or 2048
+        kwargs["text_encoder_layers"] = [
+            torch.randn(
+                (batch_size, seq_len, text_encoder_dim),
+                generator=g,
+                dtype=d_type,
+            ).to(device)
+            for _ in range(num_layers)
+        ]
 
       return (), kwargs
 
