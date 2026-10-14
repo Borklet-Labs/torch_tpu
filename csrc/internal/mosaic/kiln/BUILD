@@ -12,11 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Domain experts for this package:
-# willfroom
-# cota
-
-# A Pallas-shaped C++ kernel language (KILN) for authoring Mosaic TPU kernels.
+# A Pallas-shaped C++ kernel language (Kiln) for authoring Mosaic TPU kernels.
 
 load("//build_files:build_defs.bzl", "torch_tpu_cc_library", "torch_tpu_cc_test", "torch_tpu_package_end")
 
@@ -37,6 +33,7 @@ torch_tpu_cc_library(
         "//csrc/internal/mosaic/kiln/core:index_map",
         "//csrc/internal/mosaic/kiln/core:kernel",
         "//csrc/internal/mosaic/kiln/core:literal",
+        "//csrc/internal/mosaic/kiln/core:memory",
         "//csrc/internal/mosaic/kiln/core:ref",
         "//csrc/internal/mosaic/kiln/core:scalar",
         "//csrc/internal/mosaic/kiln/core:specs",

@@ -25,6 +25,7 @@
 #include "csrc/internal/mosaic/kiln/core/dtype.h"
 #include "csrc/internal/mosaic/kiln/core/index_arg.h"
 #include "csrc/internal/mosaic/kiln/core/scalar.h"
+#include "csrc/internal/mosaic/kiln/core/specs.h"
 #include "csrc/internal/mosaic/kiln/core/tile.h"
 #include "csrc/internal/mosaic/kiln/core/value_base.h"
 #include "llvm/ADT/ArrayRef.h"
@@ -32,15 +33,25 @@
 namespace torch_tpu::kiln {
 
 // Sentinel representing full slice along a dimension (`:` in JAX / Pallas).
+// Note: on a dynamic dimension in a non-identity slice, `all` emits a bare
+// `memref.dim` without tile-alignment metadata, so it is only valid for
+// untiled leading dynamic dimensions. Along trailing tiled dynamic dimensions,
+// pass `Slice(0, MultipleOf(ref.Dim(d), tile_dim))` instead.
 struct All {};
 inline constexpr All all{};
 
 struct SliceDim {
   IndexArg offset;
-  int64_t size;
+  IndexArg size;
 };
 
-inline SliceDim Slice(IndexArg offset, int64_t size) {
+// Specifies a slice of `[offset, offset + size)` along a single dimension.
+// `size` must be a positive integer or a runtime integer `Scalar` (do not pass
+// `kDynamic`; use `all` for a full-dimension slice). Along trailing tiled
+// dimensions, any dynamic `offset` or `size` must be provably divisible by the
+// tile size of that dimension (e.g., via `MultipleOf` or a stepped `For`
+// induction variable).
+inline SliceDim Slice(IndexArg offset, IndexArg size) {
   return SliceDim{offset, size};
 }
 
@@ -50,7 +61,7 @@ namespace internal {
 
 struct DimDesc {
   IndexArg offset = 0;
-  int64_t size = 0;
+  IndexArg size = 0;
   bool is_all = false;     // true for full dimension (All)
   bool collapsed = false;  // true for scalar index (collapses dimension)
 
@@ -68,14 +79,16 @@ struct DimDesc {
   }
 };
 
+const void* SliceMemRefImpl(const void* base_impl,
+                            llvm::ArrayRef<DimDesc> dims);
 Ref SliceRefImpl(Ref base, llvm::ArrayRef<DimDesc> dims);
 
 }  // namespace internal
 
-// A memref kernel argument (VMEM block, SMEM scalar-prefetch buffer or
-// scratch). Slicing emits `tpu::MemRefSliceOp` / `tpu::MemRefSqueezeOp` and
-// returns another `Ref`, so sliced and non-sliced references share the exact
-// same interface.
+// A memref kernel argument or allocation (VMEM block, SMEM scalar-prefetch
+// buffer, or HBM buffer). Slicing emits `tpu::MemRefSliceOp` /
+// `tpu::MemRefSqueezeOp` and returns another `Ref`, so sliced and non-sliced
+// references share the exact same interface.
 class Ref : public ValueBase {
  public:
   Ref(const Ref&) = default;
@@ -92,12 +105,22 @@ class Ref : public ValueBase {
   void Store(Tile value, std::optional<Tile> mask = std::nullopt);
 
   llvm::ArrayRef<int64_t> shape() const;
+  MemorySpace memory_space() const;
   int64_t rank() const;
+  bool HasStaticShape() const;
+  bool IsDynamicDim(int64_t axis) const;
+
+  // Queries the size of dimension `axis` as an i32 Scalar (`memref.dim` for
+  // dynamic dimensions, or a constant `I32(shape()[axis])` for static
+  // dimensions).
+  Scalar Dim(int64_t axis) const;
 
   // Slices a view of the ref:
   //   ref(0, 0)                        (collapses leading dims)
   //   ref(0, Slice(c, kChunk), all)
-  // Trailing omitted dimensions defaults to `all`.
+  // Trailing omitted dimensions default to `all`. Along trailing tiled dynamic
+  // dimensions, non-identity slices must use `Slice(offset, size)` with
+  // tile-aligned `Scalar` bounds rather than `all`.
   template <typename... Dims>
   Ref operator()(Dims&&... dims) const {
     std::array<internal::DimDesc, sizeof...(Dims)> descs = {

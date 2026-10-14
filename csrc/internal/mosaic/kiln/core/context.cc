@@ -25,6 +25,7 @@
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributeInterfaces.h"
 #include "mlir/IR/BuiltinAttributes.h"
+#include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/Types.h"
@@ -32,6 +33,9 @@
 
 namespace torch_tpu::kiln::internal {
 namespace {
+
+static_assert(kDynamic == mlir::ShapedType::kDynamic,
+              "kDynamic must match mlir::ShapedType::kDynamic");
 
 thread_local mlir::ImplicitLocOpBuilder*  // CPP_THREAD_LOCAL_OK=C++ scope
     tls_builder = nullptr;
@@ -69,7 +73,7 @@ mlir::Value EmitIntCast(mlir::ImplicitLocOpBuilder& b, mlir::Value value,
 
 mlir::ImplicitLocOpBuilder& CurrentBuilder() {
   ABSL_CHECK(tls_builder != nullptr)  // CRASH_OK
-      << "KILN operations may only be called inside BuildKernel()";
+      << "Kiln operations may only be called inside BuildKernel()";
   return *tls_builder;
 }
 

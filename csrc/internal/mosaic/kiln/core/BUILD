@@ -12,11 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Domain experts for this package:
-# willfroom
-# cota
-
-# Core building blocks of the KILN kernel language.
+# Core building blocks of the Kiln kernel language.
 
 load("//build_files:build_defs.bzl", "torch_tpu_cc_library", "torch_tpu_package_end")
 
@@ -113,6 +109,7 @@ torch_tpu_cc_library(
         "@com_google_absl//absl/log:absl_check",
         "@llvm-project//mlir:ArithDialect",
         "@llvm-project//mlir:IR",
+        "@xla//xla/mosaic:tpu_dialect",
     ],
 )
 
@@ -136,9 +133,12 @@ torch_tpu_cc_library(
         ":index_arg",
         ":scalar",
         "@com_google_absl//absl/functional:function_ref",
+        "@com_google_absl//absl/log:absl_check",
+        "@llvm-project//llvm:Support",
         "@llvm-project//mlir:ArithDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:SCFDialect",
+        "@xla//xla/mosaic:tpu_dialect",
     ],
 )
 
@@ -174,6 +174,7 @@ torch_tpu_cc_library(
         ":dtype",
         ":index_arg",
         ":scalar",
+        ":specs",
         ":tile",
         ":value_base",
         "@com_google_absl//absl/log:absl_check",
@@ -183,6 +184,22 @@ torch_tpu_cc_library(
         "@llvm-project//mlir:MemRefDialect",
         "@llvm-project//mlir:VectorDialect",
         "@xla//xla/mosaic:tpu_dialect",
+    ],
+)
+
+torch_tpu_cc_library(
+    name = "memory",
+    srcs = ["memory.cc"],
+    hdrs = ["memory.h"],
+    deps = [
+        ":context",
+        ":dtype",
+        ":ref",
+        ":specs",
+        "//csrc/internal/mosaic:op_builders",
+        "@com_google_absl//absl/log:absl_check",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:MemRefDialect",
     ],
 )
 

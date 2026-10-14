@@ -23,6 +23,7 @@
 #endif
 
 #include <cstdint>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -199,7 +200,7 @@ TEST_F(KilnTest, RefSliceRankCollapsing) {
   // 4-D block: (1, 1, 32, 128). Slicing in4d(0, 0) yields a 2-D tile (32, 128).
   absl::StatusOr<Kernel> kernel =
       CreateKernel(GridSpec{.name = "rank_collapse", .grid = {1}},
-                   InSpec{.block_shape = {1, 1, 32, 128}, .dtype = f32},
+                   InSpec{.shape = {1, 1, 32, 128}, .dtype = f32},
                    OutSpec{{32, 128}, f32}, [&](Ref in4d, Ref out2d) {
                      // in4d(0, 0) collapses the first 2 dimensions, resulting
                      // in rank 2.
@@ -302,34 +303,34 @@ TEST_F(KilnTest, LiteralOverloads) {
 
 TEST_F(KilnTest, ScalarFloatOperations) {
   DType f32 = Float32Type();
-  absl::StatusOr<Kernel> kernel =
-      CreateKernel(GridSpec{.name = "scalar_float_ops", .grid = {1}},
-                   InSpec{{32, 128}, f32, IndexMap(), MemorySpace::kSmem},
-                   OutSpec{{32, 128}, f32, IndexMap(), MemorySpace::kSmem},
-                   [&](Ref in, Ref out) {
-                     Scalar sf = F32(2.5);
-                     EXPECT_TRUE(sf.dtype().IsFloat());
-                     EXPECT_FALSE(sf.dtype().IsInt());
+  absl::StatusOr<Kernel> kernel = CreateKernel(
+      GridSpec{.name = "scalar_float_ops", .grid = {1}},
+      InSpec{.shape = {32, 128}, .dtype = f32, .space = MemorySpace::kSmem},
+      OutSpec{.shape = {32, 128}, .dtype = f32, .space = MemorySpace::kSmem},
+      [&](Ref in, Ref out) {
+        Scalar sf = F32(2.5);
+        EXPECT_TRUE(sf.dtype().IsFloat());
+        EXPECT_FALSE(sf.dtype().IsInt());
 
-                     Scalar sf2 = sf * 2.0;
-                     Scalar sf3 = sf2 + 1.0;
-                     Scalar sf_div = sf3 / 2.0;
-                     Scalar sf_neg = -sf;
+        Scalar sf2 = sf * 2.0;
+        Scalar sf3 = sf2 + 1.0;
+        Scalar sf_div = sf3 / 2.0;
+        Scalar sf_neg = -sf;
 
-                     Scalar sf_exp = Exp(sf);
-                     Scalar sf_log = Log(sf);
-                     Scalar sf_sqrt = Sqrt(sf);
-                     Scalar sf_rsqrt = Rsqrt(sf);
-                     Scalar sf_abs = Abs(sf_neg);
+        Scalar sf_exp = Exp(sf);
+        Scalar sf_log = Log(sf);
+        Scalar sf_sqrt = Sqrt(sf);
+        Scalar sf_rsqrt = Rsqrt(sf);
+        Scalar sf_abs = Abs(sf_neg);
 
-                     Scalar sf_sel = Select(sf > 1.0, sf, 0.0);
-                     Scalar sf_min = Min(sf, 10.0);
-                     Scalar sf_max = Max(sf, 0.0);
+        Scalar sf_sel = Select(sf > 1.0, sf, 0.0);
+        Scalar sf_min = Min(sf, 10.0);
+        Scalar sf_max = Max(sf, 0.0);
 
-                     Scalar loaded(in(0, 0));
-                     out(0, 0) = loaded + sf_exp + sf_log + sf_sqrt + sf_rsqrt +
-                                 sf_abs + sf_sel + sf_min + sf_max + sf_div;
-                   });
+        Scalar loaded(in(0, 0));
+        out(0, 0) = loaded + sf_exp + sf_log + sf_sqrt + sf_rsqrt + sf_abs +
+                    sf_sel + sf_min + sf_max + sf_div;
+      });
   ASSERT_THAT(kernel, IsOk());
   ExpectKernelMatches(std::move(*kernel), R"(
     CHECK-LABEL: func.func @scalar_float_ops(
@@ -604,9 +605,9 @@ TEST_F(KilnTest, ForLoopWithInductionVarAndBounds) {
 
     // Static bounds become index constants; the induction variable is exposed to
     // the body as an i32.
-    CHECK:         %[[C1:.*]] = arith.constant 1 : index
     CHECK:         %[[C0:.*]] = arith.constant 0 : index
     CHECK:         %[[C10:.*]] = arith.constant 10 : index
+    CHECK:         %[[C1:.*]] = arith.constant 1 : index
     CHECK:         scf.for %[[IV:.*]] = %[[C0]] to %[[C10]] step %[[C1]] {
     CHECK:           %[[I:.*]] = arith.index_cast %[[IV]] : index to i32
     CHECK:           %[[I_NEXT:.*]] = arith.addi %[[I]], %{{.*}} : i32
@@ -1042,6 +1043,188 @@ TEST_F(KilnTest, UnsignedAndSignedCasts) {
     CHECK:         arith.extui %[[U8]] : vector<32x128xi8> to vector<32x128xi32>
     CHECK:         arith.extsi %[[I8]] : vector<32x128xi8> to vector<32x128xi32>
   )");
+}
+
+TEST_F(KilnTest, DynamicMemrefSliceSizesAndAll) {
+  DType f32 = Float32Type();
+
+  absl::StatusOr<Kernel> kernel = CreateKernel(
+      GridSpec{.name = "dynamic_slices"},
+      InSpec::Vmem({kDynamic, kDynamic, 128}, f32),
+      OutSpec::Vmem({8, 128}, f32), [&](Ref dyn_in, Ref /*vmem_out*/) {
+        EXPECT_EQ(dyn_in.memory_space(), MemorySpace::kVmem);
+        EXPECT_FALSE(dyn_in.HasStaticShape());
+        EXPECT_TRUE(dyn_in.IsDynamicDim(0));
+        EXPECT_TRUE(dyn_in.IsDynamicDim(1));
+        EXPECT_FALSE(dyn_in.IsDynamicDim(2));
+
+        Scalar batch = dyn_in.Dim(0);
+        Scalar rows = dyn_in.Dim(1);
+        Scalar static_cols = dyn_in.Dim(2);
+        Scalar half_rows = MultipleOf((rows >> 1), 8);
+        Scalar aligned_cols = MultipleOf(static_cols, 128);
+
+        // Identity slice on dynamic ref does not emit memref_slice.
+        Ref full = dyn_in(all, all, all);
+        EXPECT_FALSE(full.HasStaticShape());
+
+        // `all` on untiled leading dynamic dim 0 + dynamic slice size on dim 1
+        // + `all` on static dim 2.
+        Ref sub_in = dyn_in(all, Slice(0, half_rows), all);
+        EXPECT_TRUE(sub_in.IsDynamicDim(0));
+        EXPECT_TRUE(sub_in.IsDynamicDim(1));
+        EXPECT_FALSE(sub_in.IsDynamicDim(2));
+        EXPECT_EQ(sub_in.rank(), 3);
+
+        // Explicit dynamic slice sizes on all 3 dimensions.
+        Ref sub_in2 = dyn_in(Slice(0, batch), Slice(0, half_rows),
+                             Slice(0, aligned_cols));
+        EXPECT_TRUE(sub_in2.IsDynamicDim(0));
+        EXPECT_TRUE(sub_in2.IsDynamicDim(1));
+        EXPECT_TRUE(sub_in2.IsDynamicDim(2));
+        EXPECT_EQ(sub_in2.rank(), 3);
+      });
+  ASSERT_THAT(kernel, IsOk());
+  ExpectKernelMatches(std::move(*kernel), R"(
+    CHECK-LABEL: func.func @dynamic_slices(
+    CHECK-SAME:    %[[IN:arg[0-9]+]]: memref<?x?x128xf32, #tpu.memory_space<vmem>>, %[[OUT:arg[0-9]+]]: memref<8x128xf32, #tpu.memory_space<vmem>>)
+    CHECK:         %[[C0_IDX:.*]] = arith.constant 0 : index
+    CHECK:         %[[DIM0:.*]] = memref.dim %[[IN]], %[[C0_IDX]] : memref<?x?x128xf32, #tpu.memory_space<vmem>>
+    CHECK:         %[[BATCH:.*]] = arith.index_cast %[[DIM0]] : index to i32
+    CHECK:         %[[C1_IDX:.*]] = arith.constant 1 : index
+    CHECK:         %[[DIM1:.*]] = memref.dim %[[IN]], %[[C1_IDX]] : memref<?x?x128xf32, #tpu.memory_space<vmem>>
+    CHECK:         %[[ROWS:.*]] = arith.index_cast %[[DIM1]] : index to i32
+    CHECK:         %[[STATIC_COLS:.*]] = arith.constant 128 : i32
+    CHECK-NOT:     memref.dim
+    CHECK:         %[[HALF:.*]] = arith.shrsi %[[ROWS]], %{{.*}} : i32
+    CHECK:         %[[HALF_ROWS:.*]] = tpu.assume_multiple %[[HALF]], 8 : i32
+    CHECK:         %[[ALIGNED_COLS:.*]] = tpu.assume_multiple %[[STATIC_COLS]], 128 : i32
+    CHECK:         %[[SLICE0_DIM0:.*]] = memref.dim %[[IN]], %{{.*}} : memref<?x?x128xf32, #tpu.memory_space<vmem>>
+    CHECK:         %[[SLICE0_DYN0:.*]] = arith.index_cast %[[SLICE0_DIM0]] : index to i32
+    CHECK:         tpu.memref_slice %[[IN]][%{{.*}}, %{{.*}}, %{{.*}}] <%[[SLICE0_DYN0]], %[[HALF_ROWS]]> : memref<?x?x128xf32, #tpu.memory_space<vmem>> -> memref<?x?x128xf32, #tpu.memory_space<vmem>>
+    CHECK:         tpu.memref_slice %[[IN]][%{{.*}}, %{{.*}}, %{{.*}}] <%[[BATCH]], %[[HALF_ROWS]], %[[ALIGNED_COLS]]> : memref<?x?x128xf32, #tpu.memory_space<vmem>> -> memref<?x?x?xf32, #tpu.memory_space<vmem>>
+    CHECK-NOT:     tpu.memref_slice
+  )");
+}
+
+TEST_F(KilnTest, SteppedForScopedAllocaAndUnsignedBounds) {
+  DType f32 = Float32Type();
+  DType i32 = Int32Type();
+
+  absl::StatusOr<Kernel> kernel = CreateKernel(
+      GridSpec{.name = "stepped_for_alloca"},
+      InSpec::Vmem({kDynamic, 128}, f32), OutSpec::Vmem({8, 128}, f32),
+      [&](Ref dyn_in, Ref vmem_out) {
+        Ref local_smem = AllocaSmem({1}, i32);
+        EXPECT_EQ(local_smem.memory_space(), MemorySpace::kSmem);
+        EXPECT_TRUE(local_smem.HasStaticShape());
+
+        Scalar rows = dyn_in.Dim(0);
+        For(0, rows, 8, [&](Scalar r) {
+          Scalar aligned_r = MultipleOf(r, 8);
+          RunScoped([&] {
+            Ref scratch_tile = AllocaVmem({8, 128}, f32);
+            EXPECT_EQ(scratch_tile.memory_space(), MemorySpace::kVmem);
+            Ref tile_in = dyn_in(Slice(aligned_r, 8), all);
+            EXPECT_TRUE(tile_in.HasStaticShape());
+            scratch_tile = Tile(tile_in);
+            vmem_out = Tile(scratch_tile);
+          });
+        });
+
+        For(U32(0), U32(8), U32(4), [&](Scalar idx) { local_smem(0) = idx; });
+      });
+  ASSERT_THAT(kernel, IsOk());
+  ExpectKernelMatches(std::move(*kernel), R"(
+    CHECK-LABEL: func.func @stepped_for_alloca(
+    CHECK-SAME:    %[[IN:arg[0-9]+]]: memref<?x128xf32, #tpu.memory_space<vmem>>, %[[OUT:arg[0-9]+]]: memref<8x128xf32, #tpu.memory_space<vmem>>)
+    CHECK:         %[[SMEM:.*]] = memref.alloca() : memref<1xi32, #tpu.memory_space<smem>>
+    CHECK:         %[[DIM0:.*]] = memref.dim %[[IN]], %{{.*}} : memref<?x128xf32, #tpu.memory_space<vmem>>
+    CHECK:         %[[ROWS:.*]] = arith.index_cast %[[DIM0]] : index to i32
+    CHECK:         %[[LB:.*]] = arith.constant 0 : index
+    CHECK:         %[[UB:.*]] = arith.index_cast %[[ROWS]] : i32 to index
+    CHECK:         %[[STEP:.*]] = arith.constant 8 : index
+    CHECK:         scf.for %[[IV:.*]] = %[[LB]] to %[[UB]] step %[[STEP]] {
+    CHECK:           %[[R:.*]] = arith.index_cast %[[IV]] : index to i32
+    CHECK:           %[[ALIGNED_R:.*]] = tpu.assume_multiple %[[R]], 8 : i32
+    CHECK:           "tpu.region"() ({
+    CHECK:             %[[SCRATCH:.*]] = memref.alloca() : memref<8x128xf32, #tpu.memory_space<vmem>>
+    CHECK:             %[[TILE_IN:.*]] = tpu.memref_slice %[[IN]][%[[ALIGNED_R]], %{{.*}}] : memref<?x128xf32, #tpu.memory_space<vmem>> -> memref<8x128xf32, #tpu.memory_space<vmem>>
+    CHECK:             %[[V:.*]] = vector.load %[[TILE_IN]]
+    CHECK:             tpu.vector_store %[[SCRATCH]][%{{.*}}, %{{.*}}], %[[V]]
+    CHECK:             %[[V2:.*]] = vector.load %[[SCRATCH]]
+    CHECK:             tpu.vector_store %[[OUT]][%{{.*}}, %{{.*}}], %[[V2]]
+    CHECK:             tpu.yield
+    CHECK:           }) : () -> ()
+    CHECK:         }
+    CHECK:         %[[ULB:.*]] = arith.index_castui %{{.*}} : i32 to index
+    CHECK:         %[[UUB:.*]] = arith.index_castui %{{.*}} : i32 to index
+    CHECK:         %[[USTEP:.*]] = arith.index_castui %{{.*}} : i32 to index
+    CHECK:         scf.for %{{.*}} = %[[ULB]] to %[[UUB]] step %[[USTEP]] {
+  )");
+}
+
+TEST_F(KilnTest, DynamicShapeSliceAndAllocaValidationErrors) {
+  DType f32 = Float32Type();
+  DType i32 = Int32Type();
+
+  absl::StatusOr<Kernel> kernel = CreateKernel(
+      GridSpec{.name = "validation_errors"}, InSpec::Vmem({kDynamic, 128}, f32),
+      OutSpec::Vmem({8, 128}, f32), [&](Ref dyn_in, Ref vmem_out) {
+        Scalar rows = dyn_in.Dim(0);
+        EXPECT_DEATH(static_cast<void>(Tile(dyn_in)),
+                     "Tile load requires a Ref with a static shape");
+        EXPECT_DEATH(dyn_in.Store(Tile(vmem_out)),
+                     "Tile store requires a Ref with a static shape");
+        EXPECT_DEATH(static_cast<void>(dyn_in.IsDynamicDim(-1)),
+                     "Dimension axis must be non-negative");
+        EXPECT_DEATH(static_cast<void>(dyn_in.IsDynamicDim(2)),
+                     "Dimension axis 2 out of bounds for rank 2");
+        EXPECT_DEATH(static_cast<void>(dyn_in.Dim(2)),
+                     "Dimension axis 2 out of bounds for rank 2");
+        EXPECT_DEATH(static_cast<void>(MultipleOf(F32(1.0), 8)),
+                     "MultipleOf\\(\\) requires an integer scalar");
+        EXPECT_DEATH(static_cast<void>(MultipleOf(rows, 0)),
+                     "MultipleOf\\(\\) multiple must be positive");
+        EXPECT_DEATH(static_cast<void>(dyn_in(Slice(0, kDynamic), all)),
+                     "Slice size cannot be kDynamic");
+        EXPECT_DEATH(static_cast<void>(dyn_in(Slice(0, I32(0)), all)),
+                     "Slice size must be positive");
+        EXPECT_DEATH(static_cast<void>(dyn_in(Slice(I32(-1), 8), all)),
+                     "Slice offset must be non-negative");
+        EXPECT_DEATH(static_cast<void>(dyn_in(Slice(0, 1LL << 40), all)),
+                     "Slice size exceeds int32_t max");
+        EXPECT_DEATH(static_cast<void>(dyn_in(Slice(1LL << 40, 8), all)),
+                     "Slice offset exceeds int32_t max");
+        EXPECT_DEATH(static_cast<void>(dyn_in(Slice(0, U32(0x80000000u)), all)),
+                     "Slice size exceeds int32_t max");
+        EXPECT_DEATH(static_cast<void>(dyn_in(
+                         all, Slice(std::numeric_limits<int32_t>::max(), 8))),
+                     "Slice offset \\+ size must not exceed dimension size");
+        EXPECT_DEATH(For(0, 16, 0, [&](Scalar) {}),
+                     "Loop step must be positive");
+        EXPECT_DEATH(For(0, 16, I32(0), [&](Scalar) {}),
+                     "Loop step must be positive");
+        EXPECT_DEATH(static_cast<void>(AllocaSmem({0}, i32)),
+                     "Alloca\\(\\) requires static positive dimensions");
+        EXPECT_DEATH(static_cast<void>(AllocaSmem({}, BFloat16Type())),
+                     "SMEM Alloca\\(\\) requires a 32-bit element type");
+        EXPECT_DEATH(static_cast<void>(AllocaSmem({1}, Int16Type())),
+                     "SMEM Alloca\\(\\) requires a 32-bit element type");
+        EXPECT_DEATH(static_cast<void>(AllocaVmem({}, f32)),
+                     "VMEM Alloca\\(\\) requires at least a 1D shape");
+        EXPECT_DEATH(static_cast<void>(AllocaVmem({8, 128}, BoolType())),
+                     "VMEM Alloca\\(\\) does not support bool");
+        EXPECT_DEATH(static_cast<void>(AllocaVmem({8, 128}, Int64Type())),
+                     "VMEM Alloca\\(\\) does not support bool \\(i1\\) or "
+                     "64-bit element types");
+      });
+  ASSERT_THAT(kernel, IsOk());
+
+  // Verify BuilderScope::~BuilderScope() restores tls_builder to nullptr after
+  // BuildKernel() completes.
+  EXPECT_DEATH(static_cast<void>(I32(1)),
+               "Kiln operations may only be called inside BuildKernel");
 }
 
 }  // namespace

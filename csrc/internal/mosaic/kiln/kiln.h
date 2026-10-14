@@ -17,7 +17,7 @@
 #ifndef TORCH_TPU_CSRC_INTERNAL_MOSAIC_KILN_KILN_H_
 #define TORCH_TPU_CSRC_INTERNAL_MOSAIC_KILN_KILN_H_
 
-// KILN: A small, Pallas-shaped kernel language for authoring Mosaic TPU kernels
+// Kiln: A small, Pallas-shaped kernel language for authoring Mosaic TPU kernels
 // in C++.
 //
 // The goal is that a framework kernel reads like the Pallas kernel it would
@@ -46,7 +46,10 @@
 //   the kernel
 //   * Scalar / Cond                             <-> scalar (SMEM / grid index)
 //   values
-//   * If / For                                  <-> pl.when / lax.fori_loop
+//   * If / For / RunScoped                      <-> pl.when / lax.fori_loop /
+//   pl.run_scoped
+//   * kDynamic / ref.Dim(axis) / MultipleOf     <-> dynamic memref dimensions
+//   and divisibility assumptions (pl.multiple_of)
 //
 #include "csrc/internal/mosaic/kiln/core/cond.h"          // IWYU pragma: export
 #include "csrc/internal/mosaic/kiln/core/control_flow.h"  // IWYU pragma: export
@@ -56,6 +59,7 @@
 #include "csrc/internal/mosaic/kiln/core/index_map.h"     // IWYU pragma: export
 #include "csrc/internal/mosaic/kiln/core/kernel.h"        // IWYU pragma: export
 #include "csrc/internal/mosaic/kiln/core/literal.h"       // IWYU pragma: export
+#include "csrc/internal/mosaic/kiln/core/memory.h"        // IWYU pragma: export
 #include "csrc/internal/mosaic/kiln/core/ref.h"           // IWYU pragma: export
 #include "csrc/internal/mosaic/kiln/core/scalar.h"        // IWYU pragma: export
 #include "csrc/internal/mosaic/kiln/core/specs.h"         // IWYU pragma: export

@@ -28,10 +28,21 @@ namespace torch_tpu::kiln {
 void If(Cond cond, absl::FunctionRef<void()> then_body);
 void If(Cond cond, absl::FunctionRef<void()> then_body,
         absl::FunctionRef<void()> else_body);
-void For(IndexArg lower, IndexArg upper, absl::FunctionRef<void(Scalar)> body);
-inline void For(IndexArg upper, absl::FunctionRef<void(Scalar)> body) {
-  For(0, upper, body);
+
+// Loops from `lower` to `upper` (exclusive) by positive `step`, passing the
+// current induction variable to `body` as a signed i32 `Scalar` (`scf.for`).
+void For(IndexArg lower, IndexArg upper, IndexArg step,
+         absl::FunctionRef<void(Scalar)> body);
+inline void For(IndexArg lower, IndexArg upper,
+                absl::FunctionRef<void(Scalar)> body) {
+  For(lower, upper, 1, body);
 }
+inline void For(IndexArg upper, absl::FunctionRef<void(Scalar)> body) {
+  For(0, upper, 1, body);
+}
+
+// Executes `body` inside a `tpu.region` (Pallas `pl.run_scoped`).
+void RunScoped(absl::FunctionRef<void()> body);
 
 }  // namespace torch_tpu::kiln
 

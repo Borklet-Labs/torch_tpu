@@ -16,6 +16,8 @@
 
 #include "csrc/internal/mosaic/kiln/core/scalar.h"
 
+#include <cstdint>
+
 #include "absl/log/absl_check.h"
 #include "csrc/internal/mosaic/kiln/core/cond.h"
 #include "csrc/internal/mosaic/kiln/core/context.h"
@@ -28,6 +30,7 @@
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/Types.h"
 #include "mlir/IR/Value.h"
+#include "xla/mosaic/dialect/tpu/tpu_dialect.h"
 
 namespace torch_tpu::kiln {
 
@@ -57,6 +60,17 @@ Scalar::Scalar(Cond cond)
 Scalar::operator Cond() const {
   ABSL_CHECK(dtype().IsBool()) << "Cond requires a bool scalar";  // CRASH_OK
   return internal::wrap<Cond>(internal::unwrap(*this), BoolType());
+}
+
+Scalar MultipleOf(Scalar value, int32_t multiple) {
+  ABSL_CHECK(value.dtype().IsInt())  // CRASH_OK
+      << "MultipleOf() requires an integer scalar";
+  ABSL_CHECK_GT(multiple, 0)  // CRASH_OK
+      << "MultipleOf() multiple must be positive";
+  mlir::ImplicitLocOpBuilder& b = internal::CurrentBuilder();
+  return internal::wrap<Scalar>(
+      mlir::tpu::AssumeMultipleOp::create(b, internal::unwrap(value), multiple),
+      value.dtype());
 }
 
 Scalar Scalar::MakeConstant(Literal value) const {

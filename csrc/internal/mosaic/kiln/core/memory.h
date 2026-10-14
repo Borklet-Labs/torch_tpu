@@ -1,0 +1,40 @@
+/*
+ * Copyright 2026 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+#ifndef TORCH_TPU_CSRC_INTERNAL_MOSAIC_KILN_CORE_MEMORY_H_
+#define TORCH_TPU_CSRC_INTERNAL_MOSAIC_KILN_CORE_MEMORY_H_
+
+#include <utility>
+
+#include "csrc/internal/mosaic/kiln/core/dtype.h"
+#include "csrc/internal/mosaic/kiln/core/ref.h"
+#include "csrc/internal/mosaic/kiln/core/specs.h"
+
+namespace torch_tpu::kiln {
+
+// Allocates a scratch `Ref` in VMEM or SMEM inside the current region/function
+// (`memref.alloca`).
+Ref Alloca(const ScratchSpec& spec);
+inline Ref AllocaVmem(Shape shape, DType dtype) {
+  return Alloca(ScratchSpec::Vmem(std::move(shape), dtype));
+}
+inline Ref AllocaSmem(Shape shape, DType dtype) {
+  return Alloca(ScratchSpec::Smem(std::move(shape), dtype));
+}
+
+}  // namespace torch_tpu::kiln
+
+#endif  // TORCH_TPU_CSRC_INTERNAL_MOSAIC_KILN_CORE_MEMORY_H_

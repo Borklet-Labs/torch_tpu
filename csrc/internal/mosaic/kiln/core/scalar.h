@@ -17,6 +17,8 @@
 #ifndef TORCH_TPU_CSRC_INTERNAL_MOSAIC_KILN_CORE_SCALAR_H_
 #define TORCH_TPU_CSRC_INTERNAL_MOSAIC_KILN_CORE_SCALAR_H_
 
+#include <cstdint>
+
 #include "csrc/internal/mosaic/kiln/core/cond.h"
 #include "csrc/internal/mosaic/kiln/core/dtype.h"
 #include "csrc/internal/mosaic/kiln/core/elementwise.h"
@@ -49,6 +51,10 @@ class Scalar : public ValueBase,
 Scalar I32(Literal value);
 Scalar U32(Literal value);
 Scalar F32(Literal value);
+
+// Assumes that `value` is a multiple of `multiple` without emitting a runtime
+// check (Pallas `pl.multiple_of` / `tpu.assume_multiple`).
+Scalar MultipleOf(Scalar value, int32_t multiple);
 
 }  // namespace torch_tpu::kiln
 

@@ -18,6 +18,7 @@
 #define TORCH_TPU_CSRC_INTERNAL_MOSAIC_KILN_CORE_DTYPE_H_
 
 #include <cstdint>
+#include <limits>
 #include <ostream>
 #include <string_view>
 
@@ -26,6 +27,11 @@
 namespace torch_tpu::kiln {
 
 using Shape = llvm::SmallVector<int64_t, 4>;
+
+// Sentinel for a runtime-sized (dynamic) dimension in a `Shape` (`?` in MLIR),
+// matching `mlir::ShapedType::kDynamic`. Only valid in `Shape` specifications
+// (for dynamic slice sizes, pass a runtime `Scalar` to `Slice` or use `all`).
+inline constexpr int64_t kDynamic = std::numeric_limits<int64_t>::min();
 
 // An element data type.
 class DType {

@@ -18,6 +18,7 @@
 #define TORCH_TPU_CSRC_INTERNAL_MOSAIC_KILN_CORE_SPECS_H_
 
 #include <string>
+#include <utility>
 
 #include "csrc/internal/mosaic/kiln/core/dtype.h"
 #include "csrc/internal/mosaic/kiln/core/index_map.h"
@@ -44,10 +45,19 @@ enum class BlockRole { kNone, kIn, kOut };
 // (`kIn` / `kOut`) for `CreateKernel` overload resolution.
 template <BlockRole Role = BlockRole::kNone>
 struct BasicBlockSpec {
-  Shape block_shape;
+  Shape shape;
   DType dtype;
-  IndexMap index_map;
-  MemorySpace memory_space = MemorySpace::kVmem;
+  IndexMap map;
+  MemorySpace space;
+
+  static BasicBlockSpec Vmem(Shape shape, DType dtype,
+                             IndexMap map = IndexMap()) {
+    return {std::move(shape), dtype, std::move(map), MemorySpace::kVmem};
+  }
+  static BasicBlockSpec Smem(Shape shape, DType dtype,
+                             IndexMap map = IndexMap()) {
+    return {std::move(shape), dtype, std::move(map), MemorySpace::kSmem};
+  }
 };
 
 using BlockSpec = BasicBlockSpec<>;
@@ -57,7 +67,14 @@ using OutSpec = BasicBlockSpec<BlockRole::kOut>;
 struct ScratchSpec {
   Shape shape;
   DType dtype;
-  MemorySpace memory_space = MemorySpace::kVmem;
+  MemorySpace space;
+
+  static ScratchSpec Vmem(Shape shape, DType dtype) {
+    return {std::move(shape), dtype, MemorySpace::kVmem};
+  }
+  static ScratchSpec Smem(Shape shape, DType dtype) {
+    return {std::move(shape), dtype, MemorySpace::kSmem};
+  }
 };
 
 struct ScalarPrefetchSpec {

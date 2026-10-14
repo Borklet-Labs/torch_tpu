@@ -17,6 +17,7 @@
 #include "csrc/internal/mosaic/kiln/core/ref.h"
 
 #include <cstdint>
+#include <limits>
 #include <optional>
 
 #include "absl/log/absl_check.h"
@@ -24,8 +25,10 @@
 #include "csrc/internal/mosaic/kiln/core/dtype.h"
 #include "csrc/internal/mosaic/kiln/core/index_arg.h"
 #include "csrc/internal/mosaic/kiln/core/scalar.h"
+#include "csrc/internal/mosaic/kiln/core/specs.h"
 #include "csrc/internal/mosaic/kiln/core/tile.h"
 #include "csrc/internal/mosaic/kiln/core/value_base.h"
+#include "llvm/ADT/APInt.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Casting.h"
@@ -33,6 +36,7 @@
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Value.h"
 #include "mlir/IR/ValueRange.h"
@@ -68,6 +72,112 @@ bool IsSmemRef(const Ref& r) {
 
 bool IsVmemRef(const Ref& r) {
   return HasMemorySpace(r, tpu::MemorySpace::kVmem);
+}
+
+void ValidateScalarSliceBound(const Scalar& s, bool is_size) {
+  ABSL_CHECK_LE(s.dtype().GetIntOrFloatBitWidth(), 32u)  // CRASH_OK
+      << "Slice " << (is_size ? "size" : "offset")
+      << " scalar bitwidth must be <= 32";
+  auto const_op = internal::unwrap(s).getDefiningOp<arith::ConstantOp>();
+  if (!const_op) {
+    return;
+  }
+  auto attr = llvm::dyn_cast<mlir::IntegerAttr>(const_op.getValue());
+  if (!attr) {
+    return;
+  }
+  const llvm::APInt val = attr.getValue();
+  const bool is_unsigned = s.dtype().IsUnsigned();
+  if (is_size) {
+    const bool is_positive =
+        is_unsigned ? !val.isZero() : val.isStrictlyPositive();
+    ABSL_CHECK(is_positive) << "Slice size must be positive";  // CRASH_OK
+  } else {
+    const bool is_non_negative = is_unsigned || !val.isNegative();
+    ABSL_CHECK(is_non_negative)  // CRASH_OK
+        << "Slice offset must be non-negative";
+  }
+  const bool fits_i32 = is_unsigned
+                            ? val.ule(std::numeric_limits<int32_t>::max())
+                            : val.sle(std::numeric_limits<int32_t>::max());
+  ABSL_CHECK(fits_i32)  // CRASH_OK
+      << "Slice " << (is_size ? "size" : "offset") << " exceeds int32_t max";
+}
+
+int64_t ResolveSliceDimSize(const internal::DimDesc& spec, int64_t source_dim) {
+  if (spec.is_all) {
+    return source_dim;
+  }
+  if (!spec.size.IsInt()) {
+    ValidateScalarSliceBound(spec.size.ToScalar(), /*is_size=*/true);
+    return kDynamic;
+  }
+  const int64_t sz = spec.size.AsInt();
+  ABSL_CHECK_NE(sz, kDynamic)  // CRASH_OK
+      << "Slice size cannot be kDynamic; pass a runtime Scalar size or use all";
+  ABSL_CHECK_GT(sz, 0) << "Slice size must be positive";  // CRASH_OK
+  ABSL_CHECK_LE(sz, std::numeric_limits<int32_t>::max())  // CRASH_OK
+      << "Slice size exceeds int32_t max";
+  if (source_dim != kDynamic) {
+    ABSL_CHECK_LE(sz, source_dim)  // CRASH_OK
+        << "Slice size must be less than or equal to the dimension size";
+  }
+  return sz;
+}
+
+void ValidateSliceDimOffset(const internal::DimDesc& spec, int64_t source_dim,
+                            int64_t slice_size) {
+  if (!spec.offset.IsInt()) {
+    ValidateScalarSliceBound(spec.offset.ToScalar(), /*is_size=*/false);
+    return;
+  }
+  const int64_t offset = spec.offset.AsInt();
+  ABSL_CHECK_GE(offset, 0)  // CRASH_OK
+      << "Slice offset must be non-negative";
+  ABSL_CHECK_LE(offset, std::numeric_limits<int32_t>::max())  // CRASH_OK
+      << "Slice offset exceeds int32_t max";
+  if (source_dim != kDynamic && slice_size != kDynamic) {
+    ABSL_CHECK_LE(offset, source_dim - slice_size)  // CRASH_OK
+        << "Slice offset + size must not exceed dimension size";
+  }
+}
+
+bool IsIdentitySliceDim(const internal::DimDesc& spec, int64_t source_dim,
+                        int64_t slice_size) {
+  if (!spec.offset.IsInt() || spec.offset.AsInt() != 0) {
+    return false;
+  }
+  return spec.is_all || (slice_size != kDynamic && slice_size == source_dim);
+}
+
+mlir::Value EmitMemRefSlice(mlir::ImplicitLocOpBuilder& b, mlir::Value source,
+                            llvm::ArrayRef<internal::DimDesc> dims,
+                            llvm::ArrayRef<int64_t> sliced_shape) {
+  auto base_type = llvm::cast<mlir::MemRefType>(source.getType());
+  const int64_t rank = sliced_shape.size();
+  llvm::SmallVector<mlir::Value, 4> base_indices;
+  base_indices.reserve(rank);
+  llvm::SmallVector<mlir::Value> dynamic_sizes;
+  for (int64_t d = 0; d < rank; ++d) {
+    const internal::DimDesc spec =
+        d < dims.size() ? dims[d] : internal::DimDesc::From(all);
+    base_indices.push_back(internal::unwrap(spec.offset.ToScalar().ToI32()));
+    if (sliced_shape[d] != kDynamic) {
+      continue;
+    }
+    if (!spec.is_all) {
+      dynamic_sizes.push_back(internal::unwrap(spec.size.ToScalar().ToI32()));
+    } else {
+      mlir::Value dim_idx = memref::DimOp::create(b, source, d);
+      dynamic_sizes.push_back(
+          arith::IndexCastOp::create(b, b.getI32Type(), dim_idx));
+    }
+  }
+  auto sliced_type =
+      mlir::MemRefType::get(sliced_shape, base_type.getElementType(), nullptr,
+                            base_type.getMemorySpace());
+  return tpu::MemRefSliceOp::create(b, sliced_type, source, base_indices,
+                                    dynamic_sizes);
 }
 
 }  // namespace
@@ -106,8 +216,10 @@ Ref::operator Scalar() const {
 }
 
 Ref::operator Tile() const {
+  ABSL_CHECK(HasStaticShape())  // CRASH_OK
+      << "Tile load requires a Ref with a static shape";
   ABSL_CHECK(IsVmemRef(*this))  // CRASH_OK
-      << "Ref::operator Tile() expects a VMEM ref";
+      << "Tile load requires a VMEM ref (use AsyncCopy for HBM)";
   mlir::ImplicitLocOpBuilder& b = internal::CurrentBuilder();
   return internal::wrap<Tile>(
       vector::LoadOp::create(
@@ -117,7 +229,7 @@ Ref::operator Tile() const {
 }
 
 void Ref::Store(Tile value, std::optional<Tile> mask) {
-  ABSL_CHECK(MemRefTypeOf(*this).hasStaticShape())  // CRASH_OK
+  ABSL_CHECK(HasStaticShape())  // CRASH_OK
       << "Tile store requires a Ref with a static shape";
   ABSL_CHECK(IsVmemRef(*this))  // CRASH_OK
       << "Tile store requires a VMEM ref (use AsyncCopy for HBM)";
@@ -141,61 +253,74 @@ llvm::ArrayRef<int64_t> Ref::shape() const {
   return MemRefTypeOf(*this).getShape();
 }
 
+MemorySpace Ref::memory_space() const {
+  auto space = llvm::dyn_cast_or_null<tpu::MemorySpaceAttr>(
+      MemRefTypeOf(*this).getMemorySpace());
+  ABSL_CHECK(space != nullptr)  // CRASH_OK
+      << "Ref is missing a TPU memory space attribute";
+  switch (space.getValue()) {
+    case tpu::MemorySpace::kVmem:
+      return MemorySpace::kVmem;
+    case tpu::MemorySpace::kSmem:
+      return MemorySpace::kSmem;
+    default:
+      ABSL_CHECK(false)  // CRASH_OK
+          << "Unsupported TPU memory space in Kiln Ref";
+      return MemorySpace::kVmem;
+  }
+}
+
 int64_t Ref::rank() const { return MemRefTypeOf(*this).getRank(); }
+
+bool Ref::HasStaticShape() const {
+  return MemRefTypeOf(*this).hasStaticShape();
+}
+
+bool Ref::IsDynamicDim(int64_t axis) const {
+  ABSL_CHECK_GE(axis, 0) << "Dimension axis must be non-negative";  // CRASH_OK
+  ABSL_CHECK_LT(axis, rank())                                       // CRASH_OK
+      << "Dimension axis " << axis << " out of bounds for rank " << rank();
+  return MemRefTypeOf(*this).isDynamicDim(axis);
+}
+
+Scalar Ref::Dim(int64_t axis) const {
+  if (!IsDynamicDim(axis)) {
+    return I32(shape()[axis]);
+  }
+  mlir::ImplicitLocOpBuilder& b = internal::CurrentBuilder();
+  mlir::Value dim_idx = memref::DimOp::create(b, internal::unwrap(*this), axis);
+  return internal::wrap<Scalar>(
+      arith::IndexCastOp::create(b, b.getI32Type(), dim_idx), Int32Type());
+}
 
 namespace internal {
 
-Ref SliceRefImpl(Ref base, llvm::ArrayRef<DimDesc> dims) {
-  mlir::ImplicitLocOpBuilder& b = internal::CurrentBuilder();
-  llvm::ArrayRef<int64_t> source_shape = base.shape();
+const void* SliceMemRefImpl(const void* base_impl,
+                            llvm::ArrayRef<DimDesc> dims) {
+  mlir::ImplicitLocOpBuilder& b = CurrentBuilder();
+  mlir::Value current = mlir::Value::getFromOpaquePointer(base_impl);
+  auto base_type = llvm::cast<mlir::MemRefType>(current.getType());
+  llvm::ArrayRef<int64_t> source_shape = base_type.getShape();
   const int64_t rank = source_shape.size();
   ABSL_CHECK_LE(static_cast<int64_t>(dims.size()), rank)  // CRASH_OK
-      << "Too many slice indices for Ref of rank " << rank;
+      << "Too many slice indices for rank " << rank;
 
-  llvm::SmallVector<mlir::Value> base_indices;
   llvm::SmallVector<int64_t> sliced_shape;
   llvm::SmallVector<int64_t> squeezed_shape;
-
-  bool has_non_zero_offset = false;
+  bool is_identity_slice = true;
   for (int64_t d = 0; d < rank; ++d) {
     const DimDesc spec = d < dims.size() ? dims[d] : DimDesc::From(all);
-    int64_t sz = spec.is_all ? source_shape[d] : spec.size;
-    if (!spec.is_all) {
-      ABSL_CHECK_GT(sz, 0) << "Slice size must be positive";  // CRASH_OK
-      ABSL_CHECK_LE(sz, source_shape[d])                      // CRASH_OK
-          << "Slice size must be less than or equal to the dimension size";
-    }
-    if (spec.offset.IsInt()) {
-      int64_t offset = spec.offset.AsInt();
-      ABSL_CHECK_GE(offset, 0)  // CRASH_OK
-          << "Slice offset must be non-negative";
-      ABSL_CHECK_LE(offset + sz, source_shape[d])  // CRASH_OK
-          << "Slice offset + size must not exceed dimension size";
-      has_non_zero_offset |= (offset != 0);
-    } else {
-      has_non_zero_offset = true;
-    }
+    const int64_t sz = ResolveSliceDimSize(spec, source_shape[d]);
+    ValidateSliceDimOffset(spec, source_shape[d], sz);
+    is_identity_slice &= IsIdentitySliceDim(spec, source_shape[d], sz);
     sliced_shape.push_back(sz);
     if (!spec.collapsed) {
       squeezed_shape.push_back(sz);
     }
   }
 
-  mlir::Value current = unwrap(base);
-  mlir::MemRefType base_type = MemRefTypeOf(base);
-  if (has_non_zero_offset || sliced_shape != source_shape) {
-    llvm::SmallVector<mlir::Value, 4> base_indices;
-    base_indices.reserve(rank);
-    for (int64_t d = 0; d < rank; ++d) {
-      const DimDesc spec = d < dims.size() ? dims[d] : DimDesc::From(all);
-      base_indices.push_back(unwrap(spec.offset.ToScalar().ToI32()));
-    }
-    auto sliced_type =
-        mlir::MemRefType::get(sliced_shape, base_type.getElementType(), nullptr,
-                              base_type.getMemorySpace());
-    current =
-        mlir::tpu::MemRefSliceOp::create(b, sliced_type, current, base_indices,
-                                         /*dynamic_sizes=*/{});
+  if (!is_identity_slice) {
+    current = EmitMemRefSlice(b, current, dims, sliced_shape);
   }
 
   if (squeezed_shape.size() < sliced_shape.size()) {
@@ -205,7 +330,12 @@ Ref SliceRefImpl(Ref base, llvm::ArrayRef<DimDesc> dims) {
     current = tpu::MemRefSqueezeOp::create(b, squeezed_type, current);
   }
 
-  return wrap<Ref>(current, base.dtype());
+  return current.getAsOpaquePointer();
+}
+
+Ref SliceRefImpl(Ref base, llvm::ArrayRef<DimDesc> dims) {
+  const void* sliced = SliceMemRefImpl(unwrap(base).getAsOpaquePointer(), dims);
+  return wrap<Ref>(mlir::Value::getFromOpaquePointer(sliced), base.dtype());
 }
 
 }  // namespace internal

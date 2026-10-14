@@ -25,8 +25,8 @@ namespace internal {
 struct ValueAccess;
 }  // namespace internal
 
-// Common base for KILN SSA handles (`Scalar`, `Cond`, `Tile`, `Ref`). Holds
-// an opaque pointer to the underlying IR value and its KILN element dtype.
+// Common base for Kiln SSA handles (`Scalar`, `Cond`, `Tile`, `Ref`). Holds
+// an opaque pointer to the underlying IR value and its Kiln element dtype.
 class ValueBase {
  public:
   DType dtype() const { return dtype_; }

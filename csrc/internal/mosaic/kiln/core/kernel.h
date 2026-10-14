@@ -52,7 +52,7 @@ Ref In(int i);
 Ref Out(int i);
 Ref Scratch(int i);
 
-// An opaque handle to a lowered KILN kernel module.
+// An opaque handle to a lowered Kiln kernel module.
 class Kernel {
  public:
   Kernel(Kernel&&) noexcept;
@@ -92,12 +92,12 @@ inline auto RegisterSpec(KernelSpec& k, const ScalarPrefetchSpec& s) {
 }
 inline auto RegisterSpec(KernelSpec& k, const InSpec& s) {
   int idx = k.in_specs.size();
-  k.in_specs.push_back({s.block_shape, s.dtype, s.index_map, s.memory_space});
+  k.in_specs.push_back({s.shape, s.dtype, s.map, s.space});
   return [idx] { return In(idx); };
 }
 inline auto RegisterSpec(KernelSpec& k, const OutSpec& s) {
   int idx = k.out_specs.size();
-  k.out_specs.push_back({s.block_shape, s.dtype, s.index_map, s.memory_space});
+  k.out_specs.push_back({s.shape, s.dtype, s.map, s.space});
   return [idx] { return Out(idx); };
 }
 inline auto RegisterSpec(KernelSpec& k, const ScratchSpec& s) {

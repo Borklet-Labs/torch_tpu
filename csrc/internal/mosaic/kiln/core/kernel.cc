@@ -113,7 +113,7 @@ thread_local KernelScope*  // CPP_THREAD_LOCAL_OK=C++ scope
 
 KernelScope& CurrentScope() {
   ABSL_CHECK(KernelScope::tls_scope != nullptr)  // CRASH_OK
-      << "KILN operations may only be called inside BuildKernel()";
+      << "Kiln operations may only be called inside BuildKernel()";
   return *KernelScope::tls_scope;
 }
 
@@ -193,16 +193,15 @@ absl::Status SetGridAttributes(mlir::ImplicitLocOpBuilder& b,
   llvm::SmallVector<mlir::Attribute> window_params;
   for (const BlockSpec& s :
        llvm::concat<const BlockSpec>(spec.in_specs, spec.out_specs)) {
-    const int64_t block_rank = s.block_shape.size();
-    if (s.index_map.has_mapping()) {
+    const int64_t block_rank = s.shape.size();
+    if (s.map.has_mapping()) {
       TT_ASSIGN_OR_RETURN(
           mlir::FlatSymbolRefAttr index_map_ref,
-          EmitIndexMapFunction(b, fn, spec, prefetch_types, s.index_map,
-                               block_rank, index_map_idx++));
+          EmitIndexMapFunction(b, fn, spec, prefetch_types, s.map, block_rank,
+                               index_map_idx++));
       window_params.push_back(b.getDictionaryAttr({
           b.getNamedAttr("transform_indices", index_map_ref),
-          b.getNamedAttr("window_bounds",
-                         b.getDenseI64ArrayAttr(s.block_shape)),
+          b.getNamedAttr("window_bounds", b.getDenseI64ArrayAttr(s.shape)),
       }));
     } else {
       llvm::SmallVector<mlir::AffineExpr> results(block_rank,
@@ -251,7 +250,7 @@ absl::StatusOr<std::string> Kernel::Serialize() && {
 absl::Status Kernel::Verify() const {
   if (llvm::failed(mlir::verify(impl_->module.get()))) {
     return TT_ERROR(::torch_tpu::error::kInternal)
-           << "KILN kernel failed verification:\n"
+           << "Kiln kernel failed verification:\n"
            << ToString();
   }
   return absl::OkStatus();
@@ -302,11 +301,10 @@ absl::StatusOr<Kernel> BuildKernel(const KernelSpec& spec,
   arg_types.append(prefetch_types);
   for (const BlockSpec& s :
        llvm::concat<const BlockSpec>(spec.in_specs, spec.out_specs)) {
-    arg_types.push_back(
-        BlockType(context, s.block_shape, s.dtype, s.memory_space));
+    arg_types.push_back(BlockType(context, s.shape, s.dtype, s.space));
   }
   for (const ScratchSpec& s : spec.scratch) {
-    arg_types.push_back(BlockType(context, s.shape, s.dtype, s.memory_space));
+    arg_types.push_back(BlockType(context, s.shape, s.dtype, s.space));
   }
 
   auto fn = mlir::func::FuncOp::create(b, spec.grid.name,
