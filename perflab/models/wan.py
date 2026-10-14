@@ -104,6 +104,8 @@ def wan_2_2_ti2v_5b_256x256_forward(ctx: context_lib.Context):
       height=256,
       width=256,
       num_frames=1,
+      # Batch 1 at 256x256 leaves the step dominated by host overhead.
+      batch_size=4,
   )
   return model, (), inputs
 

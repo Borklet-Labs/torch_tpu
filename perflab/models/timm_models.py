@@ -50,10 +50,14 @@ def _load_timm_model(
   return model, example_inputs
 
 
+# Full-scope batch sizes are chosen so that device time dominates the measured
+# step time; smaller batches leave these models host-overhead bound.
+
+
 @registry_lib.register_benchmark(stepper=step_lib.StepperType.FORWARD)
 def timm_resnet_50_forward(ctx: context_lib.Context):
   """Benchmark factory for TIMM ResNet-50 (resnet50d) forward."""
-  batch_size = 2 if ctx.run_scope == context_lib.RunScope.PRESUBMIT else 16
+  batch_size = 2 if ctx.run_scope == context_lib.RunScope.PRESUBMIT else 128
   model, input_args = _load_timm_model(
       ctx,
       "resnet50d",
@@ -66,7 +70,7 @@ def timm_resnet_50_forward(ctx: context_lib.Context):
 @registry_lib.register_benchmark(stepper=step_lib.StepperType.TRAINING)
 def timm_resnet_50_training(ctx: context_lib.Context):
   """Benchmark factory for TIMM ResNet-50 (resnet50d) training."""
-  batch_size = 2 if ctx.run_scope == context_lib.RunScope.PRESUBMIT else 16
+  batch_size = 2 if ctx.run_scope == context_lib.RunScope.PRESUBMIT else 64
   model, input_args = _load_timm_model(
       ctx,
       "resnet50d",
@@ -85,10 +89,11 @@ def timm_resnet_50_training(ctx: context_lib.Context):
 @registry_lib.register_benchmark(stepper=step_lib.StepperType.FORWARD)
 def timm_vit_small_dino_forward(ctx: context_lib.Context):
   """Benchmark factory for TIMM ViT-Small DINO forward."""
+  batch_size = 1 if ctx.run_scope == context_lib.RunScope.PRESUBMIT else 8
   model, input_args = _load_timm_model(
       ctx,
       "vit_small_patch8_224.dino",
-      input_shape=(1, 3, 224, 224),
+      input_shape=(batch_size, 3, 224, 224),
       is_training=False,
   )
   return model, input_args, {}
@@ -97,10 +102,11 @@ def timm_vit_small_dino_forward(ctx: context_lib.Context):
 @registry_lib.register_benchmark(stepper=step_lib.StepperType.TRAINING)
 def timm_vit_small_dino_training(ctx: context_lib.Context):
   """Benchmark factory for TIMM ViT-Small DINO training."""
+  batch_size = 1 if ctx.run_scope == context_lib.RunScope.PRESUBMIT else 8
   model, input_args = _load_timm_model(
       ctx,
       "vit_small_patch8_224.dino",
-      input_shape=(1, 3, 224, 224),
+      input_shape=(batch_size, 3, 224, 224),
       is_training=True,
   )
   opt = torch.optim.AdamW(
