@@ -18,10 +18,11 @@ This test guards the TorchTPU public API surface: any addition, deletion, or
 modification of a public API must be reflected in `tt_apis.yaml`, which
 requires approval from the API owners.
 
-It also checks that public Python APIs live under `torch.tpu`, that each public
-object has one public path, that no API name marks the API as experimental
-(stage annotations do that instead), and that the user-facing list of public
-APIs, `docs/markdown/public_apis.md`, is up to date.
+It also checks that every API is marked with its stage, that public Python APIs
+live under `torch.tpu`, that each public object has one public path, that no API
+name marks the API as experimental (stage annotations do that instead), and that
+the user-facing list of public APIs, `docs/markdown/public_apis.md`, is up to
+date.
 """
 
 import difflib
@@ -314,6 +315,29 @@ class TtApisTest(seed_test_utils.RepeatableTest):
           " to a later stage doesn't force users to change their code. Rename"
           " these APIs:\n"
           + "\n".join(f"  {api}" for api in offending)
+      )
+
+  def test_apis_have_stages(self):
+    # An API without a stage annotation shows up as "Unknown" in tt_apis.yaml
+    # and isn't listed in public_apis.md, so users can't tell whether they may
+    # rely on it.
+    unknown = sorted(
+        f"{api.name} [{api.category}]"
+        for api in scan_tt_apis.discover_all_apis(
+            repo_paths.get_repo_root_in_runfiles()
+        )
+        if api.stage is None
+    )
+    if unknown:
+      self.fail(
+          "Every TorchTPU API must be marked with its stage. Annotate these"
+          " APIs with their stages"
+          f" (`{_PYTHON_STAGE_ANNOTATIONS_PATH}` for Python,"
+          f" `{_CPP_STAGE_ANNOTATIONS_PATH}` for C++), then update"
+          " tt_apis.yaml:\n"
+          + "\n".join(f"  {api}" for api in unknown)
+          + "\n\n"
+          + _UPDATE_INSTRUCTIONS
       )
 
 
