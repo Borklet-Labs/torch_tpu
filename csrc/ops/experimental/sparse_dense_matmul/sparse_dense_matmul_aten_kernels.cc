@@ -30,6 +30,7 @@
 #include "csrc/common/dtype.h"
 #include "csrc/common/error_utils.h"
 #include "csrc/common/fixed_size_span.h"
+#include "csrc/distributed/process_group_tpu.h"
 #include "csrc/eager/op_dispatcher.h"
 #include "csrc/eager/tensor_to_buffer.h"
 #include "csrc/ops/macros/kernel.h"
@@ -153,11 +154,17 @@ at::Tensor AtenSparseDenseMatmul(
                            torch_tpu::ConvertTo<mlir::ElementType>(at::kFloat));
 
         TT_ASSIGN_OR_THROW(
-            auto results, (torch_tpu::DispatchOp<5, 1>(
-                              builder_fn, inputs,
-                              {.out_dtype = out_dtype,
-                               .out_dims = out_dims,
-                               .op_param_cache_keys = std::move(param_keys)})));
+            std::vector<int64_t> device_assignment,  // INT_VEC_OK
+            GetWorldDeviceAssignment());
+
+        TT_ASSIGN_OR_THROW(
+            auto results,
+            (torch_tpu::DispatchOp<5, 1>(
+                builder_fn, inputs,
+                {.out_dtype = out_dtype,
+                 .out_dims = out_dims,
+                 .op_param_cache_keys = std::move(param_keys),
+                 .device_assignment = std::move(device_assignment)})));
 
         return torch_tpu::MakeTensor(results);
       });

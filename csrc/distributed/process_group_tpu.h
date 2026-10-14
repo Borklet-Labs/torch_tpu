@@ -62,6 +62,12 @@ namespace torch_tpu {
 // Returns global device attributes and rank-to-device-id mapping.
 const std::vector<PjRtDeviceAttributes>& GetGlobalDeviceAttributes();
 const std::vector<int64_t>& GetGlobalRankToDeviceId();  // INT_VEC_OK
+
+// Returns the device assignment of the world: the device ids of the world's
+// ranks in rank order, or of every device in device id order before the world
+// process group exists. Empty on a single device.
+absl::StatusOr<std::vector<int64_t>> GetWorldDeviceAssignment();  // INT_VEC_OK
+
 // Returns, for each world rank r, its position in the physical-topology order
 // computed by `ComputeRankToTopologyOrder` over `GetGlobalDeviceAttributes()`.
 const std::vector<int64_t>& GetGlobalRankToTopologyOrder();  // INT_VEC_OK

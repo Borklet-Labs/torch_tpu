@@ -30,6 +30,7 @@
 #include "csrc/common/dtype.h"
 #include "csrc/common/error_utils.h"
 #include "csrc/common/fixed_size_span.h"
+#include "csrc/distributed/process_group_tpu.h"
 #include "csrc/eager/device_buffer.h"
 #include "csrc/eager/op_dispatcher.h"
 #include "csrc/eager/tensor_to_buffer.h"
@@ -201,13 +202,19 @@ at::Tensor AtenSparseDenseMatmulGradWithSgd(
                            torch_tpu::ConvertTo<mlir::ElementType>(
                                embedding_table.scalar_type()));
 
-        TT_ASSIGN_OR_THROW(auto results,
-                           (torch_tpu::DispatchOp<7, 1>(
-                               builder_fn, inputs,
-                               {.out_dtype = out_dtype,
-                                .out_dims = out_dims,
-                                .op_param_cache_keys = std::move(param_keys),
-                                .donated_indices = {4}})));
+        TT_ASSIGN_OR_THROW(
+            std::vector<int64_t> device_assignment,  // INT_VEC_OK
+            GetWorldDeviceAssignment());
+
+        TT_ASSIGN_OR_THROW(
+            auto results,
+            (torch_tpu::DispatchOp<7, 1>(
+                builder_fn, inputs,
+                {.out_dtype = out_dtype,
+                 .out_dims = out_dims,
+                 .op_param_cache_keys = std::move(param_keys),
+                 .donated_indices = {4},
+                 .device_assignment = std::move(device_assignment)})));
         TT_ASSIGN_OR_THROW(const torch_tpu::DeviceBufferRef table_buf,
                            torch_tpu::GetBuffer(embedding_table));
         if (table_buf.shape().layout().has_value()) {

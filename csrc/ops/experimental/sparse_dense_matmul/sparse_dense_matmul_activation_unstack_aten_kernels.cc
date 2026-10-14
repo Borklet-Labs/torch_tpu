@@ -42,6 +42,7 @@
 #include "csrc/common/dtype.h"
 #include "csrc/common/error_utils.h"
 #include "csrc/common/to_string.h"
+#include "csrc/distributed/process_group_tpu.h"
 #include "csrc/eager/device_buffer.h"
 #include "csrc/eager/op_dispatcher.h"
 #include "csrc/eager/tensor_to_buffer.h"
@@ -192,10 +193,15 @@ std::vector<at::Tensor> AtenSparseDenseMatmulActivationUnstack(
         auto builder_fn = SparseDenseMatmulActivationUnstackBuilder(
             per_feature_batch_sizes, per_feature_dims);
 
+        TT_ASSIGN_OR_THROW(
+            std::vector<int64_t> device_assignment,  // INT_VEC_OK
+            GetWorldDeviceAssignment());
+
         DispatchOpOptions<torch_tpu::kDynamicSize> options = {
             .out_dtypes = out_dtypes,
             .out_dims_list = out_dims_list,
             .op_param_cache_keys = std::move(param_keys),
+            .device_assignment = std::move(device_assignment),
         };
 
         TT_ASSIGN_OR_THROW(std::vector<DeviceBufferRef> result_buffers,

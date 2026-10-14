@@ -942,18 +942,6 @@ void ApplyPlacementsToCompileSpec(CompilationSpec& spec,
 
 }  // namespace
 
-bool Traversal::HasSparseCoreOp() const {
-  for (const SharedDeviceBufferList& node : execution_order_) {
-    if (node->is_deferred()) {
-      const std::shared_ptr<DeferredOp> op = node->deferred_op();
-      if (op != nullptr && IsSparseCoreOp(op->op_name())) {
-        return true;
-      }
-    }
-  }
-  return false;
-}
-
 absl::StatusOr<std::vector<int64_t>>  // INT_VEC_OK
 Traversal::ResolveDeviceAssignment() const {
   if (!resolved_da_.has_value()) {
@@ -966,46 +954,9 @@ Traversal::ResolveDeviceAssignment() const {
 
 absl::Status Traversal::ApplyDeviceAssignmentToCompileSpec(
     CompilationSpec& spec, absl::Span<const int64_t> resolved_da) const {
-  // SparseCore offload operations and custom per-op device assignments require
-  // mutating `xla::ExecutableBuildOptions` and recomputing
-  // `spec.compile_options_key` before compilation cache lookup:
-  //   1. SparseCore offload ops do not support XLA SPMD / Shardy partitioning.
-  //      On multi-device systems (`num_devices > 1`), they must be compiled as
-  //      replicated executables (`num_replicas = num_devices`,
-  //      `num_partitions = 1`, `use_spmd_partitioning = false`,
-  //      `use_shardy_partitioner = false`) with a `(num_devices, 1)`
-  //      `xla::DeviceAssignment`.
-  //   2. Non-SparseCore graphs with a non-empty `resolved_da` (e.g. Pallas
-  //      custom kernels or process-group collectives over a mesh or subgroup)
-  //      must override `num_replicas = 1`, `num_partitions =
-  //      resolved_da.size()`, and `device_assignment` to match the resolved
-  //      mesh ordering so the executable is compiled for the exact target
-  //      devices and cached under a distinct `CompileOptionsKey`.
-  if (HasSparseCoreOp()) {
-    absl::StatusOr<int> status =
-        PjrtBackend::GetInstance().GetGlobalDeviceCount();
-    if (status.ok() && *status > 1) {
-      const int num_devices = *status;
-      xla::ExecutableBuildOptions& exec_options =
-          spec.xla_compile_options->executable_build_options;
-      exec_options.set_num_replicas(num_devices);
-      exec_options.set_num_partitions(1);
-      xla::DeviceAssignment da(num_devices, 1);
-      for (int idx = 0; idx < num_devices; ++idx) {
-        if (!resolved_da.empty() &&
-            static_cast<int>(resolved_da.size()) == num_devices) {
-          da(idx, 0) = resolved_da[idx];
-        } else {
-          da(idx, 0) = idx;
-        }
-      }
-      exec_options.set_device_assignment(da);
-      exec_options.set_use_spmd_partitioning(false);
-      exec_options.set_use_shardy_partitioner(false);
-      spec.compile_options_key =
-          MakeCompileOptionsKey(*spec.xla_compile_options);
-    }
-  } else if (!resolved_da.empty()) {
+  // A non-empty resolved device assignment (collectives, Pallas, SparseCore)
+  // pins compilation to those devices, in order, with a distinct options key.
+  if (!resolved_da.empty()) {
     const int num_partitions = resolved_da.size();
     xla::ExecutableBuildOptions& exec_options =
         spec.xla_compile_options->executable_build_options;
@@ -1033,25 +984,14 @@ std::optional<CompilationSpec> Traversal::MaybeUpdateSpecWithLayout(
   // Avoid deep-copying `CompilationSpec` (`xla::CompileOptions` and its
   // `DebugOptions` protobuf) and re-hashing `CompileOptionsKey` on the common
   // eager compilation cache-hit fast path unless this traversal requires
-  // SparseCore replication overrides, explicit device assignment overrides, or
-  // pinned-host memory space layout overrides.
-  bool has_sparse_core_override = false;
-  if (HasSparseCoreOp()) {
-    if (absl::StatusOr<int> status =
-            PjrtBackend::GetInstance().GetGlobalDeviceCount();
-        status.ok() && *status > 1) {
-      has_sparse_core_override = true;
-    }
-  }
+  // explicit device assignment overrides or pinned-host memory space layout
+  // overrides.
   const bool needs_placement_override =
       HasPinnedHostBuffer(outputs_) || HasPinnedHostBuffer(arguments_);
-  if (!has_sparse_core_override && resolved_da.empty() &&
-      !needs_placement_override) {
-    return std::nullopt;
-  }
+  if (resolved_da.empty() && !needs_placement_override) return std::nullopt;
 
   CompilationSpec mutable_compilation_spec = spec.Copy();
-  if (has_sparse_core_override || !resolved_da.empty()) {
+  if (!resolved_da.empty()) {
     ABSL_CHECK_OK(ApplyDeviceAssignmentToCompileSpec(  // CRASH_OK
         mutable_compilation_spec, resolved_da));
   }

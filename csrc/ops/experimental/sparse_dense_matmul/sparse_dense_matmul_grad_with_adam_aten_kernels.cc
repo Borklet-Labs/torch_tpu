@@ -31,6 +31,7 @@
 #include "csrc/common/dtype.h"
 #include "csrc/common/error_utils.h"
 #include "csrc/common/fixed_size_span.h"
+#include "csrc/distributed/process_group_tpu.h"
 #include "csrc/eager/device_buffer.h"
 #include "csrc/eager/op_dispatcher.h"
 #include "csrc/eager/tensor_to_buffer.h"
@@ -337,12 +338,18 @@ AtenSparseDenseMatmulGradWithAdam(
             ConvertTo<mlir::ElementType>(velocity.scalar_type()));
 
         TT_ASSIGN_OR_THROW(
+            std::vector<int64_t> device_assignment,  // INT_VEC_OK
+            GetWorldDeviceAssignment());
+
+        TT_ASSIGN_OR_THROW(
             auto results,
-            (DispatchOp<9, 3>(builder_fn, inputs,
-                              {.out_dtypes = {out_dtype, out_dtype, vel_dtype},
-                               .out_dims_list = {out_dims, out_dims, vel_dims},
-                               .op_param_cache_keys = std::move(param_keys),
-                               .donated_indices = {4, 5, 6}})));
+            (DispatchOp<9, 3>(
+                builder_fn, inputs,
+                {.out_dtypes = {out_dtype, out_dtype, vel_dtype},
+                 .out_dims_list = {out_dims, out_dims, vel_dims},
+                 .op_param_cache_keys = std::move(param_keys),
+                 .donated_indices = {4, 5, 6},
+                 .device_assignment = std::move(device_assignment)})));
         TT_ASSIGN_OR_THROW(const DeviceBufferRef table_buf,
                            GetBuffer(embedding_table));
         if (table_buf.shape().layout().has_value()) {

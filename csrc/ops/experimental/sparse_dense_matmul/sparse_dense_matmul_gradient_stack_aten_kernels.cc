@@ -32,6 +32,7 @@
 #include "csrc/common/dtype.h"
 #include "csrc/common/error_utils.h"
 #include "csrc/common/to_string.h"
+#include "csrc/distributed/process_group_tpu.h"
 #include "csrc/eager/device_buffer.h"
 #include "csrc/eager/op_dispatcher.h"
 #include "csrc/eager/tensor_to_buffer.h"
@@ -160,10 +161,15 @@ at::Tensor AtenSparseDenseMatmulGradientStack(
         TT_ASSIGN_OR_THROW(mlir::ElementType out_dtype,
                            torch_tpu::ConvertTo<mlir::ElementType>(at::kFloat));
 
+        TT_ASSIGN_OR_THROW(
+            std::vector<int64_t> device_assignment,  // INT_VEC_OK
+            GetWorldDeviceAssignment());
+
         DispatchOpOptions<1> options = {
             .out_dtype = out_dtype,
             .out_dims = out_dims,
             .op_param_cache_keys = std::move(param_keys),
+            .device_assignment = std::move(device_assignment),
         };
 
         TT_ASSIGN_OR_THROW(

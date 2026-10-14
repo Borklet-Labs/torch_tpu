@@ -232,9 +232,6 @@ class Traversal {
   // dimensions marked.
   [[nodiscard]] bool IsBoundedDynamic() const;
 
-  // Returns true if the traversal contains any SparseCore custom operations.
-  [[nodiscard]] bool HasSparseCoreOp() const;
-
   // The core components of a Traversal, returned by IntoParts().
   struct Parts {
     std::vector<DeviceBufferRef> arguments;

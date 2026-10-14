@@ -770,6 +770,22 @@ const std::vector<int64_t>& GetGlobalRankToDeviceId() {  // INT_VEC_OK
   return WorldTopology().rank_to_device_id;
 }
 
+absl::StatusOr<std::vector<int64_t>> GetWorldDeviceAssignment() {  // INT_VEC_OK
+  TT_ASSIGN_OR_RETURN(const int num_devices,
+                      PjrtBackend::GetInstance().GetGlobalDeviceCount());
+  if (num_devices <= 1) {
+    return std::vector<int64_t>();  // INT_VEC_OK
+  }
+  const std::vector<int64_t>& world_rank_to_device_id =  // INT_VEC_OK
+      GetGlobalRankToDeviceId();
+  if (!world_rank_to_device_id.empty()) {
+    return world_rank_to_device_id;
+  }
+  std::vector<int64_t> device_assignment(num_devices);  // INT_VEC_OK
+  std::iota(device_assignment.begin(), device_assignment.end(), 0);
+  return device_assignment;
+}
+
 const std::vector<int64_t>& GetGlobalRankToTopologyOrder() {  // INT_VEC_OK
   return WorldTopology().rank_to_topo_order;
 }
