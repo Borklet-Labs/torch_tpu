@@ -56,6 +56,7 @@ from torch._functorch._aot_autograd.schemas import AOTAutogradCacheInfo
 from torch._functorch._aot_autograd.schemas import SerializableAOTDispatchCompiler
 import torch._functorch.config as functorch_config
 from torch._functorch.partitioners import min_cut_rematerialization_partition
+from torch.utils import _python_dispatch
 from torch.utils import _pytree
 from torch_tpu._internal import execution_mode
 from torch_tpu._internal.compile import compiler
@@ -228,6 +229,33 @@ def _mark_pinned_host_inputs(
         or node in reload_placeholders
     ):
       example_input._is_pinned_host = True
+
+
+def _get_device_layouts(
+    x: Any, desc: _aot_descriptors.AOTInput
+) -> dict[_aot_descriptors.AOTInput, Any]:
+  """Returns the non-default on-device layouts of `x`.
+
+  AOTAutograd passes the inner tensors of a tensor subclass, e.g. the local
+  tensor of a DTensor, to the program instead of the subclass itself.
+
+  Args:
+    x: An input from Dynamo, e.g. a tensor or a DTensor.
+    desc: The AOTAutograd input descriptor of `x`.
+
+  Returns:
+    The non-default layouts of `x`, or of its inner tensors if it is a tensor
+    subclass, keyed by AOTAutograd input descriptor.
+  """
+  if not _python_dispatch.is_traceable_wrapper_subclass(x):
+    layout = compiler.get_non_default_device_layout(x)
+    return {} if layout is None else {desc: layout}
+  layouts = {}
+  inner_tensor_names, _ = x.__tensor_flatten__()
+  for name in inner_tensor_names:
+    inner_desc = _aot_descriptors.SubclassGetAttrAOTInput(desc, name)
+    layouts.update(_get_device_layouts(getattr(x, name), inner_desc))
+  return layouts
 
 
 def _mark_device_layouts(
@@ -806,9 +834,9 @@ class TpuBackend:
     _guard_input_storage_offsets(graph_module)
     input_layouts = {}
     for i, x in enumerate(example_inputs):
-      layout = compiler.get_non_default_device_layout(x)
-      if layout is not None:
-        input_layouts[_aot_descriptors.PlainAOTInput(i)] = layout
+      input_layouts.update(
+          _get_device_layouts(x, _aot_descriptors.PlainAOTInput(i))
+      )
     if input_layouts:
       # AOTAutogradCache keys don't include device layouts.
       serializable = False

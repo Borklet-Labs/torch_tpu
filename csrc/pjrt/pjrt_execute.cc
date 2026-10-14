@@ -201,6 +201,45 @@ bool HloModuleContainsCollective(const xla::HloModule* hlo_module) {
   return false;
 }
 
+// Returns an error if an argument's on-device layout isn't the one the
+// executable was compiled for. For static parameters and arguments, PJRT only
+// checks an argument's size, so it would silently misread a same-size argument
+// with another layout.
+absl::Status ValidateArgumentLayouts(
+    const LoadedExecutableWithMetadata& executable,
+    absl::Span<xla::PjRtBuffer* const> argument_buffers) {
+  const std::vector<std::optional<xla::Shape>>& parameter_shapes =
+      executable.parameter_device_shapes();
+  for (size_t i = 0; i < argument_buffers.size() && i < parameter_shapes.size();
+       ++i) {
+    // PJRT handles dynamic parameters and arguments itself.
+    if (argument_buffers[i] == nullptr || !parameter_shapes[i].has_value() ||
+        !argument_buffers[i]->on_device_shape().is_static()) {
+      continue;
+    }
+    const xla::Shape& expected = *parameter_shapes[i];
+    const xla::Shape& actual = argument_buffers[i]->on_device_shape();
+    // An argument with other dimensions, e.g. a one-element array passed to a
+    // scalar parameter, is reinterpreted on purpose. PJRT checks its size.
+    if (actual.dimensions() != expected.dimensions()) {
+      continue;
+    }
+    // The dimension order and tiles determine where each element is stored.
+    if (actual.layout().minor_to_major() !=
+            expected.layout().minor_to_major() ||
+        actual.layout().tiles() != expected.layout().tiles()) {
+      return TT_ERROR(error::kInvalidArgument)
+             << "expected argument " << i << " to have on-device layout "
+             << expected.layout().ToString()
+             << ", which the program was compiled for, got "
+             << actual.layout().ToString()
+             << " (a tensor's layout can change after compilation, e.g. "
+                "through copy_())";
+    }
+  }
+  return absl::OkStatus();
+}
+
 }  // namespace
 
 absl::StatusOr<PjRtBufferPointers> Execute(
@@ -226,6 +265,7 @@ absl::StatusOr<PjRtBufferPointers> Execute(
     argument_buffers = std::move(dynamic_args.full_args);
     ephemeral_buffers = std::move(dynamic_args.ephemeral_buffers);
   }
+  TT_RETURN_IF_ERROR(ValidateArgumentLayouts(*executable, argument_buffers));
 
   std::vector<std::vector<xla::PjRtBuffer*>> execution_arguments;
   execution_arguments.reserve(1);

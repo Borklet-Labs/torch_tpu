@@ -43,6 +43,7 @@
 #include "xla/pjrt/maybe_owning_mlir_module.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_executable.h"
+#include "xla/shape.h"
 
 namespace torch_tpu {
 
@@ -130,7 +131,7 @@ class LoadedExecutableWithMetadata {
     return std::shared_ptr<const LoadedExecutableWithMetadata>(
         new LoadedExecutableWithMetadata(
             existing->executable_, existing->output_shapes_,
-            std::move(argument_indices),
+            existing->parameter_device_shapes_, std::move(argument_indices),
             existing->unbounded_dynamic_execution_metadata_));
   }
 
@@ -140,7 +141,7 @@ class LoadedExecutableWithMetadata {
     return std::shared_ptr<const LoadedExecutableWithMetadata>(
         new LoadedExecutableWithMetadata(
             existing->executable_, existing->output_shapes_,
-            existing->argument_indices_,
+            existing->parameter_device_shapes_, existing->argument_indices_,
             std::move(unbounded_dynamic_execution_metadata)));
   }
 
@@ -153,6 +154,13 @@ class LoadedExecutableWithMetadata {
   }
 
   const std::vector<Shape>& output_shapes() const { return output_shapes_; }
+  // The on-device shapes the executable's parameters were compiled for, or
+  // nullopt for dynamic parameters. Empty if the executable doesn't report
+  // them.
+  const std::vector<std::optional<xla::Shape>>& parameter_device_shapes()
+      const {
+    return parameter_device_shapes_;
+  }
   const Indices& argument_indices() const { return argument_indices_; }
   const std::optional<UnboundedDynamicExecutionMetadata>&
   unbounded_dynamic_execution_metadata() const {
@@ -162,11 +170,14 @@ class LoadedExecutableWithMetadata {
  private:
   LoadedExecutableWithMetadata(
       absl_nonnull std::shared_ptr<const xla::PjRtLoadedExecutable> executable,
-      std::vector<Shape> output_shapes, Indices argument_indices = {},
+      std::vector<Shape> output_shapes,
+      std::vector<std::optional<xla::Shape>> parameter_device_shapes,
+      Indices argument_indices = {},
       std::optional<UnboundedDynamicExecutionMetadata>
           unbounded_dynamic_execution_metadata = std::nullopt)
       : executable_(std::move(executable)),
         output_shapes_(std::move(output_shapes)),
+        parameter_device_shapes_(std::move(parameter_device_shapes)),
         argument_indices_(std::move(argument_indices)),
         unbounded_dynamic_execution_metadata_(
             std::move(unbounded_dynamic_execution_metadata)) {}
@@ -174,6 +185,8 @@ class LoadedExecutableWithMetadata {
   absl_nonnull std::shared_ptr<const xla::PjRtLoadedExecutable> executable_;
   // Cached output shapes for the executable.
   std::vector<Shape> output_shapes_;
+  // Cached on-device parameter shapes for the executable.
+  std::vector<std::optional<xla::Shape>> parameter_device_shapes_;
   Indices argument_indices_;
   std::optional<UnboundedDynamicExecutionMetadata>
       unbounded_dynamic_execution_metadata_;

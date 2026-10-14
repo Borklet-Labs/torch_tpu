@@ -51,9 +51,13 @@
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
 #include "xla/client/executable_build_options.h"
+#include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/translate/register.h"
+#include "xla/layout.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_compiler.h"
+#include "xla/pjrt/pjrt_layout.h"
+#include "xla/service/computation_layout.h"
 #include "xla/service/device_assignment.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
@@ -82,6 +86,34 @@ namespace {
 constexpr std::string_view kOptimizationLevelOption = "xla_optimization_level";
 constexpr std::string_view kMemoryFittingLevelOption =
     "xla_memory_fitting_level";
+
+// Returns the on-device shapes `executable`'s parameters were compiled for, or
+// nullopt for dynamic parameters, which PJRT checks itself. Returns an empty
+// vector if `executable` doesn't report them.
+std::vector<std::optional<xla::Shape>> GetStaticParameterDeviceShapes(
+    const xla::PjRtLoadedExecutable& executable) {
+  absl::StatusOr<std::vector<std::shared_ptr<xla::HloModule>>> modules =
+      executable.GetHloModules();
+  absl::StatusOr<std::vector<std::shared_ptr<const xla::PjRtLayout>>> layouts =
+      executable.GetParameterLayouts();
+  if (!modules.ok() || modules->size() != 1 || !layouts.ok()) {
+    return {};
+  }
+  const xla::ComputationLayout& entry =
+      (*modules)[0]->entry_computation_layout();
+  if (entry.parameter_count() != static_cast<int>(layouts->size())) {
+    return {};
+  }
+  std::vector<std::optional<xla::Shape>> result(layouts->size());
+  for (int i = 0; i < entry.parameter_count(); ++i) {
+    const xla::Shape& shape = entry.parameter_shape(i);
+    if (shape.IsArray() && shape.is_static() && (*layouts)[i] != nullptr) {
+      result[i] = shape;
+      *result[i]->mutable_layout() = (*layouts)[i]->xla_layout();
+    }
+  }
+  return result;
+}
 
 }  // namespace
 
@@ -132,10 +164,13 @@ LoadedExecutableWithMetadata::MakeShared(
     output_shapes.push_back(std::move(shape));
   }
 
+  std::vector<std::optional<xla::Shape>> parameter_device_shapes =
+      GetStaticParameterDeviceShapes(*executable);
   return std::shared_ptr<const LoadedExecutableWithMetadata>(
       new LoadedExecutableWithMetadata(
           std::move(executable), std::move(output_shapes),
-          std::move(argument_indices), std::move(dynamic_execution_metadata)));
+          std::move(parameter_device_shapes), std::move(argument_indices),
+          std::move(dynamic_execution_metadata)));
 }
 
 absl::StatusOr<SharedLoadedExecutableWithMetadata> Compile(

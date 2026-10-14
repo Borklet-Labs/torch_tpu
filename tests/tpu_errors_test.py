@@ -133,6 +133,26 @@ class TpuOnlyErrorTest(et.TpuOnlyErrorTestBase):
     ):
       x.cpu()
 
+  @et.why_tpu_only("On-device layouts only exist for TPU tensors.")
+  def test_compiled_program_rejects_input_in_another_layout(self):
+    @torch.compile(backend="tpu", fullgraph=True)
+    def add_one(x):
+      return x + 1.0
+
+    t = torch.ones(128, 128)
+    # The first call compiles the program for the default row-major layout.
+    add_one(t.to(et.device())).cpu()
+
+    # Column-major, which takes as many bytes as the default layout.
+    layout = torch.tpu.TpuLayout(minor_to_major=[0, 1], tiles=[[8, 128]])
+    with torch.tpu.LayoutContext(layout):
+      x = t.to(et.device())
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""failed to enqueue execution for task_name=anonymous: expected argument 0 to have on-device layout {1,0:T(8,128)}, which the program was compiled for, got {0,1:T(8,128)} (a tensor's layout can change after compilation, e.g. through copy_())""",
+    ):
+      add_one(x).cpu()
+
   @et.why_tpu_only("TODO: support complex128 dtype on TPU")
   def test_fill_complex128(self):
     with et.assert_raises_message(

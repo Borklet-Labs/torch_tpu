@@ -16,8 +16,10 @@
 
 from absl.testing import absltest
 import torch
+from torch.testing._internal.distributed import fake_pg
 from torch_tpu._internal.compile import tpu_torch_compile
 import torch_tpu._internal.device_utils.annotations as tpu_annotations
+from torch_tpu._internal.utils import test_utils
 
 
 class AnnotationsTest(
@@ -101,6 +103,102 @@ class AnnotationsTest(
       self.assertIsNotNone(device_layout_tuple)
       device_layout = tpu_annotations.TpuLayout(*device_layout_tuple)
       self.assertEqual(device_layout, layout)
+
+  def test_compiled_program_rejects_input_in_another_layout(self):
+    device = torch.device("tpu")
+    # Column-major. A 128x128 tensor's default layout is row-major,
+    # {1,0:T(8,128)}, which takes as many bytes.
+    layout = tpu_annotations.TpuLayout(
+        minor_to_major=[0, 1],
+        tiles=[[8, 128]],
+    )
+
+    @torch.compile(backend="tpu", fullgraph=True)
+    def add_one(x):
+      return x + 1.0
+
+    expected = torch.arange(128 * 128, dtype=torch.float32).reshape(128, 128)
+    # The first call compiles the program for the default layout.
+    test_utils.assert_close(add_one(expected.to(device)).cpu(), expected + 1.0)
+
+    with tpu_annotations.LayoutContext(layout):
+      x = expected.to(device)
+    with self.assertRaisesRegex(RuntimeError, "compiled for"):
+      add_one(x).cpu()
+
+  def test_compiled_program_rejects_default_layout_after_another_layout(self):
+    device = torch.device("tpu")
+    # Column-major, which takes as many bytes as the default row-major layout.
+    layout = tpu_annotations.TpuLayout(
+        minor_to_major=[0, 1],
+        tiles=[[8, 128]],
+    )
+
+    @torch.compile(backend="tpu", fullgraph=True)
+    def add_one(x):
+      return x + 1.0
+
+    expected = torch.arange(128 * 128, dtype=torch.float32).reshape(128, 128)
+    with tpu_annotations.LayoutContext(layout):
+      x = expected.to(device)
+    # The first call compiles the program for `layout`, and later calls in
+    # `layout` reuse it.
+    test_utils.assert_close(add_one(x).cpu(), expected + 1.0)
+    test_utils.assert_close(add_one(x).cpu(), expected + 1.0)
+
+    with self.assertRaisesRegex(RuntimeError, "compiled for"):
+      add_one(expected.to(device)).cpu()
+
+  def test_compiled_program_rejects_input_after_copy_resets_layout(self):
+    device = torch.device("tpu")
+    # Column-major, which takes as many bytes as the default row-major layout.
+    layout = tpu_annotations.TpuLayout(
+        minor_to_major=[0, 1],
+        tiles=[[8, 128]],
+    )
+
+    @torch.compile(backend="tpu", fullgraph=True)
+    def add_one(x):
+      return x + 1.0
+
+    expected = torch.arange(128 * 128, dtype=torch.float32).reshape(128, 128)
+    with tpu_annotations.LayoutContext(layout):
+      x = expected.to(device)
+    # The first call compiles the program for `layout`.
+    test_utils.assert_close(add_one(x).cpu(), expected + 1.0)
+
+    # Like load_state_dict, copy_ gives `x` the default layout.
+    x.copy_(expected)
+    with self.assertRaisesRegex(RuntimeError, "compiled for"):
+      add_one(x).cpu()
+
+  def test_compiled_program_is_compiled_for_layouts_of_dtensor_inputs(self):
+    device = torch.device("tpu")
+    # Column-major. A 16x128 tensor's default layout is row-major,
+    # {1,0:T(8,128)}.
+    layout = tpu_annotations.TpuLayout(
+        minor_to_major=[0, 1],
+        tiles=[[8, 128]],
+    )
+    torch.distributed.init_process_group(
+        backend="fake", store=fake_pg.FakeStore(), rank=0, world_size=1
+    )
+    self.addCleanup(torch.distributed.destroy_process_group)
+    mesh = torch.distributed.tensor.DeviceMesh("tpu", torch.arange(1))
+
+    @torch.compile(backend="tpu", fullgraph=True)
+    def add_one(x):
+      return x.to_local() + 1.0
+
+    expected = torch.arange(16 * 128, dtype=torch.float32).reshape(16, 128)
+    with tpu_annotations.LayoutContext(layout):
+      local = expected.to(device)
+    x = torch.distributed.tensor.DTensor.from_local(
+        local, mesh, [torch.distributed.tensor.Shard(0)], run_check=False
+    )
+
+    # The program receives the local tensor of `x`, with its layout.
+    test_utils.assert_close(add_one(x).cpu(), expected + 1.0)
 
 
 if __name__ == "__main__":
