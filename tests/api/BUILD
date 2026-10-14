@@ -20,6 +20,7 @@
 
 load(
     "//build_files:build_defs.bzl",
+    "oss_target",
     "torch_tpu_package_end",
     "torch_tpu_py_library",
     "torch_tpu_py_test",
@@ -57,7 +58,7 @@ torch_tpu_py_library(
 )
 
 # Updates tt_apis.yaml and docs/markdown/public_apis.md in the workspace. Run it
-# on a TPU host with `blaze run`.
+# on a TPU VM with `bazel run` and the newest supported dependencies in OSS.
 pytype_strict_binary(
     name = "scan_tt_apis",
     srcs = ["scan_tt_apis.py"],
@@ -67,12 +68,9 @@ pytype_strict_binary(
     ],
 )
 
-# TODO(b/570277416): Run tt_apis_test in OSS only, and the other tests below in
-# OSS too.
 torch_tpu_py_test(
     name = "scan_tt_apis_test",
     srcs = ["scan_tt_apis_test.py"],
-    notest_oss = True,  # NOTEST_OSS_OK=The scanner only finds the google3 repository root.
     deps = [
         ":scan_tt_apis_lib",
         "//shims/absl_py/testing:absltest",
@@ -85,7 +83,13 @@ torch_tpu_py_test(
 
 # Fails if tt_apis.yaml is out of sync with the discovered TorchTPU public APIs. Any change to
 # tt_apis.yaml requires approval from the owners listed in OWNERS.
-torch_tpu_py_test(
+#
+# The public APIs depend on the dependency versions, which differ between google3 and OSS, so
+# tt_apis.yaml tracks the newest supported OSS dependencies. The test fails unless PyTorch is the
+# newest supported release, so it's tagged `requires-newest-deps`: the OSS CI jobs with the newest
+# dependencies run it, and the other OSS CI jobs exclude it.
+oss_target(
+    torch_tpu_py_test,
     name = "tt_apis_test",
     srcs = ["tt_apis_test.py"],
     data = [
@@ -93,8 +97,9 @@ torch_tpu_py_test(
         "//csrc:all_cpp_files_recursive",
         "//docs/markdown:public_apis.md",
     ],
-    notest_oss = True,  # NOTEST_OSS_OK=repo_paths only finds the google3 layout so far (b/570277416).
     tags = [
+        # Only the CI jobs with the newest supported dependencies run it.
+        "requires-newest-deps",
         # Must run on TPU hardware for C++ extension to be loaded into memory, enabling memory
         # reflection to discover all public runtime APIs.
         "requires-tpu-v5lite",
@@ -102,6 +107,7 @@ torch_tpu_py_test(
     deps = [
         ":scan_tt_apis_lib",
         "//shims/absl_py/testing:absltest",
+        "//shims/torch:pytorch",
         "//src/torch_tpu",
         "//tests:repo_paths",
         "//tests:seed_test_utils",
@@ -157,13 +163,10 @@ pytype_strict_binary(
 # Fails if exposed_internal_apis.yaml is out of sync with the internal APIs and
 # environment variables that the docs and examples use. It scans
 # docs/notebooks, docs/source and examples.
-#
-# TODO(b/570277416): Run the tests below in OSS too.
 torch_tpu_py_test(
     name = "exposed_internal_apis_test",
     srcs = ["exposed_internal_apis_test.py"],
     data = [":exposed_internal_apis_data"],
-    notest_oss = True,  # NOTEST_OSS_OK=repo_paths only finds the google3 layout so far (b/570277416).
     deps = [
         ":scan_exposed_internal_apis_lib",
         "//shims/absl_py/testing:absltest",
@@ -177,7 +180,6 @@ torch_tpu_py_test(
 torch_tpu_py_test(
     name = "scan_exposed_internal_apis_test",
     srcs = ["scan_exposed_internal_apis_test.py"],
-    notest_oss = True,  # NOTEST_OSS_OK=The scanner only finds the google3 repository root.
     deps = [
         ":scan_exposed_internal_apis_lib",
         "//shims/absl_py/testing:absltest",

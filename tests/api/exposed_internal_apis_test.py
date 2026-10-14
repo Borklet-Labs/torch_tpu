@@ -114,14 +114,14 @@ class ExposedInternalApisTest(seed_test_utils.RepeatableTest):
           os.path.exists(scan_dir), f"Scan directory not found: {scan_dir}"
       )
 
-    # `used_in` paths are relative to the google3 root.
+    # `used_in` paths are relative to the repository root.
     internal_py, internal_env = scan_exposed_internal_apis.scan_directories(
         [
             os.path.join(root, subdir)
             for subdir in scan_exposed_internal_apis.DEFAULT_SCAN_SUBDIRS
         ],
         tt_apis_path,
-        repository_root=root.removesuffix(repo_paths.G3_REPO_PATH),
+        repository_root=root,
     )
     actual_text = scan_exposed_internal_apis.format_exposed_internal_apis_yaml(
         internal_py, internal_env

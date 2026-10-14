@@ -185,12 +185,6 @@ torch.tpu.stream: {category: Public Python API, defined_in: runtime, stage: Expe
 torch.tpu.synchronize: {category: Public Python API, defined_in: runtime, prefer: torch.accelerator.synchronize, stage: Internal}
 torch.tpu.topology_aware_mesh: {category: Public Python API, defined_in: runtime, deprecated_in: 0.2.0, stage: Deprecated}
 
-# --- ABSL Python Flag ---
-torch_tpu_internal_compilation_container_memory_limit_mb: {category: ABSL Python Flag, defined_in: runtime, stage: Internal}
-torch_tpu_internal_enable_compilation_container: {category: ABSL Python Flag, defined_in: runtime, stage: Internal}
-torch_tpu_internal_mlir_tracebacks: {category: ABSL Python Flag, defined_in: runtime, stage: Internal}
-torch_tpu_internal_num_compilation_threads: {category: ABSL Python Flag, defined_in: runtime, stage: Internal}
-
 # --- Environment Variable ---
 JOB_COMPLETION_INDEX: {category: Environment Variable, defined_in: csrc/common/env_vars.h, stage: Internal}
 LIBTPU_INIT_ARGS: {category: Environment Variable, defined_in: csrc/common/env_vars.h, stage: Stable}
@@ -239,5 +233,6 @@ WORLD_SIZE: {category: Environment Variable, defined_in: csrc/common/env_vars.h,
 XLA_FLAGS: {category: Environment Variable, defined_in: csrc/common/env_vars.h, stage: Experimental}
 
 # --- ABSL C++ Flag ---
+torch_tpu_internal_enable_compilation_container: {category: ABSL C++ Flag, defined_in: csrc/common/contain.cc, stage: Internal}
 torch_tpu_internal_mlir_tracebacks: {category: ABSL C++ Flag, defined_in: csrc/ops/python_context.cc, stage: Internal}
 torch_tpu_internal_num_compilation_threads: {category: ABSL C++ Flag, defined_in: csrc/common/compilation_cache.cc, stage: Internal}

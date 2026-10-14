@@ -82,34 +82,28 @@ import yaml
 
 Stage = annotations.Stage
 
-# The label of `tt_apis_test`, whose Sponge artifacts are the up-to-date
-# `tt_apis.yaml` and `public_apis.md`.
-TT_APIS_TEST_LABEL = (
-    f"//{repo_paths.G3_REPO_PATH}/{repo_paths.SCANNER_PACKAGE}:tt_apis_test"
-)
+# The OSS label of `tt_apis_test`, whose test outputs are the up-to-date
+# `tt_apis.yaml` and `public_apis.md`. It only runs in OSS.
+TT_APIS_TEST_LABEL = f"//{repo_paths.SCANNER_PACKAGE}:tt_apis_test"
 
-# The label of the binary that updates `tt_apis.yaml` and `public_apis.md`.
-SCAN_TT_APIS_LABEL = (
-    f"//{repo_paths.G3_REPO_PATH}/{repo_paths.SCANNER_PACKAGE}:scan_tt_apis"
-)
+# The OSS label of the binary that updates `tt_apis.yaml` and `public_apis.md`.
+SCAN_TT_APIS_LABEL = f"//{repo_paths.SCANNER_PACKAGE}:scan_tt_apis"
+
+# The prefix of the output symlinks that Bazel creates in the workspace, e.g.
+# `bazel-bin`, `bazel-out`, `bazel-testlogs` and `bazel-<workspace name>`.
+_BAZEL_OUTPUT_DIR_PREFIX = "bazel-"
 
 # Exclude build output, test, documentation, and tooling directories
 EXCLUDED_DIRS: Set[str] = {
     # go/keep-sorted start
     "_build",
-    "blaze-bin",
-    "blaze-genfiles",
-    "blaze-out",
     "build",
     "build_files",
     "docker",
     "docs",
     "examples",
     "experimental",
-    "g3doc",
-    "google",
-    "oss",
-    "test_data",
+    "external",
     "tests",
     "tools",
     # go/keep-sorted end
@@ -709,8 +703,13 @@ def _extract_python_apis(roots: Sequence[Tuple[Any, str]]) -> List[ApiEntry]:
       # 6. List the members of TorchTPU modules and classes only once (see
       # `_list_members`); any other path to them gets a single entry. Modules
       # and classes from other libraries (e.g. torch.Tensor) are skipped.
+      # A value registered in `__tt_api_stages__` is a TorchTPU object even if
+      # its `__module__` isn't a TorchTPU namespace, e.g. a pybind11 class whose
+      # `__module__` is a bare extension module name in OSS builds.
       if isinstance(attribute_value, (types.ModuleType, type)):
-        if _is_torch_tpu_object(attribute_value):
+        if _is_torch_tpu_object(attribute_value) or (
+            isinstance(stages_map, dict) and attr_name in stages_map
+        ):
           if id(attribute_value) not in listed_at:
             _list_members(attribute_value, full_name, stage_info)
           if listed_at[id(attribute_value)] != full_name:
@@ -1501,7 +1500,11 @@ def discover_cpp_source_surfaces(
   # File contents (raw_content) are immediately discarded after processing each file.
   for root, dirs, files in os.walk(repository_root):
     dirs[:] = [
-        d for d in dirs if d not in EXCLUDED_DIRS and not d.startswith(".")
+        d
+        for d in dirs
+        if d not in EXCLUDED_DIRS
+        and not d.startswith(_BAZEL_OUTPUT_DIR_PREFIX)
+        and not repo_paths.is_ignored_dir(d)
     ]
 
     for file in files:
@@ -1908,16 +1911,20 @@ def export_tt_apis_artifact(text: str, filename: str = "tt_apis.yaml") -> None:
       logging.warning("Failed to export Sponge artifact: %s", error)
 
 
-# How to update `tt_apis.yaml` and `public_apis.md`.
+# How to update `tt_apis.yaml` and `public_apis.md`. `tt_apis_test` only runs
+# in OSS with the newest supported dependencies, so they are updated there.
 UPDATE_INSTRUCTIONS = f"""\
 To update `{repo_paths.TT_APIS_YAML_PATH}` and
-`{repo_paths.PUBLIC_APIS_MD_PATH}`, run this on a TPU host, which writes them
-into your workspace:
-  blaze run {SCAN_TT_APIS_LABEL}
-Alternatively, open the Sponge link of `{TT_APIS_TEST_LABEL}`, go to the
-"Artifacts" tab, download `{os.path.basename(repo_paths.TT_APIS_YAML_PATH)}`
-and `{PUBLIC_APIS_MD}`, and copy them to the paths above, relative to the
-TorchTPU repository root."""
+`{repo_paths.PUBLIC_APIS_MD_PATH}`, run this on a TPU VM with the newest
+supported dependencies
+(`cp requirements/requirements_3_14_latest.txt requirements/requirements_3_14.txt`),
+which writes them into your workspace:
+  bazel run {SCAN_TT_APIS_LABEL}
+Alternatively, copy `{os.path.basename(repo_paths.TT_APIS_YAML_PATH)}` and
+`{PUBLIC_APIS_MD}` from the test outputs of `{TT_APIS_TEST_LABEL}`
+(`bazel-testlogs/tests/api/tt_apis_test/test.outputs/`, or the
+`bazel-testlogs-*` artifact of the failed GitHub Actions run) to the paths
+above, relative to the repository root."""
 
 
 def find_out_of_date_baseline_files(
@@ -1999,7 +2006,7 @@ def main(argv: Sequence[str]) -> None:
 
   Raises:
       app.UsageError: If there are extra arguments, or if this doesn't run with
-        `blaze run`, which tells the workspace to update.
+        `blaze run` or `bazel run`, which tell the workspace to update.
   """
   if len(argv) > 1:
     raise app.UsageError("Too many command-line arguments.")

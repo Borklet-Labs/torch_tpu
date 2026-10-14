@@ -113,10 +113,14 @@ class Stage(str, enum.Enum):
   DEPRECATED = "Deprecated"
 
 
-# The label of the binary that updates `exposed_internal_apis.yaml`.
+# The OSS label of the binary that updates `exposed_internal_apis.yaml`.
 SCAN_EXPOSED_INTERNAL_APIS_LABEL = (
-    f"//{repo_paths.G3_REPO_PATH}/{repo_paths.SCANNER_PACKAGE}"
-    ":scan_exposed_internal_apis"
+    f"//{repo_paths.SCANNER_PACKAGE}:scan_exposed_internal_apis"
+)
+
+# The google3 label of the same binary.
+_GOOGLE3_SCAN_EXPOSED_INTERNAL_APIS_LABEL = (
+    f"//{repo_paths.G3_REPO_PATH}{SCAN_EXPOSED_INTERNAL_APIS_LABEL[1:]}"
 )
 
 # The directories to scan, relative to the TorchTPU repository root. Keep in
@@ -131,7 +135,8 @@ DEFAULT_SCAN_SUBDIRS: tuple[str, ...] = (
 UPDATE_INSTRUCTIONS = f"""\
 To update `{repo_paths.EXPOSED_INTERNAL_APIS_YAML_PATH}`, run this, which writes
 it into your workspace:
-  blaze run {SCAN_EXPOSED_INTERNAL_APIS_LABEL} -- --update_baseline
+  In google3: blaze run {_GOOGLE3_SCAN_EXPOSED_INTERNAL_APIS_LABEL} -- --update_baseline
+  In OSS: bazel run {SCAN_EXPOSED_INTERNAL_APIS_LABEL} -- --update_baseline
 Alternatively, open the Sponge link of the test, go to the "Artifacts" tab,
 download `{os.path.basename(repo_paths.EXPOSED_INTERNAL_APIS_YAML_PATH)}`, and
 copy it to the path above, relative to the TorchTPU repository root."""
@@ -202,7 +207,7 @@ class InternalApiEntry:
     stage: The lifecycle stage annotation from tt_apis.yaml, e.g.
       Stage.INTERNAL.
     used_in: List of relative file paths where the symbol is referenced (e.g.
-      "third_party/py/torch_tpu/docs/notebooks/eager_mode.py").
+      "docs/notebooks/eager_mode.py").
   """
 
   name: str
@@ -930,11 +935,11 @@ def main(argv: Sequence[str]) -> None:
     ) from error
   baseline_path = os.path.join(root, repo_paths.EXPOSED_INTERNAL_APIS_YAML_PATH)
 
-  # `used_in` paths are relative to the google3 root.
+  # `used_in` paths are relative to the repository root.
   internal_py, internal_env = scan_directories(
       [os.path.join(root, subdir) for subdir in DEFAULT_SCAN_SUBDIRS],
       os.path.join(root, repo_paths.TT_APIS_YAML_PATH),
-      repository_root=root.removesuffix(repo_paths.G3_REPO_PATH),
+      repository_root=root,
   )
 
   yaml_text = format_exposed_internal_apis_yaml(internal_py, internal_env)

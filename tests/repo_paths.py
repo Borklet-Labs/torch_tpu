@@ -14,7 +14,8 @@
 
 """Paths in the TorchTPU repository.
 
-In google3, the repository is at `third_party/py/torch_tpu`.
+This works the same way in google3 (Blaze), where the repository is at
+`third_party/py/torch_tpu`, and in OSS (Bazel), where it's the workspace root.
 """
 
 import os
@@ -43,6 +44,10 @@ SCANNER_PACKAGE = "tests/api"
 # that uses it.
 _KEY_FILE = "tests/repo_paths.py"
 
+_NON_REPO_DIR_NAMES = frozenset(
+    {"site-packages", "dist-packages", "venv", ".venv"}
+)
+
 
 def _first_containing_key_file(
     candidates: list[pathlib.Path], location: str
@@ -69,8 +74,9 @@ def _first_containing_key_file(
 def get_repo_root_in_runfiles() -> str:
   """Returns the TorchTPU repository root in the runfiles.
 
-  The candidate is `third_party/py/torch_tpu` in the `google3` repository of the
-  runfiles (`TEST_SRCDIR` or `RUNFILES_DIR`).
+  The candidates in the runfiles (`TEST_SRCDIR` or `RUNFILES_DIR`) are, in
+  order: `third_party/py/torch_tpu` in the `google3` repository for Blaze, then
+  `_main` and `torch_tpu` for Bazel.
 
   Raises:
     FileNotFoundError: If no candidate is the repository root.
@@ -78,7 +84,16 @@ def get_repo_root_in_runfiles() -> str:
   runfiles_dir = os.environ.get("TEST_SRCDIR") or os.environ.get("RUNFILES_DIR")
   candidates = []
   if runfiles_dir:
-    candidates = [pathlib.Path(runfiles_dir, "google3", G3_REPO_PATH)]
+    candidates = [
+        # Blaze (internal Google3).
+        pathlib.Path(runfiles_dir, "google3", G3_REPO_PATH),
+        # Bazel with Bzlmod, which names the main repository '_main'.
+        pathlib.Path(runfiles_dir, "_main"),
+        # Bazel with a WORKSPACE file, which names the main repository after
+        # its workspace name, and an external repository after its repository
+        # name.
+        pathlib.Path(runfiles_dir, "torch_tpu"),
+    ]
   return _first_containing_key_file(candidates, "runfiles")
 
 
@@ -86,19 +101,48 @@ def get_repo_root_in_workspace() -> str:
   """Returns the TorchTPU repository root in the workspace of `blaze run`.
 
   Only tools that write into the source workspace should use this, so that
-  tests stay hermetic. The candidate is `<workspace>/third_party/py/torch_tpu`
-  in the workspace of `blaze run` (`BUILD_WORKSPACE_DIRECTORY`).
+  tests stay hermetic. The candidates in the workspace of `blaze run` or
+  `bazel run` (`BUILD_WORKSPACE_DIRECTORY`) are, in order:
+  `<workspace>/third_party/py/torch_tpu` in google3, then `<workspace>` in OSS.
 
   Raises:
     FileNotFoundError: If `BUILD_WORKSPACE_DIRECTORY` isn't set, i.e. the
-      caller doesn't run with `blaze run`, or no candidate is the repository
-      root.
+      caller doesn't run with `blaze run` or `bazel run`, or no candidate is
+      the repository root.
   """
   workspace_dir = os.environ.get("BUILD_WORKSPACE_DIRECTORY")
   if not workspace_dir:
     raise FileNotFoundError(
-        "BUILD_WORKSPACE_DIRECTORY is not set. Run this with `blaze run`,"
-        " which sets it to the workspace to update."
+        "BUILD_WORKSPACE_DIRECTORY is not set. Run this with `blaze run` or"
+        " `bazel run`, which set it to the workspace to update."
     )
-  candidates = [pathlib.Path(workspace_dir, G3_REPO_PATH)]
+  candidates = [
+      # `blaze run` in google3.
+      pathlib.Path(workspace_dir, G3_REPO_PATH),
+      # `bazel run` in OSS.
+      pathlib.Path(workspace_dir),
+  ]
   return _first_containing_key_file(candidates, "the workspace")
+
+
+def is_ignored_dir(name: str) -> bool:
+  """Returns True if a directory should be skipped during file traversal.
+
+  In OSS Bazel builds, rules_python creates virtual environments inside the
+  test runfiles directory (e.g. tests/_<target>.venv/lib/.../site-packages/).
+  These directories pull in external third-party C/C++ files (such as
+  lxml/etree.h) that are not part of the TorchTPU repository and must be
+  skipped. Wheel tests unpack the built torch_tpu wheel into a
+  <target>_unpacked_wheel/ directory; the public headers it ships are copies
+  of source files that are linted at their source location.
+  Hidden directories (starting with '.') are also ignored.
+
+  Args:
+    name: The directory's name.
+  """
+  return (
+      name.endswith(".venv")
+      or name.endswith("_unpacked_wheel")
+      or name in _NON_REPO_DIR_NAMES
+      or name.startswith(".")
+  )

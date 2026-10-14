@@ -23,6 +23,10 @@ live under `torch.tpu`, that each public object has one public path, that no API
 name marks the API as experimental (stage annotations do that instead), and that
 the user-facing list of public APIs, `docs/markdown/public_apis.md`, is up to
 date.
+
+The public APIs depend on the versions of PyTorch and other dependencies, so
+`tt_apis.yaml` tracks them with the newest supported dependencies in OSS. The
+test only runs in OSS, and fails unless PyTorch is the newest supported release.
 """
 
 import difflib
@@ -30,6 +34,7 @@ import os
 from typing import Any, Dict, FrozenSet, List, Tuple
 
 from absl.testing import absltest
+import torch
 from tests import repo_paths
 from tests import seed_test_utils
 from tests.api import scan_tt_apis
@@ -43,6 +48,12 @@ _API_DESIGN_GUIDE_PATH = "docs/developers/api_design_guide.md"
 _PYTHON_STAGE_ANNOTATIONS_PATH = "_internal/utils/annotations.py"
 
 _CPP_STAGE_ANNOTATIONS_PATH = "csrc/common/symbol_stage.h"
+
+# The newest PyTorch release that OSS TorchTPU supports: the last entry of
+# `WHEEL_TORCH_VERSIONS` in `bazel/pytorch_versions.bzl`, which the "newest
+# deps" CI lanes install. Update it together with `tt_apis.yaml` when a newer
+# release is added there.
+_NEWEST_SUPPORTED_TORCH_VERSION = "2.14.0"
 
 # API names must not contain this word in any case; stage annotations mark
 # experimental APIs instead.
@@ -152,6 +163,15 @@ class TtApisTest(seed_test_utils.RepeatableTest):
   @classmethod
   def setUpClass(cls) -> None:
     super().setUpClass()
+    # Fail rather than skip, so that a lane with other dependencies gets fixed.
+    torch_release = torch.__version__.split("+")[0]
+    if torch_release != _NEWEST_SUPPORTED_TORCH_VERSION:
+      raise AssertionError(
+          "tt_apis.yaml tracks the APIs with PyTorch"
+          f" {_NEWEST_SUPPORTED_TORCH_VERSION}, but this is PyTorch"
+          f" {torch.__version__}. Run this test with the newest supported"
+          " dependencies (requirements/requirements_3_14_latest.txt)."
+      )
     cls.public_python_apis, _ = scan_tt_apis.discover_python_apis()
 
   def test_tt_apis_yaml_matches_discovered_apis(self):

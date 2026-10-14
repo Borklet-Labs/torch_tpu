@@ -813,6 +813,42 @@ class ScanTtApisTest(seed_test_utils.RepeatableTest):
         ],
     )
 
+  def test_extract_python_apis_lists_staged_class_from_bare_module(self):
+    """Verifies that a class in `__tt_api_stages__` is a TorchTPU object.
+
+    A pybind11 class can have a bare extension module name as its `__module__`
+    (e.g. `precision_impl` in OSS builds), which isn't a TorchTPU namespace.
+    Registering it in a TorchTPU object's `__tt_api_stages__` still makes it a
+    TorchTPU API, so it and its members are listed.
+    """
+
+    class FakePybindEnum:
+      __module__ = "fake_pybind_impl"
+      __qualname__ = "FakePybindEnum"
+
+    FakePybindEnum.LOW = FakePybindEnum()
+    FakePybindEnum.HIGH = FakePybindEnum()
+
+    class FakeDeviceModule:
+      __tt_api_stages__ = {
+          "FakePybindEnum": types.SimpleNamespace(stage=Stage.EXPERIMENTAL)
+      }
+
+    FakeDeviceModule.FakePybindEnum = FakePybindEnum
+
+    entries = scan_tt_apis._extract_python_apis(
+        [(FakeDeviceModule, "torch.tpu")]
+    )
+
+    self.assertEqual(
+        {e.name: e.stage for e in entries},
+        {
+            "torch.tpu.FakePybindEnum": Stage.EXPERIMENTAL,
+            "torch.tpu.FakePybindEnum.HIGH": None,
+            "torch.tpu.FakePybindEnum.LOW": None,
+        },
+    )
+
   def test_find_duplicate_public_paths_groups_paths_to_the_same_object(self):
     """Verifies that module-level paths to the same object are grouped.
 
