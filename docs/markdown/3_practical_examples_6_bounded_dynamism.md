@@ -615,21 +615,23 @@ Running the benchmark above with the full 52-layer `MuseGlimmer30B` model
 (`num_layers=52`, `batch_size=1`, `prefill_seq_len=128`, `num_decode_steps=10`)
 on a single TPU v7x chip produces the following latency comparison:
 
-Metric (ms)         | DynamicCache (no BD) | StaticCache | DynamicCache (BD)
-------------------- | -------------------- | ----------- | -----------------
-**Prefill time**    | 21620.00             | 21969.08    | 19632.58
-**Decode step 1**   | 21851.85             | 20881.95    | 20391.57
-**Decode step 2**   | 21598.38             | 24.43       | 21588.71
-**Decode step 3**   | 21786.57             | 23.93       | 5312.25
-**Decode step 4**   | 21837.68             | 23.52       | 31.67
-**Decode step 5**   | 21831.57             | 23.49       | 30.79
-**Decode step 6**   | 21914.96             | 23.51       | 30.13
-**Decode step 7**   | 21979.15             | 23.51       | 29.90
-**Decode step 8**   | 22044.13             | 23.44       | 29.89
-**Decode step 9**   | 22206.13             | 23.50       | 29.95
-**Decode step 10**  | 21985.66             | 23.48       | 29.81
-**Avg / token**     | **21903.61**         | **2109.48** | **4750.47**
-**Avg (no warmup)** | **21971.33**         | **23.49**   | **30.31**
+<!-- mdformat off(reason: standard GFM table rendering in Critique and Code Search) -->
+| Metric (ms) | DynamicCache (no BD) | StaticCache | DynamicCache (BD) |
+| --- | --- | --- | --- |
+| **Prefill time** | 21620.00 | 21969.08 | 19632.58 |
+| **Decode step 1** | 21851.85 | 20881.95 | 20391.57 |
+| **Decode step 2** | 21598.38 | 24.43 | 21588.71 |
+| **Decode step 3** | 21786.57 | 23.93 | 5312.25 |
+| **Decode step 4** | 21837.68 | 23.52 | 31.67 |
+| **Decode step 5** | 21831.57 | 23.49 | 30.79 |
+| **Decode step 6** | 21914.96 | 23.51 | 30.13 |
+| **Decode step 7** | 21979.15 | 23.51 | 29.90 |
+| **Decode step 8** | 22044.13 | 23.44 | 29.89 |
+| **Decode step 9** | 22206.13 | 23.50 | 29.95 |
+| **Decode step 10** | 21985.66 | 23.48 | 29.81 |
+| **Avg / token** | **21903.61** | **2109.48** | **4750.47** |
+| **Avg (no warmup)** | **21971.33** | **23.49** | **30.31** |
+<!-- mdformat on -->
 
 *   **`DynamicCache` with `dynamic=False`:** Every decode step changes `kv_len`
     and triggers a full XLA recompilation (~21.9 seconds per token).

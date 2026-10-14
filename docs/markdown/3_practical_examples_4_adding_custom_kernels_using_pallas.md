@@ -259,19 +259,13 @@ print("\n✅ Verification complete: Pallas integration functional")
 
 ### 🛠️ Summary
 
-| Concept                       | Key Takeaway                                 |
-| :---------------------------- | :------------------------------------------- |
-| **`torch.tpu.pallas.jax_op`** | Decorator to define a TPU kernel as a        |
-:                               : PyTorch custom operation by wrapping a JAX   :
-:                               : function                                     :
-| **`pl.pallas_call`**          | Used to wrap a Pallas kernel function into a |
-:                               : JAX function                                 :
-| **`_ref[...]` syntax**        | Used in these examples to read/write local   |
-:                               : memory references managed by Pallas          :
-| **Multiple outputs**          | Provide a list of `jax.ShapeDtypeStruct` to  |
-:                               : `out_shape` in `pl.pallas_call`.             :
-| **Autograd integration**      | Register a backward kernel on the forward    |
-:                               : `CustomOpDef` returned by `jax_op` using     :
-:                               : `register_autograd`                          :
-| **`torch.compile`**           | Use `backend="tpu"` for full graph fusion    |
-:                               : with custom kernels                          :
+<!-- mdformat off(reason: standard GFM table rendering in Critique and Code Search) -->
+| Concept | Key Takeaway |
+| :--- | :--- |
+| **`torch.tpu.pallas.jax_op`** | Decorator to define a TPU kernel as a PyTorch custom operation by wrapping a JAX function |
+| **`pl.pallas_call`** | Used to wrap a Pallas kernel function into a JAX function |
+| **`_ref[...]` syntax** | Used in these examples to read/write local memory references managed by Pallas |
+| **Multiple outputs** | Provide a list of `jax.ShapeDtypeStruct` to `out_shape` in `pl.pallas_call`. |
+| **Autograd integration** | Register a backward kernel on the forward `CustomOpDef` returned by `jax_op` using `register_autograd` |
+| **`torch.compile`** | Use `backend="tpu"` for full graph fusion with custom kernels |
+<!-- mdformat on -->

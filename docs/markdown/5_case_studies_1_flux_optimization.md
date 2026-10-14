@@ -31,20 +31,18 @@ repository.
 Mean training step time (forward + loss + backward + optimizer step) for a
 single `DoubleStreamBlock`:
 
-| Configuration                       | Mean Step Time | Speedup vs. Baseline |
-| :---------------------------------- | -------------: | -------------------: |
-| Baseline reference (eager)          | 176.05 ms      | 1.00x                |
-| Pallas SplashAttention only (eager) | 147.50 ms      | 1.19x                |
-| Zero-copy views only (eager)        | 175.39 ms      | 1.00x                |
-| `torch.compile` only                | 157.33 ms      | 1.12x                |
-| Zero-copy views + fused RoPE +      | 153.60 ms      | 1.15x                |
-: Pallas SplashAttention (eager)      :                :                      :
-| Zero-copy views + `torch.compile`   | 156.56 ms      | 1.12x                |
-| Zero-copy views + fused RoPE +      | 151.27 ms      | 1.16x                |
-: `torch.compile`                     :                :                      :
-| **Zero-copy views + fused RoPE +    | **119.35 ms**  | **1.48x**            |
-: Pallas SplashAttention +            :                :                      :
-: `torch.compile`**                   :                :                      :
+<!-- mdformat off(reason: standard GFM table rendering in Critique and Code Search) -->
+| Configuration | Mean Step Time | Speedup vs. Baseline |
+| :--- | ---: | ---: |
+| Baseline reference (eager) | 176.05 ms | 1.00x |
+| Pallas SplashAttention only (eager) | 147.50 ms | 1.19x |
+| Zero-copy views only (eager) | 175.39 ms | 1.00x |
+| `torch.compile` only | 157.33 ms | 1.12x |
+| Zero-copy views + fused RoPE + Pallas SplashAttention (eager) | 153.60 ms | 1.15x |
+| Zero-copy views + `torch.compile` | 156.56 ms | 1.12x |
+| Zero-copy views + fused RoPE + `torch.compile` | 151.27 ms | 1.16x |
+| **Zero-copy views + fused RoPE + Pallas SplashAttention + `torch.compile`** | **119.35 ms** | **1.48x** |
+<!-- mdformat on -->
 
 **Measurement setup:**
 

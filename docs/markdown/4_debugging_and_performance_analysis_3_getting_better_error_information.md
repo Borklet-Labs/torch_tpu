@@ -48,17 +48,13 @@ except RuntimeError as e:
 
 The error above has **three sections**:
 
-| Section                | What it contains        | What to look for          |
-| ---------------------- | ----------------------- | ------------------------- |
-| **Python Traceback**   | Standard `.py` file +   | *Your* code that          |
-:                        : line number             : triggered the crash       :
-| **C++ Error Trace**    | Innermost C++ safety    | Which validation failed   |
-:                        : check                   : (e.g.                     :
-:                        :                         : `ValidateTensorByteSize`) :
-| **Captured Traceback** | Full dispatcher journey | Path from                 |
-:                        :                         : `THPVariable_ones` →      :
-:                        :                         : `at\:\:native\:\:ones` →  :
-:                        :                         : `AtenEmptyMemoryFormat`   :
+<!-- mdformat off(reason: standard GFM table rendering in Critique and Code Search) -->
+| Section | What it contains | What to look for |
+|---------|-----------------|-----------------|
+| **Python Traceback** | Standard `.py` file + line number | *Your* code that triggered the crash |
+| **C++ Error Trace** | Innermost C++ safety check | Which validation failed (e.g. `ValidateTensorByteSize`) |
+| **Captured Traceback** | Full dispatcher journey | Path from `THPVariable_ones` → `at::native::ones` → `AtenEmptyMemoryFormat` |
+<!-- mdformat on -->
 
 > **Tip:** The C++ error trace's topmost entry is the *deepest* point — that's
 > the specific check that failed.
@@ -269,25 +265,16 @@ print("⚠️  Much slower than deferred mode. Use only for debugging.")
 
 ## **5. Diagnostic Quick Reference**
 
-| Goal             | Tool / Flag                           | Output            |
-| :--------------- | :------------------------------------ | :---------------- |
-| Rich C++ traces  | `TORCH_SHOW_CPP_STACKTRACES=1`        | Full C++          |
-:                  :                                       : backtrace in      :
-:                  :                                       : `RuntimeError`    :
-| Find graph       | `torch._dynamo.explain(model)(input)` | Human-readable    |
-: breaks           :                                       : explanation       :
-| Graph break      | `TORCH_LOGS="+dynamo"`                | Detailed trace    |
-: debugging        :                                       : (run from         :
-:                  :                                       : terminal)         :
-| OOM / crash line | `TORCH_TPU_LAUNCH_BLOCKING=1`         | Synchronous       |
-: attribution      :                                       : failure on exact  :
-:                  :                                       : culprit line      :
-| Fallback         | `torch.profiler`                      | High              |
-: detection        :                                       : `aten\:\:copy_`   :
-:                  :                                       : counts = CPU      :
-:                  :                                       : fallbacks         :
-| HLO inspection   | `XLA_FLAGS="--xla_dump_hlo_as_text    | Post-optimization |
-:                  : ..."`                                 : graph as text     :
+<!-- mdformat off(reason: standard GFM table rendering in Critique and Code Search) -->
+| Goal | Tool / Flag | Output |
+| :--- | :--- | :--- |
+| Rich C++ traces | `TORCH_SHOW_CPP_STACKTRACES=1` | Full C++ backtrace in `RuntimeError` |
+| Find graph breaks | `torch._dynamo.explain(model)(input)` | Human-readable explanation |
+| Graph break debugging | `TORCH_LOGS="+dynamo"` | Detailed trace (run from terminal) |
+| OOM / crash line attribution | `TORCH_TPU_LAUNCH_BLOCKING=1` | Synchronous failure on exact culprit line |
+| Fallback detection | `torch.profiler` | High `aten::copy_` counts = CPU fallbacks |
+| HLO inspection | `XLA_FLAGS="--xla_dump_hlo_as_text ..."` | Post-optimization graph as text |
+<!-- mdformat on -->
 
 --------------------------------------------------------------------------------
 

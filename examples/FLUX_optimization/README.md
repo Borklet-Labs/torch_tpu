@@ -36,33 +36,18 @@ repository.
 Mean training step time (forward + Flow Matching MSE loss + backward + AdamW
 step) for a single `DoubleStreamBlock`:
 
-| Configuration             | `use_zero_copy_view` | `use_fused_rope` | `use_splash_attention` | `compile` | Mean     | Speedup   | Optimization Details           |
-:                           :                      :                  :                        :           : Step     : vs        :                                :
-:                           :                      :                  :                        :           : Time     : Baseline  :                                :
-| :------------------------ | :------------------: | :--------------: | :--------------------: | :-------: | -------: | --------: | :----------------------------- |
-| **1. Baseline Reference   | ❌ False              | ❌ False          | ❌ False                | ❌ False   | **176.05 | 1.00x     | Reference baseline             |
-: (Eager)**                 :                      :                  :                        :           : ms**     : (ref)     :                                :
-| [**2. Standalone          | ❌ False              | ❌ False          | ✅ True                 | ❌ False   | **147.50 | **1.19x** | [Milestone 4:                  |
-: SplashAttention           :                      :                  :                        :           : ms**     :           : SplashAttention](#milestone-4) :
-: (Eager)**](#milestone-4)  :                      :                  :                        :           :          :           :                                :
-| [**3. Zero-Copy Views     | ✅ True               | ❌ False          | ❌ False                | ❌ False   | **175.39 | **1.00x** | [Milestone 1: Zero-Copy        |
-: Only                      :                      :                  :                        :           : ms**     :           : Views](#milestone-1)           :
-: (Eager)**](#milestone-1)  :                      :                  :                        :           :          :           :                                :
-| [**4. Compile Only        | ❌ False              | ❌ False          | ❌ False                | ✅ True    | **157.33 | **1.12x** | [Milestone 3: XLA              |
-: (Unoptimized              :                      :                  :                        :           : ms**     :           : Compilation](#milestone-3)     :
-: Graph)**](#milestone-3)   :                      :                  :                        :           :          :           :                                :
-| [**5. Zero-Copy + Fused   | ✅ True               | ✅ True           | ✅ True                 | ❌ False   | **153.60 | **1.15x** | [Milestones 1](#milestone-1),  |
-: RoPE + SplashAttention    :                      :                  :                        :           : ms**     :           : [2](#milestone-2) &            :
-: (Eager)**](#milestone-4)  :                      :                  :                        :           :          :           : [4](#milestone-4)              :
-| [**6. Zero-Copy Views +   | ✅ True               | ❌ False          | ❌ False                | ✅ True    | **156.56 | **1.12x** | [Milestone 1](#milestone-1) +  |
-: Compile**](#milestone-1)  :                      :                  :                        :           : ms**     :           : [Milestone 3](#milestone-3)    :
-| [**7. Fully Optimized     | ✅ True               | ✅ True           | ✅ True                 | ✅ True    | **119.35 | **1.48x** | [Milestones 1](#milestone-1),  |
-: (Zero-Copy + Fused RoPE + :                      :                  :                        :           : ms**     :           : [2](#milestone-2),             :
-: SplashAttention +         :                      :                  :                        :           :          :           : [3](#milestone-3) &            :
-: Compile)**](#milestone-4) :                      :                  :                        :           :          :           : [4](#milestone-4)              :
-| [**8. Zero-Copy + Fused   | ✅ True               | ✅ True           | ❌ False                | ✅ True    | **151.27 | **1.16x** | [Milestones 1](#milestone-1),  |
-: RoPE + Compile (Standard  :                      :                  :                        :           : ms**     :           : [2](#milestone-2) &            :
-: SDPA)**](#milestone-2)    :                      :                  :                        :           :          :           : [3](#milestone-3)              :
+<!-- mdformat off(reason: standard GFM table rendering in Critique and Code Search) -->
+| Configuration | `use_zero_copy_view` | `use_fused_rope` | `use_splash_attention` | `compile` | Mean Step Time | Speedup vs Baseline | Optimization Details |
+| :--- | :---: | :---: | :---: | :---: | ---: | ---: | :--- |
+| **1. Baseline Reference (Eager)** | ❌ False | ❌ False | ❌ False | ❌ False | **176.05 ms** | 1.00x (ref) | Reference baseline |
+| [**2. Standalone SplashAttention (Eager)**](#milestone-4) | ❌ False | ❌ False | ✅ True | ❌ False | **147.50 ms** | **1.19x** | [Milestone 4: SplashAttention](#milestone-4) |
+| [**3. Zero-Copy Views Only (Eager)**](#milestone-1) | ✅ True | ❌ False | ❌ False | ❌ False | **175.39 ms** | **1.00x** | [Milestone 1: Zero-Copy Views](#milestone-1) |
+| [**4. Compile Only (Unoptimized Graph)**](#milestone-3) | ❌ False | ❌ False | ❌ False | ✅ True | **157.33 ms** | **1.12x** | [Milestone 3: XLA Compilation](#milestone-3) |
+| [**5. Zero-Copy + Fused RoPE + SplashAttention (Eager)**](#milestone-4) | ✅ True | ✅ True | ✅ True | ❌ False | **153.60 ms** | **1.15x** | [Milestones 1](#milestone-1), [2](#milestone-2) & [4](#milestone-4) |
+| [**6. Zero-Copy Views + Compile**](#milestone-1) | ✅ True | ❌ False | ❌ False | ✅ True | **156.56 ms** | **1.12x** | [Milestone 1](#milestone-1) + [Milestone 3](#milestone-3) |
+| [**7. Fully Optimized (Zero-Copy + Fused RoPE + SplashAttention + Compile)**](#milestone-4) | ✅ True | ✅ True | ✅ True | ✅ True | **119.35 ms** | **1.48x** | [Milestones 1](#milestone-1), [2](#milestone-2), [3](#milestone-3) & [4](#milestone-4) |
+| [**8. Zero-Copy + Fused RoPE + Compile (Standard SDPA)**](#milestone-2) | ✅ True | ✅ True | ❌ False | ✅ True | **151.27 ms** | **1.16x** | [Milestones 1](#milestone-1), [2](#milestone-2) & [3](#milestone-3) |
+<!-- mdformat on -->
 
 **Measurement setup:**
 

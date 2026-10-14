@@ -92,20 +92,13 @@ docker** section in
 The `examples/` directory provides three reference Kubernetes manifests covering
 the most common TPU v7x slice shapes:
 
-| Workload Type     | Manifest Path                                                   | TPU Topology         | `TORCH_TPU_TOPOLOGY` | Description                                |
-:                   :                                                                 : (`gke-tpu-topology`) :                      :                                            :
-| :---------------- | :-------------------------------------------------------------- | :------------------- | :------------------- | :----------------------------------------- |
-| **Single-Device** | `examples/simple_pytorch/torchtpu_singledevice_slice_job.yaml`  | `2x2x1`              | `"1,1,1,1"`          | Runs a single Python process on 1 TPU core |
-: (1 chip / 1 core) :                                                                 :                      :                      : (see [Get started with TorchTPU on         :
-:                   :                                                                 :                      :                      : GKE](./1_basics_3_get_started_on_gke.md)). :
-| **Single-Host     | `examples/tensor_parallel/torchtpu_singlehost_slice_job.yaml`   | `2x2x1`              | `"2,2,1,2"`          | Runs 8 distributed ranks (`WORLD_SIZE=8`)  |
-: Distributed** (4  :                                                                 :                      :                      : on a single 4-chip host via `torchrun`     :
-: chips / 8 cores)  :                                                                 :                      :                      : (see [Running distributed workloads on     :
-:                   :                                                                 :                      :                      : GKE](./1_basics_5_distributed_on_gke.md)). :
-| **Multi-Host      | `examples/tensor_parallel/torchtpu_multihost_slice_jobset.yaml` | `4x4x4`              | `"4,4,4,2"`          | Kubernetes `JobSet` coordinating 16 worker |
-: Distributed** (64 :                                                                 :                      :                      : pods across a 64-chip slice (see [Running  :
-: chips / 128       :                                                                 :                      :                      : distributed workloads on                   :
-: cores)            :                                                                 :                      :                      : GKE](./1_basics_5_distributed_on_gke.md)). :
+<!-- mdformat off(reason: standard GFM table rendering in Critique and Code Search) -->
+| Workload Type | Manifest Path | TPU Topology (`gke-tpu-topology`) | `TORCH_TPU_TOPOLOGY` | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| **Single-Device** (1 chip / 1 core) | `examples/simple_pytorch/torchtpu_singledevice_slice_job.yaml` | `2x2x1` | `"1,1,1,1"` | Runs a single Python process on 1 TPU core (see [Get started with TorchTPU on GKE](./1_basics_3_get_started_on_gke.md)). |
+| **Single-Host Distributed** (4 chips / 8 cores) | `examples/tensor_parallel/torchtpu_singlehost_slice_job.yaml` | `2x2x1` | `"2,2,1,2"` | Runs 8 distributed ranks (`WORLD_SIZE=8`) on a single 4-chip host via `torchrun` (see [Running distributed workloads on GKE](./1_basics_5_distributed_on_gke.md)). |
+| **Multi-Host Distributed** (64 chips / 128 cores) | `examples/tensor_parallel/torchtpu_multihost_slice_jobset.yaml` | `4x4x4` | `"4,4,4,2"` | Kubernetes `JobSet` coordinating 16 worker pods across a 64-chip slice (see [Running distributed workloads on GKE](./1_basics_5_distributed_on_gke.md)). |
+<!-- mdformat on -->
 
 All three manifests come pre-configured with `kueue.x-k8s.io/queue-name:
 multislice-queue`, `cloud.google.com/gke-tpu-accelerator: tpu7x`, and `/dev/shm`

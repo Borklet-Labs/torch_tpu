@@ -25,25 +25,17 @@ TorchTPU supports standard PyTorch precision APIs
 alongside TPU-specific controls (`torch.tpu.Precision` and
 `torch.tpu.precision`):
 
+<!-- mdformat off(reason: standard GFM table rendering in Critique and Code Search) -->
 | Dimension          | PyTorch on CUDA                      | PyTorch on TPU (TorchTPU)              |
 | :----------------- | :----------------------------------- | :------------------------------------- |
-| **Default          | `"highest"` (pure `float32`)         | `"medium"` (`Precision.DEFAULT`)       |
-: precision mode**   :                                      :                                        :
-| **Fast math        | Tensor Cores (`TF32`)                | Systolic MXUs (`bfloat16`)             |
-: accelerator        :                                      :                                        :
-: primitive**        :                                      :                                        :
-| **Fast math bits** | 1 sign + 8 exponent + 10 mantissa    | 1 sign + 8 exponent + 7 mantissa bits  |
-:                    : bits (19-bit `TF32`)                 : (16-bit `bfloat16`)                    :
-| **Accumulation     | `float32` (`"highest"`, `"high"`),   | `float32` across all modes             |
-: precision**        : `TF32` (`"medium"`)                  :                                        :
-| **Higher precision | Dedicated hardware `float32`/`TF32`  | Multi-pass decomposition (3x or 6x MXU |
-: mechanism**        : units                                : passes)                                :
-| **Performance      | Baseline speed or modest slowdown    | ~3x MXU compute cost for `"high"`; ~6x |
-: impact of          : (~1–2x)                              : for `"highest"`                        :
-: `high`/`highest`** :                                      :                                        :
-| **Scoping API**    | Global                               | Global <br>                            |
-:                    : `torch.set_float32_matmul_precision` : `torch.set_float32_matmul_precision` + :
-:                    :                                      : scoped `torch.tpu.precision`           :
+| **Default precision mode** | `"highest"` (pure `float32`) | `"medium"` (`Precision.DEFAULT`)       |
+| **Fast math accelerator primitive** | Tensor Cores (`TF32`) | Systolic MXUs (`bfloat16`)             |
+| **Fast math bits** | 1 sign + 8 exponent + 10 mantissa bits (19-bit `TF32`) | 1 sign + 8 exponent + 7 mantissa bits (16-bit `bfloat16`) |
+| **Accumulation precision** | `float32` (`"highest"`, `"high"`), `TF32` (`"medium"`) | `float32` across all modes |
+| **Higher precision mechanism** | Dedicated hardware `float32`/`TF32` units | Multi-pass decomposition (3x or 6x MXU passes) |
+| **Performance impact of `high`/`highest`** | Baseline speed or modest slowdown (~1–2x) | ~3x MXU compute cost for `"high"`; ~6x for `"highest"` |
+| **Scoping API** | Global `torch.set_float32_matmul_precision` | Global <br> `torch.set_float32_matmul_precision` + scoped `torch.tpu.precision` |
+<!-- mdformat on -->
 
 ## Specify precision modes
 
@@ -301,14 +293,13 @@ product:
 Multiplying two 3-term sums yields nine `bfloat16` products, of which the three
 lowest-order terms always underflow in `float32`:
 
+<!-- mdformat off(reason: standard GFM table rendering in Critique and Code Search) -->
 |          | High        | Med                      | Low                      |
 | :------- | :---------- | :----------------------- | :----------------------- |
-| **High** | High x High | High x Med *(3-pass)*    | High x Low *(6-pass)*    |
-:          : *(1-pass)*  :                          :                          :
-| **Med**  | Med x High  | Med x Med *(6-pass)*     | Med x Low *(underflows)* |
-:          : *(3-pass)*  :                          :                          :
-| **Low**  | Low x High  | Low x Med *(underflows)* | Low x Low *(underflows)* |
-:          : *(6-pass)*  :                          :                          :
+| **High** | High x High *(1-pass)* | High x Med *(3-pass)*    | High x Low *(6-pass)*    |
+| **Med**  | Med x High *(3-pass)* | Med x Med *(6-pass)*     | Med x Low *(underflows)* |
+| **Low**  | Low x High *(6-pass)* | Low x Med *(underflows)* | Low x Low *(underflows)* |
+<!-- mdformat on -->
 
 ### Evaluate 3-pass and 6-pass performance
 

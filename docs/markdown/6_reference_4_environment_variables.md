@@ -51,14 +51,12 @@ TorchTPU environment variables are **locked** the moment the backend initializes
 These variables control debugging context and internal safety checks for
 TorchTPU.
 
-| Variable                        | Purpose                                  |
-| :------------------------------ | :--------------------------------------- |
-| `TORCH_SHOW_CPP_STACKTRACES`    | Enriches Python `RuntimeError` with      |
-:                                 : massive C++ backtraces from ATen and the :
-:                                 : TorchTPU backend.                        :
-| `TORCH_TPU_ENABLE_DEBUG_CHECKS` | Enables expensive internal debug checks  |
-:                                 : and invariant validation (e.g., catching :
-:                                 : out-of-bounds indices).                  :
+<!-- mdformat off(reason: standard GFM table rendering in Critique and Code Search) -->
+| Variable | Purpose |
+| :--- | :--- |
+| `TORCH_SHOW_CPP_STACKTRACES` | Enriches Python `RuntimeError` with massive C++ backtraces from ATen and the TorchTPU backend. |
+| `TORCH_TPU_ENABLE_DEBUG_CHECKS` | Enables expensive internal debug checks and invariant validation (e.g., catching out-of-bounds indices). |
+<!-- mdformat on -->
 
 ### **Snippet: C++ Stacktraces**
 
@@ -126,23 +124,22 @@ These variables specify the TPU hardware topology and process networking. In
 most cases, these are set automatically by the TorchTPU launcher or Google Cloud
 environment.
 
-| Variable                           | Purpose                                |
-| :--------------------------------- | :------------------------------------- |
-| `TORCH_TPU_SLICEBUILDER_ADDRESSES` | Addresses for the TPU slice builder    |
-:                                    : service.                               :
-| `TORCH_TPU_TOPOLOGY`               | Describes the physical topology of the |
-:                                    : TPU slice.                             :
+<!-- mdformat off(reason: standard GFM table rendering in Critique and Code Search) -->
+| Variable | Purpose |
+| :--- | :--- |
+| `TORCH_TPU_SLICEBUILDER_ADDRESSES` | Addresses for the TPU slice builder service. |
+| `TORCH_TPU_TOPOLOGY` | Describes the physical topology of the TPU slice. |
+<!-- mdformat on -->
 
 ## **Execution & Compilation**
 
 These variables control how PyTorch graphs are lowered and optimized by XLA.
 
-| Variable    | Values                   | Purpose                            |
-| :---------- | :----------------------- | :--------------------------------- |
-| `XLA_FLAGS` | `--xla_dump_hlo_as_text` | Direct XLA compiler flags. Dumping |
-:             : etc.                     : HLO prints hundreds of lines of    :
-:             :                          : intermediate representation for    :
-:             :                          : deep performance debugging.        :
+<!-- mdformat off(reason: standard GFM table rendering in Critique and Code Search) -->
+| Variable | Values | Purpose |
+| :--- | :--- | :--- |
+| `XLA_FLAGS` | `--xla_dump_hlo_as_text` etc. | Direct XLA compiler flags. Dumping HLO prints hundreds of lines of intermediate representation for deep performance debugging. |
+<!-- mdformat on -->
 
 ### **Snippet: Dumping XLA IR (HLO)**
 
@@ -223,12 +220,12 @@ and ranks. Tier 2 is stored locally within the host and Tier 3 is a compilation
 cache shared between hosts. While Tier 3 usually uses shared storage (like a
 `gs://` bucket), we use local folders here to demonstrate how they work.
 
-| Variable                                 | Purpose                         |
-| :--------------------------------------- | :------------------------------ |
-| `TORCH_TPU_TIER2_COMPILATION_CACHE`      | Path to the tier-2 cache (local |
-:                                          : within the host).               :
-| `TORCH_TPU_TIER3_COMPILATION_CACHE_ROOT` | Path to the tier-3              |
-:                                          : (shared/persistent) cache.      :
+<!-- mdformat off(reason: standard GFM table rendering in Critique and Code Search) -->
+| Variable | Purpose |
+| :--- | :--- |
+| `TORCH_TPU_TIER2_COMPILATION_CACHE` | Path to the tier-2 cache (local within the host). |
+| `TORCH_TPU_TIER3_COMPILATION_CACHE_ROOT` | Path to the tier-3 (shared/persistent) cache. |
+<!-- mdformat on -->
 
 ### **Snippet: Multi-tiered Caching (Tier-2 and Tier-3)**
 

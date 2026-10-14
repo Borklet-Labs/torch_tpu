@@ -31,41 +31,19 @@ API, use it instead of a backend-specific API so your code stays portable across
 accelerators. Use `torch.tpu` for TPU-specific hardware properties that have no
 generic equivalent.
 
-| CUDA API                                        | TPU / Accelerator API                          | Description                |
-| :---------------------------------------------- | :--------------------------------------------- | :------------------------- |
-| `torch.device("cuda")`                          | `torch.accelerator.current_accelerator()`      | Returns                    |
-:                                                 :                                                : `torch.device("tpu")` when :
-:                                                 :                                                : TPU is the active          :
-:                                                 :                                                : accelerator.               :
-| `torch.cuda.is_available()`                     | `torch.accelerator.is_available()`             | Checks if the TPU backend  |
-:                                                 :                                                : is available.              :
-| `torch.cuda.is_initialized()`                   | `torch.tpu.is_initialized()`                   | Checks if TorchTPU's       |
-:                                                 :                                                : runtime state has been     :
-:                                                 :                                                : initialized.               :
-| `torch.cuda.device_count()`                     | `torch.accelerator.device_count()`             | Number of devices visible  |
-:                                                 :                                                : to the current process.    :
-| `torch.cuda.current_device()`                   | `torch.accelerator.current_device_index()`     | Returns the active TPU     |
-:                                                 :                                                : device index.              :
-| `torch.cuda.set_device(rank)`                   | `torch.accelerator.set_device_index(rank)`     | Sets the active TPU device |
-:                                                 :                                                : index for the current      :
-:                                                 :                                                : process.                   :
-| `torch.cuda.device(rank)`                       | `torch.accelerator.device_index(rank)`         | Context manager that       |
-:                                                 :                                                : temporarily sets the       :
-:                                                 :                                                : active device index.       :
-| `torch.cuda.get_device_name(device=None)`       | `torch.tpu.get_device_name(device=None)`       | Returns the human-readable |
-:                                                 :                                                : model name of the attached :
-:                                                 :                                                : TPU (e.g., `"TPU v6e"`).   :
-| `torch.cuda.get_device_properties(device=None)` | `torch.tpu.get_device_properties(device=None)` | Returns static TPU device  |
-:                                                 :                                                : properties (including      :
-:                                                 :                                                : `name`,                    :
-:                                                 :                                                : `devices_per_chip`,        :
-:                                                 :                                                : `hbm_bytes_per_chip`,      :
-:                                                 :                                                : `hbm_bytes_per_device`,    :
-:                                                 :                                                : `bf16_flops_per_chip`,     :
-:                                                 :                                                : `bf16_flops_per_device`,   :
-:                                                 :                                                : `sparse_cores_per_device`, :
-:                                                 :                                                : and                        :
-:                                                 :                                                : `sparse_core_simd_width`). :
+<!-- mdformat off(reason: standard GFM table rendering in Critique and Code Search) -->
+| CUDA API | TPU / Accelerator API | Description |
+| :--- | :--- | :--- |
+| `torch.device("cuda")` | `torch.accelerator.current_accelerator()` | Returns `torch.device("tpu")` when TPU is the active accelerator. |
+| `torch.cuda.is_available()` | `torch.accelerator.is_available()` | Checks if the TPU backend is available. |
+| `torch.cuda.is_initialized()` | `torch.tpu.is_initialized()` | Checks if TorchTPU's runtime state has been initialized. |
+| `torch.cuda.device_count()` | `torch.accelerator.device_count()` | Number of devices visible to the current process. |
+| `torch.cuda.current_device()` | `torch.accelerator.current_device_index()` | Returns the active TPU device index. |
+| `torch.cuda.set_device(rank)` | `torch.accelerator.set_device_index(rank)` | Sets the active TPU device index for the current process. |
+| `torch.cuda.device(rank)` | `torch.accelerator.device_index(rank)` | Context manager that temporarily sets the active device index. |
+| `torch.cuda.get_device_name(device=None)` | `torch.tpu.get_device_name(device=None)` | Returns the human-readable model name of the attached TPU (e.g., `"TPU v6e"`). |
+| `torch.cuda.get_device_properties(device=None)` | `torch.tpu.get_device_properties(device=None)` | Returns static TPU device properties (including `name`, `devices_per_chip`, `hbm_bytes_per_chip`, `hbm_bytes_per_device`, `bf16_flops_per_chip`, `bf16_flops_per_device`, `sparse_cores_per_device`, and `sparse_core_simd_width`). |
+<!-- mdformat on -->
 
 The `torch.accelerator` APIs in this table require PyTorch 2.11 or later. In the
 rare case that you use an older PyTorch version, use the corresponding
@@ -91,36 +69,16 @@ print(f"torch.tpu.get_device_name(): {torch.tpu.get_device_name()}")
 
 ## **Random Number Generation (RNG)**
 
-| CUDA API                             | TPU / Accelerator API                      | Description       |
-| :----------------------------------- | :----------------------------------------- | :---------------- |
-| `torch.cuda.manual_seed(seed)`       | `torch.tpu.manual_seed(seed)`              | Seeds the active  |
-:                                      :                                            : TPU device's      :
-:                                      :                                            : random number     :
-:                                      :                                            : generator.        :
-| `torch.cuda.manual_seed_all(seed)`   | `torch.tpu.manual_seed_all(seed)`          | Seeds the RNG     |
-:                                      :                                            : across all local  :
-:                                      :                                            : TPU devices.      :
-| `torch.cuda.initial_seed()`          | `torch.accelerator.random.initial_seed()`  | Returns the       |
-:                                      :                                            : initial random    :
-:                                      :                                            : seed of the       :
-:                                      :                                            : current TPU       :
-:                                      :                                            : device.           :
-| `torch.cuda.get_rng_state()`         | `torch.accelerator.random.get_rng_state()` | Returns the RNG   |
-:                                      :                                            : state tensor for  :
-:                                      :                                            : the current       :
-:                                      :                                            : device.           :
-| `torch.cuda.set_rng_state(new_state, | `torch.tpu.set_rng_state(new_state,        | Sets the RNG      |
-: device=...)`                         : device=...)`                               : state tensor for  :
-:                                      :                                            : the current       :
-:                                      :                                            : process's active  :
-:                                      :                                            : TPU device.       :
-| `torch.cuda.default_generators`      | `torch.tpu.default_generators`             | Lazily            |
-:                                      :                                            : initialized tuple :
-:                                      :                                            : of default        :
-:                                      :                                            : `torch.Generator` :
-:                                      :                                            : instances indexed :
-:                                      :                                            : by local device   :
-:                                      :                                            : ordinal.          :
+<!-- mdformat off(reason: standard GFM table rendering in Critique and Code Search) -->
+| CUDA API | TPU / Accelerator API | Description |
+| :--- | :--- | :--- |
+| `torch.cuda.manual_seed(seed)` | `torch.tpu.manual_seed(seed)` | Seeds the active TPU device's random number generator. |
+| `torch.cuda.manual_seed_all(seed)` | `torch.tpu.manual_seed_all(seed)` | Seeds the RNG across all local TPU devices. |
+| `torch.cuda.initial_seed()` | `torch.accelerator.random.initial_seed()` | Returns the initial random seed of the current TPU device. |
+| `torch.cuda.get_rng_state()` | `torch.accelerator.random.get_rng_state()` | Returns the RNG state tensor for the current device. |
+| `torch.cuda.set_rng_state(new_state, device=...)` | `torch.tpu.set_rng_state(new_state, device=...)` | Sets the RNG state tensor for the current process's active TPU device. |
+| `torch.cuda.default_generators` | `torch.tpu.default_generators` | Lazily initialized tuple of default `torch.Generator` instances indexed by local device ordinal. |
+<!-- mdformat on -->
 
 The `torch.accelerator.random` APIs in this table require PyTorch 2.13 or later.
 In the rare case that you use an older PyTorch version, use
@@ -140,31 +98,12 @@ TorchTPU integrates with PyTorch's standard
 [`torch.amp.autocast`](https://docs.pytorch.org/docs/stable/amp.html) framework
 using the `"tpu"` device type string.
 
-| CUDA API                               | TPU API                               | Description  |
-| :------------------------------------- | :------------------------------------ | :----------- |
-| `torch.amp.autocast("cuda", ...)`      | `torch.amp.autocast("tpu", ...)`      | Context      |
-:                                        :                                       : manager /    :
-:                                        :                                       : decorator    :
-:                                        :                                       : that enables :
-:                                        :                                       : automatic    :
-:                                        :                                       : mixed        :
-:                                        :                                       : precision    :
-:                                        :                                       : (`bfloat16`  :
-:                                        :                                       : by default   :
-:                                        :                                       : on TPU).     :
-| `torch.cuda.get_amp_supported_dtype()` | `torch.tpu.get_amp_supported_dtype()` | Lists        |
-:                                        :                                       : supported    :
-:                                        :                                       : dtypes on    :
-:                                        :                                       : TPU          :
-:                                        :                                       : (`bfloat16`, :
-:                                        :                                       : `float16`,   :
-:                                        :                                       : `float32`,   :
-:                                        :                                       : `float64`,   :
-:                                        :                                       : `float8_*`,  :
-:                                        :                                       : integer,     :
-:                                        :                                       : boolean, and :
-:                                        :                                       : complex      :
-:                                        :                                       : types).      :
+<!-- mdformat off(reason: standard GFM table rendering in Critique and Code Search) -->
+| CUDA API | TPU API | Description |
+| :--- | :--- | :--- |
+| `torch.amp.autocast("cuda", ...)` | `torch.amp.autocast("tpu", ...)` | Context manager / decorator that enables automatic mixed precision (`bfloat16` by default on TPU). |
+| `torch.cuda.get_amp_supported_dtype()` | `torch.tpu.get_amp_supported_dtype()` | Lists supported dtypes on TPU (`bfloat16`, `float16`, `float32`, `float64`, `float8_*`, integer, boolean, and complex types). |
+<!-- mdformat on -->
 
 ```python
 supported_dtypes = torch.tpu.get_amp_supported_dtype()
@@ -178,33 +117,17 @@ For stream management and device synchronization, use standard
 APIs instead of backend-specific APIs. Use `torch.tpu` only when constructing
 TPU `Stream` or `Event` objects directly or configuring TPU core pinning.
 
-| CUDA API                                 | TPU / Accelerator API                   | Description                |
-| :--------------------------------------- | :-------------------------------------- | :------------------------- |
-| `torch.cuda.current_stream()`            | `torch.accelerator.current_stream()`    | Returns the active stream  |
-:                                          :                                         : for a device.              :
-| `torch.cuda.set_stream(stream)`          | `torch.accelerator.set_stream(stream)`  | Sets the active stream.    |
-| `torch.cuda.default_stream(device=None)` | `torch.tpu.default_stream(device=None)` | Returns the default        |
-:                                          :                                         : `TpuStream` for the        :
-:                                          :                                         : device.                    :
-| `torch.cuda.stream(stream)`              | `torch.tpu.stream(stream)`              | Context manager that       |
-:                                          :                                         : selects a given            :
-:                                          :                                         : `TpuStream`.               :
-| `torch.cuda.synchronize()`               | `torch.accelerator.synchronize()`       | Waits for all pending work |
-:                                          :                                         : on the TPU device to       :
-:                                          :                                         : complete.                  :
-| `torch.cuda.Stream`                      | `torch.tpu.Stream(device=None,          | Subclasses `torch.Stream`. |
-:                                          : priority=0, *, pinned=None)`            : Supports `synchronize()`,  :
-:                                          :                                         : `record_event()`,          :
-:                                          :                                         : `wait_event()`,            :
-:                                          :                                         : `wait_stream()`, and core  :
-:                                          :                                         : pinning (`pinned="dense"`  :
-:                                          :                                         : or `"sparse"`, queried via :
-:                                          :                                         : `is_dense` / `is_sparse`). :
-| `torch.cuda.Event`                       | `torch.tpu.Event(enable_timing=False)`  | Subclasses `torch.Event`.  |
-:                                          :                                         : Supports `record()`,       :
-:                                          :                                         : `synchronize()`,           :
-:                                          :                                         : `query()`, and             :
-:                                          :                                         : `elapsed_time(end_event)`. :
+<!-- mdformat off(reason: standard GFM table rendering in Critique and Code Search) -->
+| CUDA API | TPU / Accelerator API | Description |
+| :--- | :--- | :--- |
+| `torch.cuda.current_stream()` | `torch.accelerator.current_stream()` | Returns the active stream for a device. |
+| `torch.cuda.set_stream(stream)` | `torch.accelerator.set_stream(stream)` | Sets the active stream. |
+| `torch.cuda.default_stream(device=None)` | `torch.tpu.default_stream(device=None)` | Returns the default `TpuStream` for the device. |
+| `torch.cuda.stream(stream)` | `torch.tpu.stream(stream)` | Context manager that selects a given `TpuStream`. |
+| `torch.cuda.synchronize()` | `torch.accelerator.synchronize()` | Waits for all pending work on the TPU device to complete. |
+| `torch.cuda.Stream` | `torch.tpu.Stream(device=None, priority=0, *, pinned=None)` | Subclasses `torch.Stream`. Supports `synchronize()`, `record_event()`, `wait_event()`, `wait_stream()`, and core pinning (`pinned="dense"` or `"sparse"`, queried via `is_dense` / `is_sparse`). |
+| `torch.cuda.Event` | `torch.tpu.Event(enable_timing=False)` | Subclasses `torch.Event`. Supports `record()`, `synchronize()`, `query()`, and `elapsed_time(end_event)`. |
+<!-- mdformat on -->
 
 The `torch.accelerator` APIs in this table require PyTorch 2.11 or later. In the
 rare case that you use an older PyTorch version, use
@@ -228,20 +151,14 @@ Control how eager operations are queued, fused, and compiled by XLA. For an
 architectural walkthrough, see
 [TorchTPU Execution modes](./2_in_depth_3_torchtpu_execution_modes.md).
 
-| API                                                   | Description                        |
-| :---------------------------------------------------- | :--------------------------------- |
-| `torch.tpu.EagerMode`                                 | Enum controlling eager execution:  |
-:                                                       : `DEFER_AND_FUSE`, `DEFER_NEVER`,   :
-:                                                       : and                                :
-:                                                       : `DEFER_NEVER_AND_LAUNCH_BLOCKING`. :
-| `torch.tpu.eager_mode`                                | Gets or sets the active            |
-:                                                       : `EagerMode` globally.              :
-| `torch.tpu.set_eager_mode(mode)`                      | Context manager that temporarily   |
-:                                                       : sets the active `EagerMode`.       :
-| `torch.tpu.compiler.custom_compiler_options(options)` | Context manager that passes custom |
-:                                                       : XLA compiler flags to eager        :
-:                                                       : operations materialized inside the :
-:                                                       : block.                             :
+<!-- mdformat off(reason: standard GFM table rendering in Critique and Code Search) -->
+| API | Description |
+| :--- | :--- |
+| `torch.tpu.EagerMode` | Enum controlling eager execution: `DEFER_AND_FUSE`, `DEFER_NEVER`, and `DEFER_NEVER_AND_LAUNCH_BLOCKING`. |
+| `torch.tpu.eager_mode` | Gets or sets the active `EagerMode` globally. |
+| `torch.tpu.set_eager_mode(mode)` | Context manager that temporarily sets the active `EagerMode`. |
+| `torch.tpu.compiler.custom_compiler_options(options)` | Context manager that passes custom XLA compiler flags to eager operations materialized inside the block. |
+<!-- mdformat on -->
 
 ```python
 print(f"Default eager_mode: {torch.tpu.eager_mode}")
@@ -258,20 +175,13 @@ Control Matrix Multiply Unit (MXU) precision and intermediate `float32`
 accumulation. For detailed guidance, see
 [Numerical precision](./4_debugging_and_performance_analysis_1_numerical_precision.md).
 
-| API                                | Description                            |
-| :--------------------------------- | :------------------------------------- |
-| `torch.tpu.Precision`              | Enum controlling MXU precision for     |
-:                                    : `float32` matmuls and convolutions\:   :
-:                                    : `Precision.DEFAULT`, `Precision.HIGH`, :
-:                                    : and `Precision.HIGHEST`.               :
-| `torch.tpu.precision(level)`       | Context manager that sets the          |
-:                                    : `Precision` level for matmul and       :
-:                                    : convolution operations within the      :
-:                                    : block.                                 :
-| `torch.tpu.allow_excess_precision` | Gets or sets XLA's                     |
-:                                    : `--xla_allow_excess_precision` flag    :
-:                                    : globally to keep intermediate fused    :
-:                                    : values in `float32`.                   :
+<!-- mdformat off(reason: standard GFM table rendering in Critique and Code Search) -->
+| API | Description |
+| :--- | :--- |
+| `torch.tpu.Precision` | Enum controlling MXU precision for `float32` matmuls and convolutions: `Precision.DEFAULT`, `Precision.HIGH`, and `Precision.HIGHEST`. |
+| `torch.tpu.precision(level)` | Context manager that sets the `Precision` level for matmul and convolution operations within the block. |
+| `torch.tpu.allow_excess_precision` | Gets or sets XLA's `--xla_allow_excess_precision` flag globally to keep intermediate fused values in `float32`. |
+<!-- mdformat on -->
 
 ```python
 a = torch.randn(64, 64, device="tpu", dtype=torch.float32)
@@ -288,30 +198,15 @@ TorchTPU registers `"tpu_dist"` (also aliased as `"tpu"`) as the default
 [Running distributed workloads on GKE](./1_basics_5_distributed_on_gke.md) and
 [FSDP best practices](./3_practical_examples_3_fsdp_best_practices.md).
 
-| API                                             | Description                |
-| :---------------------------------------------- | :------------------------- |
-| `torch.tpu.topology_aware_mesh(mesh_shape,      | Computes a topology-aware  |
-: ...)`                                           : rank layout tensor of      :
-:                                                 : shape `mesh_shape` for     :
-:                                                 : `DeviceMesh("tpu",         :
-:                                                 : mesh=...)`.                :
-| `torch.tpu.distributed.set_tpu_launch_env(...)` | Populates TPU topology and |
-:                                                 : multi-host launch          :
-:                                                 : environment variables      :
-:                                                 : before spawning workers.   :
-| `torch.tpu.distributed.spmd_safe(func)`         | Decorator declaring that   |
-:                                                 : all ranks execute          :
-:                                                 : identical TPU operations   :
-:                                                 : in `func`, enabling eager  :
-:                                                 : collective fusion.         :
-| `torch.tpu.window_num_stripes`                  | Gets or sets the maximum   |
-:                                                 : number of concurrent DMA   :
-:                                                 : stripes for peer-to-peer   :
-:                                                 : transfers.                 :
-| `torch.tpu.window_stripe_chunk_mb`              | Gets or sets the minimum   |
-:                                                 : payload size (in MB) per   :
-:                                                 : DMA stripe for             :
-:                                                 : peer-to-peer transfers.    :
+<!-- mdformat off(reason: standard GFM table rendering in Critique and Code Search) -->
+| API | Description |
+| :--- | :--- |
+| `torch.tpu.topology_aware_mesh(mesh_shape, ...)` | Computes a topology-aware rank layout tensor of shape `mesh_shape` for `DeviceMesh("tpu", mesh=...)`. |
+| `torch.tpu.distributed.set_tpu_launch_env(...)` | Populates TPU topology and multi-host launch environment variables before spawning workers. |
+| `torch.tpu.distributed.spmd_safe(func)` | Decorator declaring that all ranks execute identical TPU operations in `func`, enabling eager collective fusion. |
+| `torch.tpu.window_num_stripes` | Gets or sets the maximum number of concurrent DMA stripes for peer-to-peer transfers. |
+| `torch.tpu.window_stripe_chunk_mb` | Gets or sets the minimum payload size (in MB) per DMA stripe for peer-to-peer transfers. |
+<!-- mdformat on -->
 
 ### **TPU Custom Operators (`torch.tpu.ops`) and Pallas (`torch.tpu.pallas`)**
 
@@ -323,51 +218,23 @@ and
 
 #### **General, Attention, MoE, and Collective Operators**
 
-| API                                            | Description                 |
-| :--------------------------------------------- | :-------------------------- |
-| `torch.tpu.ops.max_pool{1,2,3}d(...)`          | Applies 1D, 2D, or 3D max   |
-:                                                : pooling on TPU without      :
-:                                                : materializing an index      :
-:                                                : tensor.                     :
-| `torch.tpu.ops.max_pool{1,2,3}d_backward(...)` | Computes the backward pass  |
-:                                                : for `max_pool{1,2,3}d`      :
-:                                                : without an index tensor.    :
-| `torch.tpu.ops.optimization_barrier(inputs)`   | Prevents XLA from moving,   |
-:                                                : fusing, or deduplicating    :
-:                                                : computations across the     :
-:                                                : barrier.                    :
-| `torch.tpu.ops.splash_sdpa(q, k, v, ...)`      | Scaled dot-product          |
-:                                                : attention backed by the TPU :
-:                                                : Pallas Splash Attention     :
-:                                                : kernel.                     :
-| `torch.tpu.ops.ragged_dot(lhs, rhs,            | Grouped matrix              |
-: group_sizes, ...)`                             : multiplication for          :
-:                                                : Mixture-of-Experts (MoE)    :
-:                                                : workloads.                  :
-| `torch.tpu.ops.ragged_dot_weight_grad(lhs,     | Computes the weight         |
-: grad_output, group_sizes)`                     : gradient for `ragged_dot`.  :
-| `torch.tpu.ops.align_jagged_to_multiple(nt,    | Pads a `torch.jagged`       |
-: ...)`                                          : `NestedTensor` buffer to a  :
-:                                                : specified multiple for TPU  :
-:                                                : alignment.                  :
-| `torch.tpu.ops.strip_jagged_padding(nt, ...)`  | Removes trailing padding    |
-:                                                : added by                    :
-:                                                : `align_jagged_to_multiple`. :
-| `torch.tpu.ops.all_gather_dim(input, dim,      | All-gathers `input` across  |
-: group=None)`                                   : `group` and concatenates    :
-:                                                : along dimension `dim`.      :
-| `torch.tpu.ops.reduce_scatter_dim(input, dim,  | Reduces `input` across      |
-: group=None, ...)`                              : `group` and scatters chunks :
-:                                                : along dimension `dim`.      :
-| `torch.tpu.ops.ragged_all_to_all(...)`         | Exchanges variable-length   |
-:                                                : tensor slices across ranks  :
-:                                                : in a process group.         :
-| `torch.tpu.ops.send(tensors, dst, tag)` /      | Point-to-point tensor send  |
-: `torch.tpu.ops.recv(tensors, src, tag)`        : and receive on the default  :
-:                                                : TPU process group.          :
-| `torch.tpu.pallas.jax_op(name, fn=None, ...)`  | Registers a JAX/Pallas      |
-:                                                : function as a traceable     :
-:                                                : PyTorch custom operator.    :
+<!-- mdformat off(reason: standard GFM table rendering in Critique and Code Search) -->
+| API | Description |
+| :--- | :--- |
+| `torch.tpu.ops.max_pool{1,2,3}d(...)` | Applies 1D, 2D, or 3D max pooling on TPU without materializing an index tensor. |
+| `torch.tpu.ops.max_pool{1,2,3}d_backward(...)` | Computes the backward pass for `max_pool{1,2,3}d` without an index tensor. |
+| `torch.tpu.ops.optimization_barrier(inputs)` | Prevents XLA from moving, fusing, or deduplicating computations across the barrier. |
+| `torch.tpu.ops.splash_sdpa(q, k, v, ...)` | Scaled dot-product attention backed by the TPU Pallas Splash Attention kernel. |
+| `torch.tpu.ops.ragged_dot(lhs, rhs, group_sizes, ...)` | Grouped matrix multiplication for Mixture-of-Experts (MoE) workloads. |
+| `torch.tpu.ops.ragged_dot_weight_grad(lhs, grad_output, group_sizes)` | Computes the weight gradient for `ragged_dot`. |
+| `torch.tpu.ops.align_jagged_to_multiple(nt, ...)` | Pads a `torch.jagged` `NestedTensor` buffer to a specified multiple for TPU alignment. |
+| `torch.tpu.ops.strip_jagged_padding(nt, ...)` | Removes trailing padding added by `align_jagged_to_multiple`. |
+| `torch.tpu.ops.all_gather_dim(input, dim, group=None)` | All-gathers `input` across `group` and concatenates along dimension `dim`. |
+| `torch.tpu.ops.reduce_scatter_dim(input, dim, group=None, ...)` | Reduces `input` across `group` and scatters chunks along dimension `dim`. |
+| `torch.tpu.ops.ragged_all_to_all(...)` | Exchanges variable-length tensor slices across ranks in a process group. |
+| `torch.tpu.ops.send(tensors, dst, tag)` / `torch.tpu.ops.recv(tensors, src, tag)` | Point-to-point tensor send and receive on the default TPU process group. |
+| `torch.tpu.pallas.jax_op(name, fn=None, ...)` | Registers a JAX/Pallas function as a traceable PyTorch custom operator. |
+<!-- mdformat on -->
 
 #### **SparseCore Embedding Operators**
 
@@ -376,69 +243,33 @@ property of `torch.tpu.get_device_properties()` is the number of SparseCores per
 device (0 on TPUs without SparseCores), and `sparse_core_simd_width` is their
 SIMD width.
 
-| API                                                         | Description           |
-| :---------------------------------------------------------- | :-------------------- |
-| `torch.tpu.ops.sparse_dense_matmul(...)`                    | Performs CSR          |
-:                                                             : embedding lookup and  :
-:                                                             : aggregation on TPU    :
-:                                                             : SparseCore.           :
-| `torch.tpu.ops.sparse_dense_matmul_grad_with_sgd(...)` /    | Computes backward     |
-: `_with_adagrad(...)` / `_with_adam(...)`                    : gradients for         :
-:                                                             : `sparse_dense_matmul` :
-:                                                             : and applies a fused   :
-:                                                             : in-place SGD,         :
-:                                                             : Adagrad, or Adam      :
-:                                                             : table update on       :
-:                                                             : SparseCore.           :
-| `torch.tpu.ops.sparse_dense_matmul_activation_unstack(...)` | Splits stacked        |
-:                                                             : SparseCore embedding  :
-:                                                             : activations into      :
-:                                                             : per-feature tensors.  :
-| `torch.tpu.ops.sparse_dense_matmul_gradient_stack(...)`     | Stacks per-feature    |
-:                                                             : activation gradients  :
-:                                                             : into a single tensor  :
-:                                                             : for SparseCore.       :
-| `torch.tpu.ops.sparse_gather(...)`                          | Gathers rows from a   |
-:                                                             : 2D tensor using CSR   :
-:                                                             : indices on TPU        :
-:                                                             : SparseCore.           :
-| `torch.tpu.ops.sparse_gather_backward(...)`                 | Scatter-adds          |
-:                                                             : gradients for         :
-:                                                             : `sparse_gather` on    :
-:                                                             : TPU SparseCore.       :
-| `torch.tpu.ops.sparse_iota(...)`                            | Generates within-row  |
-:                                                             : position indices for  :
-:                                                             : non-zero elements in  :
-:                                                             : a CSR matrix on       :
-:                                                             : SparseCore.           :
-| `torch.tpu.ops.sparse_map_row(...)`                         | Maps a custom MLIR    |
-:                                                             : row-wise computation  :
-:                                                             : over sparse CSR       :
-:                                                             : matrices on           :
-:                                                             : SparseCore.           :
+<!-- mdformat off(reason: standard GFM table rendering in Critique and Code Search) -->
+| API | Description |
+| :--- | :--- |
+| `torch.tpu.ops.sparse_dense_matmul(...)` | Performs CSR embedding lookup and aggregation on TPU SparseCore. |
+| `torch.tpu.ops.sparse_dense_matmul_grad_with_sgd(...)` / `_with_adagrad(...)` / `_with_adam(...)` | Computes backward gradients for `sparse_dense_matmul` and applies a fused in-place SGD, Adagrad, or Adam table update on SparseCore. |
+| `torch.tpu.ops.sparse_dense_matmul_activation_unstack(...)` | Splits stacked SparseCore embedding activations into per-feature tensors. |
+| `torch.tpu.ops.sparse_dense_matmul_gradient_stack(...)` | Stacks per-feature activation gradients into a single tensor for SparseCore. |
+| `torch.tpu.ops.sparse_gather(...)` | Gathers rows from a 2D tensor using CSR indices on TPU SparseCore. |
+| `torch.tpu.ops.sparse_gather_backward(...)` | Scatter-adds gradients for `sparse_gather` on TPU SparseCore. |
+| `torch.tpu.ops.sparse_iota(...)` | Generates within-row position indices for non-zero elements in a CSR matrix on SparseCore. |
+| `torch.tpu.ops.sparse_map_row(...)` | Maps a custom MLIR row-wise computation over sparse CSR matrices on SparseCore. |
+<!-- mdformat on -->
 
 ### **Fused Training Step and Optimizers (`torch.tpu.optimizers`)**
 
 `torch.tpu.optimizers` traces the forward pass, loss computation, backward pass,
 and functional optimizer step into a single compiled TPU graph.
 
-| API                                             | Description                      |
-| :---------------------------------------------- | :------------------------------- |
-| `torch.tpu.optimizers.SingleTraceTrainer(model, | Manages functional parameters    |
-: optimizer=None, ...)`                           : (`params`), optimizer state      :
-:                                                 : (`param_group`), and compiles    :
-:                                                 : the full training step via       :
-:                                                 : `make_compiled_train_step(...)`. :
-| `torch.tpu.optimizers.Optimizer(lr=...,         | Base class for stateless         |
-: weight_decay=...)`                              : functional optimizers (exposes   :
-:                                                 : `defaults`, `init_param_group`,  :
-:                                                 : and `step`).                     :
-| `torch.tpu.optimizers.AdamW(...)`               | Traceable functional AdamW       |
-:                                                 : optimizer (`AdamW.ParamGroup`).  :
-| `torch.tpu.optimizers.Muon(...)`                | Traceable functional Muon        |
-:                                                 : optimizer (`Muon.ParamGroup`).   :
-| `torch.tpu.optimizers.Sgd(...)`                 | Traceable functional SGD         |
-:                                                 : optimizer (`Sgd.ParamGroup`).    :
+<!-- mdformat off(reason: standard GFM table rendering in Critique and Code Search) -->
+| API | Description |
+| :--- | :--- |
+| `torch.tpu.optimizers.SingleTraceTrainer(model, optimizer=None, ...)` | Manages functional parameters (`params`), optimizer state (`param_group`), and compiles the full training step via `make_compiled_train_step(...)`. |
+| `torch.tpu.optimizers.Optimizer(lr=..., weight_decay=...)` | Base class for stateless functional optimizers (exposes `defaults`, `init_param_group`, and `step`). |
+| `torch.tpu.optimizers.AdamW(...)` | Traceable functional AdamW optimizer (`AdamW.ParamGroup`). |
+| `torch.tpu.optimizers.Muon(...)` | Traceable functional Muon optimizer (`Muon.ParamGroup`). |
+| `torch.tpu.optimizers.Sgd(...)` | Traceable functional SGD optimizer (`Sgd.ParamGroup`). |
+<!-- mdformat on -->
 
 ### **Profiling (`torch.tpu.profiler`)**
 
@@ -447,13 +278,11 @@ Configure TPU hardware and Python tracing for XProf and TensorBoard. See
 and
 [XProf for TorchTPU reference](./6_reference_3_xprof_for_torchtpu_reference.md).
 
-| API                                         | Description                   |
-| :------------------------------------------ | :---------------------------- |
-| `torch.tpu.profiler.TpuProfilerConfig(...)` | Experimental config passed to |
-:                                             : `torch.profiler.profile(...,  :
-:                                             : experimental_config=...)` to  :
-:                                             : configure host, TPU device,   :
-:                                             : and Python tracing for XProf. :
+<!-- mdformat off(reason: standard GFM table rendering in Critique and Code Search) -->
+| API | Description |
+| :--- | :--- |
+| `torch.tpu.profiler.TpuProfilerConfig(...)` | Experimental config passed to `torch.profiler.profile(..., experimental_config=...)` to configure host, TPU device, and Python tracing for XProf. |
+<!-- mdformat on -->
 
 ## **Environment Variables**
 
@@ -467,47 +296,23 @@ subsystem.
 
 ### **Device Visibility, Runtime, and Distributed Launch**
 
-| Environment Variable                 | Description                           |
-| :----------------------------------- | :------------------------------------ |
-| `TPU_VISIBLE_DEVICES`                | Comma-separated TPU chip indices      |
-:                                      : visible to the current process        :
-:                                      : (analogous to                         :
-:                                      : `CUDA_VISIBLE_DEVICES`).              :
-| `RANK`                               | Global rank of the current process in |
-:                                      : a distributed job.                    :
-| `LOCAL_RANK`                         | Host-local rank of the current        |
-:                                      : process.                              :
-| `WORLD_SIZE`                         | Total number of processes in the      |
-:                                      : distributed job.                      :
-| `NNODES`                             | Total number of host nodes in a       |
-:                                      : multi-host job.                       :
-| `NODE_RANK`                          | Rank of the current host node in a    |
-:                                      : multi-host job.                       :
-| `MASTER_ADDR`                        | Address of the rank-0 coordinator     |
-:                                      : node for `torch.distributed`.         :
-| `MASTER_PORT`                        | Port on `MASTER_ADDR` used for        |
-:                                      : `torch.distributed` rendezvous.       :
-| `TORCH_DEVICE_BACKEND_AUTOLOAD`      | Set to `"0"` to disable automatic     |
-:                                      : registration of the `torch_tpu`       :
-:                                      : backend.                              :
-| `TORCH_TPU_ALLOW_LEGACY_DEVICE_APIS` | When enabled, allows calling internal |
-:                                      : `torch.tpu` device APIs (those with a :
-:                                      : `torch.accelerator` equivalent) from  :
-:                                      : outside PyTorch core with a one-time  :
-:                                      : warning instead of raising a          :
-:                                      : `RuntimeError`. Use this only as a    :
-:                                      : temporary fix; migrating to           :
-:                                      : `torch.accelerator.*` is preferred,   :
-:                                      : and this variable will likely be      :
-:                                      : removed in a future release.          :
-| `LIBTPU_INIT_ARGS`                   | Space-separated initialization flags  |
-:                                      : passed to `libtpu` and the PJRT       :
-:                                      : runtime.                              :
-| `TPU_PREMAPPED_BUFFER_SIZE`          | Premapped host-to-device memory       |
-:                                      : buffer size in bytes for the PJRT     :
-:                                      : client.                               :
-| `TMPDIR`                             | Temporary directory used by the       |
-:                                      : runtime and compiler.                 :
+<!-- mdformat off(reason: standard GFM table rendering in Critique and Code Search) -->
+| Environment Variable | Description |
+| :--- | :--- |
+| `TPU_VISIBLE_DEVICES` | Comma-separated TPU chip indices visible to the current process (analogous to `CUDA_VISIBLE_DEVICES`). |
+| `RANK` | Global rank of the current process in a distributed job. |
+| `LOCAL_RANK` | Host-local rank of the current process. |
+| `WORLD_SIZE` | Total number of processes in the distributed job. |
+| `NNODES` | Total number of host nodes in a multi-host job. |
+| `NODE_RANK` | Rank of the current host node in a multi-host job. |
+| `MASTER_ADDR` | Address of the rank-0 coordinator node for `torch.distributed`. |
+| `MASTER_PORT` | Port on `MASTER_ADDR` used for `torch.distributed` rendezvous. |
+| `TORCH_DEVICE_BACKEND_AUTOLOAD` | Set to `"0"` to disable automatic registration of the `torch_tpu` backend. |
+| `TORCH_TPU_ALLOW_LEGACY_DEVICE_APIS` | When enabled, allows calling internal `torch.tpu` device APIs (those with a `torch.accelerator` equivalent) from outside PyTorch core with a one-time warning instead of raising a `RuntimeError`. Use this only as a temporary fix; migrating to `torch.accelerator.*` is preferred, and this variable will likely be removed in a future release. |
+| `LIBTPU_INIT_ARGS` | Space-separated initialization flags passed to `libtpu` and the PJRT runtime. |
+| `TPU_PREMAPPED_BUFFER_SIZE` | Premapped host-to-device memory buffer size in bytes for the PJRT client. |
+| `TMPDIR` | Temporary directory used by the runtime and compiler. |
+<!-- mdformat on -->
 
 ### **Hardware Topology and Multi-Host Coordination**
 
@@ -516,56 +321,47 @@ most cases, they are set automatically by
 `torch.tpu.distributed.set_tpu_launch_env()`, the TorchTPU launcher, or the
 Google Cloud environment.
 
-| Environment Variable               | Description                           |
-| :--------------------------------- | :------------------------------------ |
-| `TORCH_TPU_TOPOLOGY`               | Physical topology of the TPU slice    |
-:                                    : (e.g., `2x2x1`, `2x2x4`).             :
-| `TORCH_TPU_SLICEBUILDER_ADDRESSES` | Comma-separated `host:port` worker    |
-:                                    : addresses for the TPU slice builder   :
-:                                    : service.                              :
-| `TORCH_TPU_DEVICES_PER_HOST`       | Number of TPU chips per host when     |
-:                                    : deriving slice builder addresses.     :
-| `TORCH_TPU_BASE_PORT`              | Starting port number when deriving    |
-:                                    : slice builder addresses.              :
-| `TORCH_TPU_SPMD_HANDSHAKE_STAGE`   | Stage at which ranks verify that      |
-:                                    : collective graphs match across ranks. :
-| `TORCHCOMM_RANK`                   | Process rank for `torchcomm` (takes   |
-:                                    : precedence over `RANK`).              :
-| `TORCHCOMM_SIZE`                   | World size for `torchcomm` (takes     |
-:                                    : precedence over `WORLD_SIZE`).        :
+<!-- mdformat off(reason: standard GFM table rendering in Critique and Code Search) -->
+| Environment Variable | Description |
+| :--- | :--- |
+| `TORCH_TPU_TOPOLOGY` | Physical topology of the TPU slice (e.g., `2x2x1`, `2x2x4`). |
+| `TORCH_TPU_SLICEBUILDER_ADDRESSES` | Comma-separated `host:port` worker addresses for the TPU slice builder service. |
+| `TORCH_TPU_DEVICES_PER_HOST` | Number of TPU chips per host when deriving slice builder addresses. |
+| `TORCH_TPU_BASE_PORT` | Starting port number when deriving slice builder addresses. |
+| `TORCH_TPU_SPMD_HANDSHAKE_STAGE` | Stage at which ranks verify that collective graphs match across ranks. |
+| `TORCHCOMM_RANK` | Process rank for `torchcomm` (takes precedence over `RANK`). |
+| `TORCHCOMM_SIZE` | World size for `torchcomm` (takes precedence over `WORLD_SIZE`). |
+<!-- mdformat on -->
 
 ### **Execution Mode, Compilation, and Caching**
 
 These variables control how PyTorch operations and graphs are dispatched,
 lowered, optimized by XLA, and cached across runs and ranks.
 
-Environment Variable                     | Description
-:--------------------------------------- | :----------
-`TORCH_TPU_DEFER_AND_FUSE`               | When enabled (`"1"`/`"true"`), sets the default eager mode to `EagerMode.DEFER_AND_FUSE`.
-`TORCH_TPU_LAUNCH_BLOCKING`              | When enabled (`"1"`/`"true"`), sets the default eager mode to `EagerMode.DEFER_NEVER_AND_LAUNCH_BLOCKING`.
-`TORCH_TPU_TIER2_COMPILATION_CACHE`      | Directory name under `/dev/shm/torch_tpu_cache/` for the host-local compilation cache (or `"disabled"`).
-`TORCH_TPU_TIER3_COMPILATION_CACHE_ROOT` | Path (e.g., `gs://...` or local path) to the persistent Tier-3 compilation cache shared across hosts and runs.
-`XLA_FLAGS`                              | Space-separated XLA compiler flags (e.g., `--xla_dump_hlo_as_text --xla_dump_to=...`).
+<!-- mdformat off(reason: standard GFM table rendering in Critique and Code Search) -->
+| Environment Variable | Description |
+| :--- | :--- |
+| `TORCH_TPU_DEFER_AND_FUSE` | When enabled (`"1"`/`"true"`), sets the default eager mode to `EagerMode.DEFER_AND_FUSE`. |
+| `TORCH_TPU_LAUNCH_BLOCKING` | When enabled (`"1"`/`"true"`), sets the default eager mode to `EagerMode.DEFER_NEVER_AND_LAUNCH_BLOCKING`. |
+| `TORCH_TPU_TIER2_COMPILATION_CACHE` | Directory name under `/dev/shm/torch_tpu_cache/` for the host-local compilation cache (or `"disabled"`). |
+| `TORCH_TPU_TIER3_COMPILATION_CACHE_ROOT` | Path (e.g., `gs://...` or local path) to the persistent Tier-3 compilation cache shared across hosts and runs. |
+| `XLA_FLAGS` | Space-separated XLA compiler flags (e.g., `--xla_dump_hlo_as_text --xla_dump_to=...`). |
+<!-- mdformat on -->
 
 ### **Debugging, Safety, Profiling, and Tracing**
 
 These variables control debugging context, runtime safety checks, and profiler
 output for TorchTPU.
 
-| Environment Variable            | Description                               |
-| :------------------------------ | :---------------------------------------- |
-| `TORCH_SHOW_CPP_STACKTRACES`    | When set to `"1"`, enriches Python        |
-:                                 : `RuntimeError` exceptions with C++        :
-:                                 : backtraces.                               :
-| `TORCH_TPU_ENABLE_DEBUG_CHECKS` | When set to `"1"`, enables runtime debug  |
-:                                 : and bounds checks on TPU.                 :
-| `TORCH_TPU_PROFILER_OUTPUT_DIR` | Fallback output directory for XProf trace |
-:                                 : files when `TpuProfilerConfig.run_dir` is :
-:                                 : unset.                                    :
-| `TORCH_TPU_XPROF_SESSION_ID`    | Shared XProf profiling session ID across  |
-:                                 : multi-host workers.                       :
-| `TORCH_TRACE`                   | Output directory for structured compiler  |
-:                                 : and dispatcher trace logs (`tlparse`).    :
+<!-- mdformat off(reason: standard GFM table rendering in Critique and Code Search) -->
+| Environment Variable | Description |
+| :--- | :--- |
+| `TORCH_SHOW_CPP_STACKTRACES` | When set to `"1"`, enriches Python `RuntimeError` exceptions with C++ backtraces. |
+| `TORCH_TPU_ENABLE_DEBUG_CHECKS` | When set to `"1"`, enables runtime debug and bounds checks on TPU. |
+| `TORCH_TPU_PROFILER_OUTPUT_DIR` | Fallback output directory for XProf trace files when `TpuProfilerConfig.run_dir` is unset. |
+| `TORCH_TPU_XPROF_SESSION_ID` | Shared XProf profiling session ID across multi-host workers. |
+| `TORCH_TRACE` | Output directory for structured compiler and dispatcher trace logs (`tlparse`). |
+<!-- mdformat on -->
 
 ### **Environment Variable Configuration Snippets**
 

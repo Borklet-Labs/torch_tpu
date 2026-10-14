@@ -29,20 +29,15 @@ traces are saved to disk for viewing in TensorBoard.
 
 **Key components:**
 
+<!-- mdformat off(reason: standard GFM table rendering in Critique and Code Search) -->
 | Component                                  | Role                            |
 | ------------------------------------------ | ------------------------------- |
-| `torch.profiler.profile()`                 | Standard context manager that   |
-:                                            : starts/stops <br> trace         :
-:                                            : collection                      :
-| `torch.profiler.ProfilerActivity.CPU`      | Traces CPU-side operations      |
-:                                            : (dispatch, data <br> loading)   :
-| `torch.profiler.ProfilerActivity.TPU`      | Traces TPU hardware execution   |
-:                                            : (compute, <br> memory,          :
-:                                            : interconnect)                   :
-| `torch.profiler.tensorboard_trace_handler` | Callback that saves traces to a |
-:                                            : directory for <br> TensorBoard  :
-| `TpuProfilerConfig`                        | Helper for custom TPU profiling |
-:                                            : configuration                   :
+| `torch.profiler.profile()`                 | Standard context manager that starts/stops <br> trace collection |
+| `torch.profiler.ProfilerActivity.CPU`      | Traces CPU-side operations (dispatch, data <br> loading) |
+| `torch.profiler.ProfilerActivity.TPU`      | Traces TPU hardware execution (compute, <br> memory, interconnect) |
+| `torch.profiler.tensorboard_trace_handler` | Callback that saves traces to a directory for <br> TensorBoard       |
+| `TpuProfilerConfig`                        | Helper for custom TPU profiling configuration                   |
+<!-- mdformat on -->
 
 ```python
 import torch
@@ -58,21 +53,14 @@ device tracer levels as well as output directory structures.
 
 ### Sanctioned configuration options
 
-| Option Key            | Type           | Default | Description              |
-| :-------------------- | :------------- | :------ | :----------------------- |
-| `host_tracer_level`   | `int`          | `2`     | Controls CPU host tracer |
-:                       :                :         : verbosity <br> (0=off,   :
-:                       :                :         : 1=critical, 2=all).      :
-| `device_tracer_level` | `int`          | `1`     | Controls TPU hardware    |
-:                       :                :         : device tracer <br>       :
-:                       :                :         : verbosity (0=off, 1=on). :
-| `python_tracer_level` | `int`          | `0`     | Controls Python function |
-:                       :                :         : tracing <br> level       :
-:                       :                :         : (0=off, 1=on).           :
-| `run_dir`             | `pathlib.Path` | `None`  | Output directory where   |
-:                       :                :         : TPU hardware trace <br>  :
-:                       :                :         : files (`.xplane.pb`) are :
-:                       :                :         : saved.                   :
+<!-- mdformat off(reason: standard GFM table rendering in Critique and Code Search) -->
+| Option Key            | Type           | Default | Description               |
+| :-------------------- | :------------- | :------ | :------------------------ |
+| `host_tracer_level`   | `int`          | `2`     | Controls CPU host tracer verbosity <br> (0=off, 1=critical, 2=all). |
+| `device_tracer_level` | `int`          | `1`     | Controls TPU hardware device tracer <br> verbosity (0=off, 1=on). |
+| `python_tracer_level` | `int`          | `0`     | Controls Python function tracing <br> level (0=off, 1=on). |
+| `run_dir`             | `pathlib.Path` | `None`  | Output directory where TPU hardware trace <br> files (`.xplane.pb`) are saved. |
+<!-- mdformat on -->
 
 ```python
 import pathlib
@@ -190,31 +178,26 @@ You must run TensorBoard from the VS Code integrated terminal so that port
 forwarding works automatically.
 ```
 
+<!-- mdformat off(reason: standard GFM table rendering in Critique and Code Search) -->
 | View               | What it shows                                          |
 | ------------------ | ------------------------------------------------------ |
-| **Overview**       | High-level summary: step time, device utilization, top |
-:                    : ops                                                    :
-| **Trace Viewer**   | Timeline of every op on CPU and TPU — look for gaps    |
-:                    : (idle hardware)                                        :
-| **Op Profile**     | Breakdown of time per operation — find the most        |
-:                    : expensive ops                                          :
-| **Memory Profile** | HBM usage over time — detect memory spikes             |
+| **Overview**       | High-level summary: step time, device utilization, top ops |
+| **Trace Viewer**   | Timeline of every op on CPU and TPU — look for gaps (idle hardware) |
+| **Op Profile**     | Breakdown of time per operation — find the most expensive ops |
+| **Memory Profile** | HBM usage over time — detect memory spikes |
+<!-- mdformat on -->
 
 ## 5. What to look for
 
 ### Red flags in traces
 
-| Pattern                | Meaning                 | Fix                      |
-| ---------------------- | ----------------------- | ------------------------ |
-| Large gaps between TPU | Host-side bottleneck    | Prefetch data, reduce    |
-: ops                    : <br> (data loading,     : Python logic in the loop :
-:                        : Python overhead)        :                          :
-| Frequent short TPU     | Too many graph breaks → | Reduce `.item()` /       |
-: bursts                 : frequent recompilation  : `.cpu()` calls, use      :
-:                        :                         : `torch.compile`          :
-| Low MXU utilization    | Tensor dimensions not   | Pad dimensions to        |
-:                        : aligned to tile size    : multiples of 128         :
-:                        : (128)                   :                          :
+<!-- mdformat off(reason: standard GFM table rendering in Critique and Code Search) -->
+| Pattern                 | Meaning                 | Fix                      |
+| ----------------------- | ----------------------- | ------------------------ |
+| Large gaps between TPU ops | Host-side bottleneck <br> (data loading, Python overhead) | Prefetch data, reduce Python logic in the loop |
+| Frequent short TPU bursts   | Too many graph breaks → frequent recompilation | Reduce `.item()` / `.cpu()` calls, use `torch.compile` |
+| Low MXU utilization | Tensor dimensions not aligned to tile size (128) | Pad dimensions to multiples of 128 |
+<!-- mdformat on -->
 
 ### The ideal profile
 
@@ -285,12 +268,14 @@ indices, refer to the official
 
 ## 8. Quick reference
 
+<!-- mdformat off(reason: standard GFM table rendering in Critique and Code Search) -->
 Step        | Command / Code
 ----------- | --------------
 **Import**  | `from torch.tpu.profiler import TpuProfilerConfig`
 **Profile** | `with torch.profiler.profile(activities=[...], on_trace_ready=...):`
 **Save**    | `torch.profiler.tensorboard_trace_handler("/tmp/profiler_output")`
 **View**    | `tensorboard --logdir=/tmp/profiler_output`
+<!-- mdformat on -->
 
 !!! note
 

@@ -1458,6 +1458,8 @@ presubmit {
   path_expression: "....ipynb"
   path_expression: "....py"
   path_expression_exclusion: "torch_tpu/examples/..."
+  # Documentation tooling tests don't use RNGs.
+  path_expression_exclusion: "torch_tpu/google/docs/..."
   path_expression_exclusion: "torch_tpu/oss/ci/..."
   # go/keep-sorted end
   check_contents {
