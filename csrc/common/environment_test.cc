@@ -16,17 +16,13 @@
 
 #include "csrc/common/environment.h"
 
-#include <netdb.h>
-#include <sys/socket.h>
 #include <unistd.h>
 
 #include <cstdio>
 #include <cstdlib>
-#include <string>
 
 #include "absl/status/status.h"
 #include "csrc/common/env_vars.h"
-#include "csrc/common/libtpu_version.h"
 #include "csrc/distributed/slicebuilder/discovery.h"
 #include "gtest/gtest.h"
 
@@ -176,12 +172,11 @@ DistributedWorkerConfiguration LocalhostConfig() {
   return config;
 }
 
-// Runs InitializeDistributedEnvironment(LocalhostConfig()) on libtpu 0.0.48
-// with `LIBTPU_INIT_ARGS` set to `libtpu_init_args` in a death test child and
+// Runs InitializeDistributedEnvironment(LocalhostConfig()) with
+// `LIBTPU_INIT_ARGS` set to `libtpu_init_args` in a death test child and
 // prints the resulting `LIBTPU_INIT_ARGS` to stderr as
 // "libtpu_init_args=<value>" for EXPECT_EXIT to match.
 void InitAndPrintLibtpuInitArgs(const char* const libtpu_init_args) {
-  SetLibtpuVersion("0.0.48");
   setenv(kLibtpuInitArgsEnvVar, libtpu_init_args, 1);
   if (!InitializeDistributedEnvironment(LocalhostConfig()).ok()) _exit(1);
   const char* const args = std::getenv(kLibtpuInitArgsEnvVar);
@@ -214,63 +209,6 @@ TEST(EnvironmentDeathTest,
               "libtpu_init_args=--slicebuilder_use_insecure_grpc "
               "--xla_tpu_use_enhanced_launch_barrier=false "
               "--undefok=slicebuilder_use_insecure_grpc\n");
-}
-
-TEST(EnvironmentDeathTest,
-     InitDistEnv_SkipsSlicebuilderWorkaroundsOnOlderLibtpu) {
-  EXPECT_EXIT(
-      {
-        unsetenv(kLibtpuInitArgsEnvVar);
-        unsetenv(kTpuProcessAddressesEnvVar);
-        SetLibtpuVersion("0.0.41");
-        DistributedWorkerConfiguration config{};
-        config.rank = 0;
-        config.local_rank = 0;
-        config.sb_port = "1234";
-        config.sb_addrs = "localhost:1234";
-        config.topology = "1,1,1";
-
-        EXPECT_TRUE(InitializeDistributedEnvironment(config).ok());
-        EXPECT_STREQ(std::getenv(kTpuProcessAddressesEnvVar), "localhost:1234");
-        EXPECT_STREQ(std::getenv(kLibtpuInitArgsEnvVar),
-                     "--xla_tpu_use_enhanced_launch_barrier=false");
-        _exit(0);
-      },
-      ExitedWithCode(0), "");
-}
-
-// Runs InitializeDistributedEnvironment(LocalhostConfig()) on libtpu
-// `libtpu_version` in a death test child and prints the resulting
-// `TPU_PROCESS_ADDRESSES` to stderr as "addresses=<value>" for EXPECT_EXIT to
-// match.
-void InitAndPrintSlicebuilderAddresses(const char* const libtpu_version) {
-  SetLibtpuVersion(libtpu_version);
-  if (!InitializeDistributedEnvironment(LocalhostConfig()).ok()) _exit(1);
-  const char* const addrs = std::getenv(kTpuProcessAddressesEnvVar);
-  std::fprintf(stderr, "addresses=%s\n", addrs ? addrs : "unset");
-  _exit(0);
-}
-
-TEST(EnvironmentDeathTest, InitDistEnv_RewritesLocalhostOnlyBeforeLibtpu050) {
-  char hostname[1024];
-  ASSERT_EQ(gethostname(hostname, sizeof(hostname)), 0);
-  hostname[sizeof(hostname) - 1] = '\0';
-  std::string sanitized_host(hostname);
-  const size_t strip_from = sanitized_host.find_first_of(".:");
-  if (strip_from != std::string::npos) {
-    sanitized_host = sanitized_host.substr(0, strip_from);
-  }
-  struct addrinfo* res = nullptr;
-  if (sanitized_host.empty() ||
-      getaddrinfo(sanitized_host.c_str(), nullptr, nullptr, &res) != 0) {
-    sanitized_host = "localhost";
-  } else {
-    freeaddrinfo(res);
-  }
-  EXPECT_EXIT(InitAndPrintSlicebuilderAddresses("0.0.49"), ExitedWithCode(0),
-              "addresses=" + sanitized_host + ":1234\n");
-  EXPECT_EXIT(InitAndPrintSlicebuilderAddresses("0.0.50"), ExitedWithCode(0),
-              "addresses=localhost:1234\n");
 }
 
 TEST(EnvironmentDeathTest,

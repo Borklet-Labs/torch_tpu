@@ -290,11 +290,6 @@ class DeviceUtilsTest(seed_test_utils.RepeatableTest):
         -1.0,
     )
 
-  @oss_utils.skip_if_libtpu_version(
-      lambda v: v < (0, 0, 42),
-      'TODO(b/565506249): Requires libtpu >= 0.0.42 for'
-      ' reset_peak_memory_stats.',
-  )
   def test_tpu_peak_memory_reset_and_query(self):
     device = torch.device('tpu')
     device_utils.reset_peak_memory_stats('tpu')

@@ -1355,6 +1355,7 @@ torch_tpu_py_test(
     ],
     deps = [
         ":op_testing",
+        ":oss_utils",
         "//shims/absl_py/testing:absltest",
         "//shims/absl_py/testing:parameterized",
         "//shims/torch:pytorch",
@@ -1905,7 +1906,6 @@ torch_tpu_py_test(
     srcs = ["view_test.py"],
     tags = ["requires-tpu-v5lite"],
     deps = [
-        ":oss_utils",
         ":seed_test_utils",
         "//csrc/eager:tpu_aten_kernels",
         "//shims/absl_py/testing:absltest",
@@ -2107,7 +2107,6 @@ torch_tpu_py_test(
     main = "accelerator_api_test.py",
     tags = ["requires-tpu-v5lite:8"],
     deps = [
-        ":oss_utils",
         ":seed_test_utils",
         "//shims/absl_py/testing:absltest",
         "//shims/absl_py/testing:parameterized",
@@ -2192,7 +2191,6 @@ torch_tpu_py_test(
     shard_count = 4,
     tags = ["requires-tpu-v5lite"],
     deps = [
-        ":oss_utils",
         ":seed_test_utils",
         "//shims/absl_py/testing:absltest",
         "//shims/torch:pytorch",
@@ -2640,7 +2638,6 @@ torch_tpu_py_test(
     srcs = ["scan_test.py"],
     tags = ["requires-tpu-v5lite"],
     deps = [
-        ":oss_utils",
         ":seed_test_utils",
         "//shims/absl_py/testing:absltest",
         "//shims/absl_py/testing:parameterized",

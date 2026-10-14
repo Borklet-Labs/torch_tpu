@@ -34,7 +34,6 @@ from torch._dynamo.backends import registry
 import torch.nn.functional as F
 from torch_tpu._internal import testing as tt_testing
 from torch_tpu._internal.utils import test_utils as utils
-from tests import oss_utils
 from tests import seed_test_utils
 
 # Set in the BUILD `args`; VLOG(1) is what makes TT_KERNEL log its arguments.
@@ -47,10 +46,6 @@ def _decode_step(
   return F.scaled_dot_product_attention(q, k, v, enable_gqa=True)
 
 
-@oss_utils.skip_if_libtpu_version(
-    lambda v: v < (0, 0, 47),
-    "Bounded dynamism requires libtpu >= 0.0.47",
-)
 class SdpaVlogTest(seed_test_utils.RepeatableTest):
   """Compiles a GQA decode step whose KV length becomes dynamic."""
 

@@ -27,7 +27,6 @@ from torch_tpu._internal import compile as compile_lib
 from torch_tpu._internal import execution_mode
 from torch_tpu._internal import testing as tt_testing
 from torch_tpu._internal.utils import test_utils as utils
-from tests import oss_utils
 from tests import seed_test_utils
 
 EagerMode = execution_mode.EagerMode
@@ -1547,10 +1546,6 @@ class CompileTest(LayoutTest):
     utils.assert_close(out_compiled.cpu(), out_expected)
 
 
-@oss_utils.skip_if_libtpu_version(
-    lambda v: v < (0, 0, 42),
-    "TODO(b/565506249): Requires libtpu >= 0.0.42 for reset_peak_memory_stats.",
-)
 class ContiguousWindowWriteMemoryTest(seed_test_utils.RepeatableTest):
   """Checks that writes into a contiguous window of a buffer are O(window)."""
 
