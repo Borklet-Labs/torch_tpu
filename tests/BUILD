@@ -1260,8 +1260,10 @@ torch_tpu_py_test(
 
 torch_tpu_py_test(
     name = "sparse_dense_matmul_test",
+    timeout = "long",
     srcs = ["sparse_dense_matmul_test.py"],
     main = "sparse_dense_matmul_test.py",
+    shard_count = 4,
     tags = [
         # Requires SparseCore accelerator, which is not available on TPU v5e and below.
         "fails-on-tpu-v5",
