@@ -352,10 +352,26 @@ Please use clone() or contiguous() to copy the tensor before writing""",
     t2 = torch.ones(1, 2**20, device=et.device(), dtype=torch.float32)
     # The result tensor would need 4 TB, which is impossible to allocate.
     t3 = torch.mm(t1, t2)
+    # Error message format from XLA varies. Known examples:
+    # ```
+    #   failed to compile MLIR module -- the XLA compiler failed with: e1000:
+    #   CompileTimeHbmOom: Ran out of memory on HBM, the total memory required
+    #   for HLO temporaries (4.00T) exceeds available HBM (15.75G). HLO module:
+    #   tt_jit_mm.
+    # ```
+    # ```
+    #   failed to compile MLIR module -- the XLA compiler failed with:
+    #   allocation (size=4398046511104) would exceed memory (size=17179869184)
+    #   :: %s2 = inlined_call_operand.hbm
+    #   [shape: f32[1048576,1048576], index: 2, kind: output, shape index: {}]
+    #   /* operand 2 */ :: broadcast_multiply_fusion
+    # ```
+    # Regex will match either of these.
     with et.assert_raises_message(
         RuntimeError,
         tpu=re.compile(
-            r"""to_copy\(\): the TPU ran out of memory while awaiting the materialization of value float32\[1048576, 1048576\]:(.|\n)*"""
+            r""".*failed to compile MLIR module.+the XLA compiler failed with:.+(exceeds available HBM|allocation.+would exceed memory).*""",
+            re.DOTALL,
         ),
     ):
       t3.to("cpu")
@@ -772,7 +788,9 @@ Please use clone() or contiguous() to copy the tensor before writing""",
     ):
       t.set_(source.untyped_storage(), storage_offset=0, size=[16], stride=[1])
 
-  @et.why_tpu_only("TODO: investigate why this is TPU-only.")
+  @et.why_tpu_only(
+      "CPU sometimes allows OOB access (undefined behavior but no exception)"
+  )
   def test_resize_materialization_error(self):
     """Materializing a tensor that has been resized down throws an error."""
     # This is not a supported operation on CPU either, but if and what message
@@ -782,9 +800,9 @@ Please use clone() or contiguous() to copy the tensor before writing""",
     tensor.untyped_storage().resize_(nbytes // 2)
     with et.assert_raises_message(
         IndexError,
-        tpu="""to_copy(): cannot read 32 bytes (8 elements of type float32 with an offset of 0 elements) from a storage buffer with 16 bytes""",
+        tpu="""add(): cannot read 32 bytes (8 elements of type float32 with an offset of 0 elements) from a storage buffer with 16 bytes""",
     ):
-      tensor.to("cpu")
+      (tensor + 1).cpu()
 
   # Confirmed this test does NOT fail on cpu.
   @et.why_tpu_only("TODO: support complex dtypes in addmm on TPU.")
@@ -2561,10 +2579,11 @@ module {
     # TODO: Error eagerly, i.e. without having to call the op builder.
     with et.assert_raises_message(
         RuntimeError,
-        tpu="""to_copy(): expected all dimensions of the bitcast input tensor to be static, got 1 dynamic dimension within shape [dyn, 2]; calling ViewPrimitiveShlo() with input shape=[dyn, 2] and primitive=bitcast(from_type=int32, to_type=int64)""",
+        tpu="""copy_(): expected all dimensions of the bitcast input tensor to be static, got 1 dynamic dimension within shape [dyn, 2]; calling ViewPrimitiveShlo() with input shape=[dyn, 2] and primitive=bitcast(from_type=int32, to_type=int64)""",
         message_reviewed_by="wan",
     ):
-      out = inp.view(torch.int64)
+      # clone to force the bitcast to happen on TPU and not on CPU
+      out = inp.view(torch.int64).clone()
       out.cpu()
 
   @et.why_tpu_only("TODO: investigate why this is TPU-only.")

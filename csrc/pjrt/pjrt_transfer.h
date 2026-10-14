@@ -70,6 +70,20 @@ absl::StatusOr<AsyncDmaResult> TpuAsyncDmaCopyHtoD(
     const void* src_host_ptr, const DeviceBufferRef& dst_buffer,
     int64_t dst_byte_offset, int64_t copy_bytes);
 
+// Packs unpacked float4_e2m1fn_x2 data (1 element per byte) from unpacked_data
+// into packed_data where each byte contains 2 elements (lower 4 bits of first
+// element, upper 4 bits of second element).
+// Contract:
+// - unpacked_data must not be null.
+// - packed_data must not be null.
+// - num_packed_elements must be non-negative.
+// - unpacked_data must point to a buffer containing at least
+//   2 * num_packed_elements elements.
+// - packed_data must point to a buffer containing at least num_packed_elements
+//   bytes.
+void PackFp4(const uint8_t* absl_nonnull unpacked_data,
+             uint8_t* absl_nonnull packed_data, int64_t num_packed_elements);
+
 }  // namespace torch_tpu
 
 #endif  // TORCH_TPU_CSRC_PJRT_PJRT_TRANSFER_H_

@@ -66,6 +66,20 @@
 #include "xla/xla_data.pb.h"
 
 namespace torch_tpu {
+
+void PackFp4(const uint8_t* absl_nonnull unpacked_data,
+             uint8_t* absl_nonnull packed_data, int64_t num_packed_elements) {
+  ABSL_CHECK(unpacked_data != nullptr);   // CRASH_OK
+  ABSL_CHECK(packed_data != nullptr);     // CRASH_OK
+  ABSL_CHECK_GE(num_packed_elements, 0);  // CRASH_OK
+
+  for (int64_t i = 0; i < num_packed_elements; ++i) {
+    uint8_t val0 = unpacked_data[2 * i] & 0x0F;
+    uint8_t val1 = unpacked_data[2 * i + 1] & 0x0F;
+    packed_data[i] = (val1 << 4) | val0;
+  }
+}
+
 namespace {
 
 // Unpacks packed float4_e2m1fn_x2 data from host_data into a byte vector
@@ -87,30 +101,6 @@ std::vector<uint8_t> UnpackFp4(const uint8_t* absl_nonnull host_data,
     temp_unpacked_data[2 * i + 1] = (byte >> 4) & 0x0F;
   }
   return temp_unpacked_data;
-}
-
-// Packs unpacked float4_e2m1fn_x2 data (1 element per byte) from unpacked_data
-// into packed_data where each byte contains 2 elements (lower 4 bits of first
-// element, upper 4 bits of second element).
-// Contract:
-// - unpacked_data must not be null.
-// - packed_data must not be null.
-// - num_packed_elements must be non-negative.
-// - unpacked_data must point to a buffer containing at least
-//   2 * num_packed_elements elements.
-// - packed_data must point to a buffer containing at least num_packed_elements
-//   bytes.
-void PackFp4(const uint8_t* absl_nonnull unpacked_data,
-             uint8_t* absl_nonnull packed_data, int64_t num_packed_elements) {
-  ABSL_CHECK(unpacked_data != nullptr);   // CRASH_OK
-  ABSL_CHECK(packed_data != nullptr);     // CRASH_OK
-  ABSL_CHECK_GE(num_packed_elements, 0);  // CRASH_OK
-
-  for (int64_t i = 0; i < num_packed_elements; ++i) {
-    uint8_t val0 = unpacked_data[2 * i] & 0x0F;
-    uint8_t val1 = unpacked_data[2 * i + 1] & 0x0F;
-    packed_data[i] = (val1 << 4) | val0;
-  }
 }
 
 void ValidateFp4Dimensions(absl::Span<const int64_t> dimensions) {
@@ -398,10 +388,12 @@ xla::Future<void> TpuMemcpyDtoHDirectImpl(
 
 absl::Status TpuMemcpyDtoHDirect(const DeviceBufferRef& buffer_ref,
                                  void* dst_ptr, bool non_blocking) {
-  ABSL_CHECK_NE(buffer_ref.element_type(),  // CRASH_OK
-                mlir::ElementType::F4E2M1FN)
-      << "direct copy to host is not supported for float4_e2m1fn_x2";
   size_t buffer_expected_bytes = buffer_ref.size_bytes();
+  if (buffer_ref.element_type() == mlir::ElementType::F4E2M1FN) {
+    // Each FP4 element only takes up 4 bits on-device, but is copied to host
+    // as 8 bits (lower 4 bits set).
+    buffer_expected_bytes *= 2;
+  }
   if (buffer_expected_bytes == 0) {
     return absl::OkStatus();
   }
