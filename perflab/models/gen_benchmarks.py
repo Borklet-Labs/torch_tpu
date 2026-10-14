@@ -49,12 +49,17 @@ _CPU_PRESUBMIT_MODEL_IDS = frozenset({
 
 
 def _make_factory(
-    model_id: str, is_training: bool, model_load_fn: gen_utils.ModelLoadFn
+    model_id: str,
+    is_training: bool,
+    model_load_fn: gen_utils.ModelLoadFn,
+    full_scope_batch_size: int,
 ):
   """Creates a benchmark factory for a given model."""
 
   def factory(ctx: context_lib.Context):
-    model, inputs = model_load_fn(ctx, model_id, is_training)
+    model, inputs = model_load_fn(
+        ctx, model_id, is_training, full_scope_batch_size
+    )
     if is_training:
       opt = torch.optim.AdamW(
           model.parameters(),
@@ -125,7 +130,10 @@ def _register_gen_benchmarks():
 
     registry_lib.add_benchmark(
         factory=_make_factory(
-            model_gen_spec.model_id, is_training, model_load_fn
+            model_gen_spec.model_id,
+            is_training,
+            model_load_fn,
+            extra_config.full_scope_batch_size,
         ),
         stepper=step,
         stepper_kwargs=step_kwargs,

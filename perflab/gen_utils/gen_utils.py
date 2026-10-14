@@ -27,8 +27,10 @@ import torch
 from perflab import context as context_lib
 from perflab.gen_utils import load_model
 
+# Called as `model_load_fn(ctx, model_id, is_training, full_scope_batch_size)`.
 ModelLoadFn = Callable[
-    [context_lib.Context, str, bool], tuple[torch.nn.Module, dict[str, Any]]
+    [context_lib.Context, str, bool, int],
+    tuple[torch.nn.Module, dict[str, Any]],
 ]
 
 
@@ -174,6 +176,8 @@ class ExtraConfigs:
   step_kwargs: dict[str, Any] = dataclasses.field(default_factory=dict)
   # The function to use to load the model.
   model_load_fn: ModelLoadFn = load_model.default_load_model
+  # Batch size for the full run scope (see `_GEN_FULL_SCOPE_BATCH_SIZES`).
+  full_scope_batch_size: int = 1
 
 
 # pyformat: disable
@@ -2567,6 +2571,177 @@ _GEN_MODEL_CONFIGS_RAW: dict[str, dict[str, Any]] = {
 # pyformat: enable
 
 
+# Full run scope batch sizes for generated benchmarks, keyed like
+# `_GEN_MODEL_CONFIGS_RAW`. At batch size 1, these benchmarks spend most of each
+# step on host overhead rather than on the device, which hides device and
+# compiler regressions. Each value is the smallest power of two (at most 64) for
+# which the compiled run mode on v7_1x1x1 spends at least 85% of the step time
+# on the device (XProf device time / post-warmup step time), or at least 80% if
+# no measured batch size reached 85%. Benchmarks that reach neither (within 64,
+# or before larger batch sizes fail) use the measured batch size with the
+# highest utilization. Benchmarks not listed use batch size 1. The presubmit
+# run scope always uses batch size 1.
+# pyformat: disable
+_GEN_FULL_SCOPE_BATCH_SIZES: dict[str, int] = {
+    # go/keep-sorted start
+    "albert_base_v2_finetuned_squad_forward_gen": 16,
+    "all_distilroberta_v1_forward_gen": 8,
+    "all_distilroberta_v1_train_gen": 4,
+    "all_minilm_l6_v2_forward_gen": 32,
+    "altclip_forward_gen": 8,
+    "altclip_m9_forward_gen": 8,
+    "ast_finetuned_audioset_10_10_0_4593_forward_gen": 4,
+    "bart_large_cnn_forward_gen": 2,
+    "bart_large_cnn_train_gen": 2,
+    "bart_large_mnli_forward_gen": 4,
+    "bert2bert_base_arxiv_titlegen_forward_gen": 8,
+    "bert_base_ner_forward_gen": 16,
+    "bert_base_ner_train_gen": 8,
+    "bert_base_uncased_forward_gen": 16,
+    "bert_base_uncased_train_gen": 4,
+    "bert_large_uncased_whole_word_masking_finetuned_squad_forward_gen": 8,
+    "bge_reranker_base_forward_gen": 16,
+    "bge_small_en_v1_5_forward_gen": 16,
+    "blip_image_captioning_base_forward_gen": 8,
+    "blip_image_captioning_base_train_gen": 4,
+    "blip_vqa_capfilt_large_forward_gen": 16,
+    "camembert_ner_forward_gen": 8,
+    "camembert_ner_train_gen": 8,
+    "chinese_clip_vit_base_patch16_forward_gen": 16,
+    "clap_htsat_fused_forward_gen": 16,
+    "clip4clip_webvid150k_forward_gen": 64,
+    "clip_vit_base_patch32_forward_gen": 64,
+    "colqwen2_v1_0_hf_forward_gen": 4,
+    "contriever_forward_gen": 16,
+    "cross_encoder_mmarco_german_distilbert_base_forward_gen": 16,
+    "csm_1b_forward_gen": 64,
+    "deberta_base_mnli_forward_gen": 64,
+    "detr_resnet_50_forward_gen": 64,
+    "dinov2_small_forward_gen": 8,
+    "dinov2_small_train_gen": 4,
+    "dinov2_with_registers_base_forward_gen": 4,
+    "dinov2_with_registers_base_train_gen": 2,
+    "dinov3_vitl16_pretrain_lvd1689m_forward_gen": 16,
+    "dinov3_vitl16_pretrain_lvd1689m_train_gen": 16,
+    "distilbert_base_cased_distilled_squad_forward_gen": 32,
+    "distilbert_base_multilingual_cased_ner_hrl_forward_gen": 32,
+    "distilbert_base_multilingual_cased_ner_hrl_train_gen": 8,
+    "distilbert_base_uncased_finetuned_sst_2_english_forward_gen": 16,
+    "distilbert_base_uncased_finetuned_sst_2_english_train_gen": 8,
+    "distilbert_base_uncased_forward_gen": 16,
+    "distilbert_base_uncased_mnli_forward_gen": 16,
+    "distilbert_base_uncased_mnli_train_gen": 8,
+    "distilbert_base_uncased_train_gen": 8,
+    "distiluse_base_multilingual_cased_v2_forward_gen": 32,
+    "electra_base_discriminator_forward_gen": 16,
+    "electra_base_discriminator_train_gen": 8,
+    "electra_large_discriminator_squad2_512_forward_gen": 8,
+    "finbert_forward_gen": 16,
+    "finbert_train_gen": 4,
+    "flan_t5_base_forward_gen": 8,
+    "french_camembert_postag_model_forward_gen": 16,
+    "french_camembert_postag_model_train_gen": 8,
+    "git_base_forward_gen": 8,
+    "git_base_vqav2_forward_gen": 4,
+    "git_large_vqav2_forward_gen": 2,
+    "glm_ocr_forward_gen": 16,
+    "glpn_kitti_forward_gen": 32,
+    "glucose_base_ja_v2_forward_gen": 8,
+    "glucose_base_ja_v2_train_gen": 2,
+    "gpt2_forward_gen": 4,
+    "granite_timeseries_patchtsmixer_forward_gen": 64,
+    "hubert_large_speech_emotion_recognition_russian_dusha_finetuned_forward_gen": 64,
+    "ijepa_vith14_1k_forward_gen": 8,
+    "inclusively_reformulation_it5_forward_gen": 8,
+    "indonesian_roberta_base_posp_tagger_forward_gen": 16,
+    "indonesian_roberta_base_posp_tagger_train_gen": 8,
+    "instructor_large_forward_gen": 8,
+    "lahja_sa_ahmad_v1_forward_gen": 64,
+    "layoutlm_invoices_forward_gen": 16,
+    "manga_ocr_base_forward_gen": 64,
+    "mbart_large_50_many_to_many_mmt_forward_gen": 2,
+    "mbart_large_50_many_to_many_mmt_train_gen": 2,
+    "mbart_ru_sum_gazeta_forward_gen": 2,
+    "metaclip_2_worldwide_giant_378_forward_gen": 2,
+    "mit_b2_forward_gen": 32,
+    "mmarco_mminilmv2_l12_h384_v1_forward_gen": 16,
+    "ms_marco_minilm_l6_v2_forward_gen": 32,
+    "mt5_multilingual_xlsum_forward_gen": 8,
+    "mt5_multilingual_xlsum_train_gen": 2,
+    "mt5_zh_ja_en_trimmed_forward_gen": 8,
+    "multilingual_e5_large_forward_gen": 8,
+    "nases_forward_gen": 8,
+    "nli_minilm2_l6_h768_forward_gen": 16,
+    "nli_minilm2_l6_h768_train_gen": 8,
+    "nllb_200_distilled_600m_forward_gen": 2,
+    "nllb_200_distilled_600m_train_gen": 2,
+    "nsfw_image_detection_forward_gen": 32,
+    "nsfw_image_detection_large_forward_gen": 32,
+    "opt_125m_forward_gen": 2,
+    "opt_125m_train_gen": 2,
+    "opus_mt_nl_en_forward_gen": 16,
+    "opus_mt_nl_en_train_gen": 16,
+    "parakeet_ctc_1_1b_forward_gen": 64,
+    "pegasus_xsum_forward_gen": 8,
+    "pegasus_xsum_train_gen": 4,
+    "prompt_guard_86m_train_gen": 4,
+    "punctuate_all_forward_gen": 8,
+    "punctuate_all_train_gen": 8,
+    "qanlu_forward_gen": 16,
+    "qnli_electra_base_forward_gen": 16,
+    "resnet_50_forward_gen": 64,
+    "roberta_base_go_emotions_forward_gen": 8,
+    "roberta_base_squad2_forward_gen": 16,
+    "roberta_large_forward_gen": 4,
+    "roberta_large_ner_english_forward_gen": 4,
+    "roberta_large_ner_english_train_gen": 2,
+    "roberta_large_train_gen": 2,
+    "rut5_base_sum_gazeta_forward_gen": 8,
+    "segformer_b0_finetuned_ade_512_512_forward_gen": 64,
+    "splinter_base_forward_gen": 16,
+    "stanford_deidentifier_base_forward_gen": 16,
+    "stsb_roberta_large_forward_gen": 8,
+    "t5_small_forward_gen": 16,
+    "t5_small_train_gen": 4,
+    "table_transformer_structure_recognition_forward_gen": 64,
+    "tapex_base_finetuned_wikisql_forward_gen": 4,
+    "tapex_base_finetuned_wikisql_train_gen": 4,
+    "tapex_large_finetuned_wtq_forward_gen": 2,
+    "tapex_large_finetuned_wtq_train_gen": 2,
+    "text2vec_base_chinese_paraphrase_forward_gen": 4,
+    "text_summarization_forward_gen": 32,
+    "text_summarization_train_gen": 4,
+    "timesformer_base_finetuned_k600_forward_gen": 2,
+    "tiny_qwen2forcausallm_2_5_forward_gen": 4,
+    "twitter_roberta_base_sentiment_latest_forward_gen": 16,
+    "twitter_roberta_base_sentiment_latest_train_gen": 4,
+    "twitter_xlm_roberta_base_sentiment_forward_gen": 8,
+    "vietai_nlp_itn_forward_gen": 16,
+    "vit_base_patch16_224_in21k_forward_gen": 32,
+    "vitpose_plus_base_forward_gen": 64,
+    "w2v_bert_2_0_forward_gen": 32,
+    "wav2vec2_large_robust_12_ft_emotion_msp_dim_forward_gen": 64,
+    "wav2vec2_large_xlsr_53_portuguese_forward_gen": 64,
+    "wmt19_ru_en_forward_gen": 4,
+    "xclip_base_patch32_forward_gen": 8,
+    "xlm_roberta_base_forward_gen": 8,
+    "xlm_roberta_base_train_gen": 2,
+    "xlm_roberta_large_it_mnli_forward_gen": 4,
+    "xlm_roberta_large_ner_hrl_forward_gen": 8,
+    "xlm_roberta_large_qa_multilingual_finedtuned_ru_forward_gen": 8,
+    "xlm_roberta_large_squad2_forward_gen": 8,
+    "xlm_roberta_large_xnli_forward_gen": 8,
+    "yolos_small_forward_gen": 8,
+    "zeroaraelectra_forward_gen": 16,
+    # go/keep-sorted end
+}
+# pyformat: enable
+
+
 _GEN_MODEL_CONFIGS: dict[str, ExtraConfigs] = {
-    k: ExtraConfigs(**v) for k, v in _GEN_MODEL_CONFIGS_RAW.items()
+    k: ExtraConfigs(
+        **_GEN_MODEL_CONFIGS_RAW.get(k, {}),
+        full_scope_batch_size=_GEN_FULL_SCOPE_BATCH_SIZES.get(k, 1),
+    )
+    for k in _GEN_MODEL_CONFIGS_RAW.keys() | _GEN_FULL_SCOPE_BATCH_SIZES.keys()
 }

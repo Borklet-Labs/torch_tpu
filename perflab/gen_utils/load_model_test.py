@@ -159,11 +159,14 @@ class LoadModelTest(seed_test_utils.RepeatableTest):
     self.assertNotIn("labels", inputs)
 
   def _load_time_series(
-      self, context_length: int
+      self,
+      context_length: int,
+      run_scope: context_lib.RunScope = context_lib.RunScope.FULL,
+      full_scope_batch_size: int = 1,
   ) -> tuple[nn.Module, dict[str, Any]]:
     ctx = context_lib.Context(
         target=target_lib.make_target(platform=target_lib.Platform.CPU),
-        run_scope=context_lib.RunScope.FULL,
+        run_scope=run_scope,
     )
     config = types.SimpleNamespace(context_length=context_length)
     with mock.patch.object(
@@ -172,8 +175,27 @@ class LoadModelTest(seed_test_utils.RepeatableTest):
         return_value=_fake_time_series_registry(config),
     ):
       return load_model.default_load_model(
-          ctx, "fake/time_series_model", is_training=False
+          ctx,
+          "fake/time_series_model",
+          is_training=False,
+          full_scope_batch_size=full_scope_batch_size,
       )
+
+  def test_full_scope_batch_size_used(self):
+    _, inputs = self._load_time_series(
+        context_length=512, full_scope_batch_size=8
+    )
+
+    self.assertEqual(inputs["past_values"].shape, (8, 512))
+
+  def test_presubmit_ignores_full_scope_batch_size(self):
+    _, inputs = self._load_time_series(
+        context_length=512,
+        run_scope=context_lib.RunScope.PRESUBMIT,
+        full_scope_batch_size=8,
+    )
+
+    self.assertEqual(inputs["past_values"].shape, (1, 128))
 
   def test_context_length_capped_at_seq_len(self):
     model, inputs = self._load_time_series(context_length=16384)

@@ -92,6 +92,18 @@ class GenUtilsTest(seed_test_utils.RepeatableTest):
     config = entry.get_extra_config(is_training=True, suffix="gen")
     self.assertIsNotNone(config)
     self.assertIn("compiled", config.skipped_run_modes)
+    self.assertEqual(config.full_scope_batch_size, 1)
+
+  def test_full_scope_batch_sizes_match_benchmarks(self):
+    benchmark_names = {
+        model.benchmark_name(is_training, suffix="gen")
+        for model in gen_utils.iter_models_csv()
+        for is_training in (False, True)
+    }
+    for name, batch_size in gen_utils._GEN_FULL_SCOPE_BATCH_SIZES.items():
+      with self.subTest(name=name):
+        self.assertIn(name, benchmark_names)
+        self.assertGreater(batch_size, 1)
 
   def test_iter_models_csv(self):
     models = list(gen_utils.iter_models_csv())

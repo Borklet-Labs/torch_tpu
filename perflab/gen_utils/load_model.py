@@ -21,7 +21,10 @@ from perflab import torch_device_ops
 
 
 def default_load_model(
-    ctx: context_lib.Context, model_id: str, is_training: bool
+    ctx: context_lib.Context,
+    model_id: str,
+    is_training: bool,
+    full_scope_batch_size: int = 1,
 ):
   """Loads the model and generates sample inputs for benchmarking.
 
@@ -29,6 +32,8 @@ def default_load_model(
     ctx: Benchmark execution context containing device and run scope options.
     model_id: Name of the transformer model to retrieve from the registry.
     is_training: Whether to generate training labels and configurations.
+    full_scope_batch_size: Batch size to use for the full run scope. The
+      presubmit run scope always uses a batch size of 1.
 
   Returns:
     A tuple of (model, inputs dictionary) ready for execution.
@@ -37,7 +42,7 @@ def default_load_model(
     batch_size = 1
     seq_len = 128
   else:
-    batch_size = 1
+    batch_size = full_scope_batch_size
     seq_len = 2048
 
   registry = model_helpers.get_module_registry()
