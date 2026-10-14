@@ -111,6 +111,7 @@ class DeviceModuleBase(
   def test_reset_memory_stats(self):
     """Tests that resetting memory stats works correctly."""
     # 1. Reset stats to establish a clean baseline where peak == current
+    torch.accelerator.synchronize()
     torch.accelerator.reset_peak_memory_stats()
 
     allocated_before = torch.accelerator.memory_allocated()
@@ -123,7 +124,9 @@ class DeviceModuleBase(
     t = torch.randn(num_elements, device="cpu").to(
         torch.accelerator.current_accelerator()
     )
+
     # 3. Verify peak memory increased
+    torch.accelerator.synchronize()
     allocated_after = torch.accelerator.memory_allocated()
     max_allocated_after = torch.accelerator.max_memory_allocated()
     self.assertGreaterEqual(allocated_after, allocated_before + size_in_bytes)
@@ -131,6 +134,7 @@ class DeviceModuleBase(
     # 4. Free the allocated tensor
     del t
     gc.collect()
+    torch.accelerator.synchronize()
     allocated_after_free = torch.accelerator.memory_allocated()
     self.assertLess(allocated_after_free, allocated_after)
 

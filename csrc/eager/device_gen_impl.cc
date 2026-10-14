@@ -137,10 +137,19 @@ absl::StatusOr<at::Tensor> CreateDeviceRngStateTensor(c10::Device device,
   // Ensure H2D allocation and memory copy target the intended TPU device
   // rather than the calling thread's currently active device.
   c10::DeviceGuard guard(device);
+  ABSL_CHECK_NE(  // CRASH_OK=transfers require active stream
+      GetEagerMode(), EagerMode::kInternalCompileFxGraph)
+      << "cannot initialize an eager mode generator during an FX graph trace";
   const uint64_t host_data[2] = {seed, offset};
+  std::vector<uint8_t> host_data_bytes(
+      reinterpret_cast<const uint8_t*>(host_data),
+      reinterpret_cast<const uint8_t*>(host_data) + sizeof(host_data));
+  const void* host_data_ptr = host_data_bytes.data();
   TT_ASSIGN_OR_RETURN(
       auto rng_state_buffer,
-      TpuMallocAndMemcpyHtoD(host_data, mlir::ElementType::UI64, {2}));
+      TpuMallocAndMemcpyHtoD(host_data_ptr, mlir::ElementType::UI64, {2},
+                             /*backing_tensor=*/std::nullopt,
+                             /*backing_data=*/std::move(host_data_bytes)));
   return MakeTensor(std::move(rng_state_buffer), device.index());
 }
 
