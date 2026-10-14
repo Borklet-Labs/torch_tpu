@@ -121,6 +121,37 @@ absl::StatusOr<mlir::MlirOp> BuildPowShlo(mlir::MlirOp base_op,
     return stablehlo::Or(broadcasted_base_op, broadcasted_exp_op);
   }
 
+  // Implements PyTorch powi reference semantics for integer exponentiation with
+  // negative exponents: 1 when base == 1, ±1 when base == -1 (depending on
+  // whether the exponent is odd or even), and 0 otherwise.
+  // The exponent is clamped to 0 via stablehlo::Max(broadcasted_exp_op,
+  // zero_op) before calling stablehlo::Pow to bypass the XLA TPU scalar
+  // lowering omission (SpowI32) that would otherwise return 0 for base == -1.
+  if (base_type.getElementType().isSignlessInteger() &&
+      !IsBooleanType(base_type)) {
+    mlir::MlirOp zero_op = MakeConstantLike(broadcasted_base_op, 0);
+    mlir::MlirOp one_op = MakeConstantLike(broadcasted_base_op, 1);
+    mlir::MlirOp neg_one_op = MakeConstantLike(broadcasted_base_op, -1);
+    mlir::MlirOp safe_exp_op = stablehlo::Max(broadcasted_exp_op, zero_op);
+    mlir::MlirOp pow_op = stablehlo::Pow(broadcasted_base_op, safe_exp_op);
+    mlir::MlirOp exp_lt_zero = stablehlo::Compare(
+        broadcasted_exp_op, zero_op, stablehlo::ComparisonDirection::LT);
+    mlir::MlirOp base_eq_one = stablehlo::Compare(
+        broadcasted_base_op, one_op, stablehlo::ComparisonDirection::EQ);
+    mlir::MlirOp base_eq_neg_one = stablehlo::Compare(
+        broadcasted_base_op, neg_one_op, stablehlo::ComparisonDirection::EQ);
+    mlir::MlirOp exp_low_bit_op = stablehlo::And(broadcasted_exp_op, one_op);
+    mlir::MlirOp exp_is_odd = stablehlo::Compare(
+        exp_low_bit_op, one_op, stablehlo::ComparisonDirection::EQ);
+    mlir::MlirOp neg_one_pow_op =
+        stablehlo::Select(exp_is_odd, neg_one_op, one_op);
+    mlir::MlirOp non_unit_or_neg_one_op =
+        stablehlo::Select(base_eq_neg_one, neg_one_pow_op, zero_op);
+    mlir::MlirOp neg_exp_result_op =
+        stablehlo::Select(base_eq_one, one_op, non_unit_or_neg_one_op);
+    return stablehlo::Select(exp_lt_zero, neg_exp_result_op, pow_op);
+  }
+
   return stablehlo::Pow(broadcasted_base_op, broadcasted_exp_op);
 }
 

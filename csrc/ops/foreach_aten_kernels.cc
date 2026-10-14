@@ -3234,9 +3234,9 @@ void AtenForeachMinimum_ScalarList(at::TensorList self,
 
 absl::StatusOr<at::Tensor> AtenPow(const at::Tensor& self,
                                    const at::Tensor& exponent) {
-  TT_ASSIGN_OR_RETURN(
-      at::Tensor out,
-      MakeEmptyTensor(self.sizes(), self.scalar_type(), self.device()));
+  const at::ScalarType result_type = at::result_type(self, exponent);
+  TT_ASSIGN_OR_RETURN(at::Tensor out, MakeEmptyTensor(self.sizes(), result_type,
+                                                      self.device()));
   AtenPowTensorTensorOut(self, exponent, out);
   return out;
 }

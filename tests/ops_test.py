@@ -214,10 +214,6 @@ ACCURACY_OVERRIDES_VS_GPU = {
     "_foreach_pow": {
         torch.complex64: {"rtol": 8.8e-4, "atol": 3.4e-4},
         torch.float32: {"rtol": 5.5e-6},
-        torch.int16: {"atol": 1.3},
-        torch.int32: {"atol": 1.3},
-        torch.int64: {"atol": 1.3},
-        torch.int8: {"atol": 1.3},
     },
     "_foreach_sigmoid": {
         torch.complex64: {"rtol": 1.4e-5},
