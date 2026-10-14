@@ -37,6 +37,7 @@ import dataclasses
 import functools
 import hashlib
 import operator
+import pathlib
 import re
 import threading
 from typing import Any, TypeAlias, cast
@@ -615,6 +616,29 @@ def _sanitize_module_name(name: str) -> str:
   return _VALID_SYMBOL_REGEX.sub("_", name)
 
 
+def _get_first_node_trace(
+    graph_module: torch.fx.GraphModule,
+) -> torch.fx.graph._ParsedStackTrace | None:
+  """Returns the parsed stack trace of the first node that has one."""
+  for node in graph_module.graph.nodes:
+    if node.stack_trace:
+      trace = torch.fx.graph._parse_stack_trace(node.stack_trace)
+      if trace and trace.file:
+        return trace
+  return None
+
+
+def _infer_default_base_name(graph_module: torch.fx.GraphModule) -> str:
+  """Infers default module name from the FX graph stack trace: <filename>_L<line>."""
+  try:
+    trace = _get_first_node_trace(graph_module)
+    if trace and trace.file:
+      return f"{pathlib.Path(trace.file).stem}_L{trace.lineno}"
+  except Exception:  # pylint: disable=broad-exception-caught
+    pass
+  return "module"
+
+
 def _get_module_name(
     custom_module_name: str | None,
     is_fwd: bool,
@@ -682,6 +706,10 @@ class TpuBackend:
     Args:
       graph_module: The graph module to compile.
       example_inputs: Example inputs.
+      name: Forwarded from `torch.compile(..., name=...)` (requires PyTorch >=
+        2.15; older releases do not pass `name` through to custom backends).
+        Custom base name for compiled modules. If unset, a name is inferred from
+        the FX graph's source location (`<file>_L<line>`).
       options: Options dict to pass to the backend. Available keys:
         async_compile: Default False. If True, executes XLA compilation
           asynchronously.
@@ -752,6 +780,9 @@ class TpuBackend:
     if mode is not None and mode != "default":
       logging.warning('TPU backend ignores `mode` kwarg, got mode="%s".', mode)
 
+    # `name` is forwarded by torch.compile(..., name=...).
+    name = kwargs.pop("name", None)
+
     if kwargs:
       raise TypeError("Unexpected keyword arguments: {}".format(kwargs))
 
@@ -781,11 +812,8 @@ class TpuBackend:
     if input_layouts:
       # AOTAutogradCache keys don't include device layouts.
       serializable = False
-    custom_module_name = (
-        options.get("custom_module_name") or options.get("name")
-        if options
-        else None
-    )
+
+    custom_module_name = name or _infer_default_base_name(graph_module)
 
     if debug is not None:
       debug.pre_autograd_fx_code.append(graph_module.code)
@@ -921,8 +949,8 @@ class TpuBackend:
     Args:
       compiler_instance: Responsible for compiling the graph module.
       is_fwd: Indicates whether the forward or backward pass is being compiled.
-      custom_module_name: The base custom module name provided in backend
-        options, if any.
+      custom_module_name: The base module name from `torch.compile(name=...)` or
+        inferred from the FX graph.
       debug: Container for recording compilation debug artifacts.
       compiled_artifacts: Per-call container tracking compiled artifacts.
       input_layouts: The non-default on-device layouts of the inputs from

@@ -31,6 +31,14 @@ from torch_tpu._internal.compile.torch_tpu_compiled_executable import NoOpCompil
 from torch_tpu._internal.utils import test_utils as utils
 from tests import seed_test_utils
 
+# `torch.compile(..., name=...)` is only forwarded to custom backends from
+# PyTorch 2.15 onwards. Older releases either reject the kwarg or drop it before
+# it reaches the TPU backend.
+_requires_compile_name_support = absltest.skipIf(
+    utils.get_torch_version() < (2, 15),
+    "torch.compile(name=...) requires PyTorch >= 2.15.",
+)
+
 
 class FunctionTest(seed_test_utils.RepeatableTest):
 
@@ -292,7 +300,8 @@ class FunctionTest(seed_test_utils.RepeatableTest):
         v[0].stablehlo_forward_text[0], v[1].stablehlo_forward_text[0]
     )
 
-  def test_hlo_naming_with_custom_name_options(self):
+  @_requires_compile_name_support
+  def test_hlo_naming_with_custom_name(self):
     def func(a, b):
       return (a * b).sum()
 
@@ -302,11 +311,8 @@ class FunctionTest(seed_test_utils.RepeatableTest):
     compiled = torch.compile(
         func,
         backend="tpu",
-        options={
-            "name": "custom_opt",
-            "serializable": False,
-            "debug_callback": debugs.append,
-        },
+        name="custom_name",
+        options={"serializable": False, "debug_callback": debugs.append},
     )
     out = compiled(a, b)
     out.backward()
@@ -315,11 +321,40 @@ class FunctionTest(seed_test_utils.RepeatableTest):
     self.assertNotEmpty(debugs[0].stablehlo_backward_text)
     self.assertRegex(
         debugs[0].stablehlo_forward_text[0],
-        r"module\s+@custom_opt_split\d+_fwd",
+        r"module\s+@custom_name_split\d+_fwd",
     )
     self.assertRegex(
         debugs[0].stablehlo_backward_text[0],
-        r"module\s+@custom_opt_split\d+_bwd",
+        r"module\s+@custom_name_split\d+_bwd",
+    )
+
+  def test_hlo_naming_ignores_name_in_options(self):
+    """`name` is only accepted via torch.compile(name=...), not options."""
+
+    def func(a, b):
+      return (a * b).sum()
+
+    a = torch.tensor([1.0, 2.0, 3.0], device="tpu")
+    b = torch.tensor([4.0, 5.0, 6.0], device="tpu")
+    debugs: list[compile_lib.TpuCompileDebug] = []
+    compiled = torch.compile(
+        func,
+        backend="tpu",
+        options={
+            "name": "should_be_ignored",
+            "serializable": False,
+            "debug_callback": debugs.append,
+        },
+    )
+    out = compiled(a, b)
+    self.assertEqual(out.item(), 32.0)
+    self.assertLen(debugs, 1)
+    self.assertNotRegex(
+        debugs[0].stablehlo_forward_text[0], r"should_be_ignored"
+    )
+    self.assertRegex(
+        debugs[0].stablehlo_forward_text[0],
+        r"module\s+@small_graph_test_L\d+_split\d+_fwd",
     )
 
   def test_compiled_backward_uses_boxed_calling_convention(self):
@@ -341,6 +376,7 @@ class FunctionTest(seed_test_utils.RepeatableTest):
     utils.assert_close(a.grad.cpu(), b.detach().cpu())
     utils.assert_close(b.grad.cpu(), a.detach().cpu())
 
+  @_requires_compile_name_support
   def test_hlo_naming_with_graph_break_custom_name(self):
     def func(a, b):
       x = a / (torch.abs(a) + 1)
@@ -357,11 +393,8 @@ class FunctionTest(seed_test_utils.RepeatableTest):
     compiled = torch.compile(
         func,
         backend="tpu",
-        options={
-            "name": "gb_test",
-            "serializable": False,
-            "debug_callback": debugs.append,
-        },
+        name="gb_test",
+        options={"serializable": False, "debug_callback": debugs.append},
     )
     _ = compiled(*inputs_val)
     self.assertLen(debugs, 2)
@@ -384,48 +417,54 @@ class FunctionTest(seed_test_utils.RepeatableTest):
     v = self._run_and_compare(func, inputs_val)
     self.assertLen(v, 1)
 
+  # (raw_name, expected sanitized MLIR symbol) pairs shared by the sanitization
+  # tests below.
+  _SANITIZATION_CASES = [
+      # Special symbols, punctuation, brackets, operators, spaces
+      (
+          "my-model.name/layer:0[linear] (v1) + #tag",
+          "my_model_name_layer_0_linear___v1_____tag",
+      ),
+      # Quotes and slashes
+      (
+          r"model\"name'with\slashes",
+          "model__name_with_slashes",
+      ),
+      # Only invalid/special characters
+      ("!@#$%^&*()-+=~`{}[]|:;'<>,.?/ ", "_" * 30),
+      # Unicode, non-ASCII and emojis
+      ("модель_🚀_test_123", "_________test_123"),
+      # Whitespace including tabs and newlines
+      ("  model\twith\nspaces  ", "__model_with_spaces__"),
+      # Purely numeric with symbols (MLIR quotes identifiers starting with digits)
+      ("123.456-789", "123_456_789"),
+  ]
+
+  def test_sanitize_module_name(self):
+    """Tests that invalid characters are replaced with underscores."""
+    for raw_name, expected_clean in self._SANITIZATION_CASES:
+      with self.subTest(raw_name=raw_name):
+        self.assertEqual(
+            _backend._sanitize_module_name(raw_name), expected_clean
+        )
+
+  @_requires_compile_name_support
   def test_hlo_naming_sanitization_pressure_test(self):
     """Tests that invalid characters in custom names do not cause crashes."""
-    test_cases = [
-        # Special symbols, punctuation, brackets, operators, spaces
-        (
-            "my-model.name/layer:0[linear] (v1) + #tag",
-            "my_model_name_layer_0_linear___v1_____tag",
-        ),
-        # Quotes and slashes
-        (
-            r"model\"name'with\slashes",
-            "model__name_with_slashes",
-        ),
-        # Only invalid/special characters
-        ("!@#$%^&*()-+=~`{}[]|:;'<>,.?/ ", "_" * 30),
-        # Unicode, non-ASCII and emojis
-        ("модель_🚀_test_123", "_________test_123"),
-        # Whitespace including tabs and newlines
-        ("  model\twith\nspaces  ", "__model_with_spaces__"),
-        # Purely numeric with symbols (MLIR quotes identifiers starting with digits)
-        ("123.456-789", "123_456_789"),
-    ]
 
     def func(a, b):
       return (a * b).sum()
 
-    for raw_name, expected_clean in test_cases:
+    for raw_name, expected_clean in self._SANITIZATION_CASES:
       with self.subTest(raw_name=raw_name):
-        sanitized = _backend._sanitize_module_name(raw_name)
-        self.assertEqual(sanitized, expected_clean)
-
         a = torch.tensor([1.0, 2.0, 3.0], device="tpu", requires_grad=True)
         b = torch.tensor([4.0, 5.0, 6.0], device="tpu", requires_grad=True)
         debugs: list[compile_lib.TpuCompileDebug] = []
         compiled = torch.compile(
             func,
             backend="tpu",
-            options={
-                "name": raw_name,
-                "serializable": False,
-                "debug_callback": debugs.append,
-            },
+            name=raw_name,
+            options={"serializable": False, "debug_callback": debugs.append},
         )
         out = compiled(a, b)
         out.backward()
@@ -442,6 +481,7 @@ class FunctionTest(seed_test_utils.RepeatableTest):
             rf'module\s+@"?{re.escape(expected_clean)}_split\d+_bwd',
         )
 
+  @_requires_compile_name_support
   def test_hlo_naming_with_empty_name(self):
     """Tests that an empty name falls back to default module naming."""
 
@@ -454,17 +494,84 @@ class FunctionTest(seed_test_utils.RepeatableTest):
     compiled = torch.compile(
         func,
         backend="tpu",
-        options={
-            "name": "",
-            "serializable": False,
-            "debug_callback": debugs.append,
-        },
+        name="",
+        options={"serializable": False, "debug_callback": debugs.append},
     )
     out = compiled(a, b)
     self.assertEqual(out.item(), 32.0)
     self.assertLen(debugs, 1)
     self.assertNotEmpty(debugs[0].stablehlo_forward_text)
-    self.assertRegex(debugs[0].stablehlo_forward_text[0], r"module\s+@tt_jit")
+    self.assertRegex(
+        debugs[0].stablehlo_forward_text[0],
+        r"module\s+@small_graph_test_L\d+_split\d+_fwd",
+    )
+
+  def test_hlo_naming_default_without_options(self):
+    """Tests default module naming when no custom name or options are provided."""
+
+    def func(a, b):
+      return (a * b).sum()
+
+    a = torch.tensor([1.0, 2.0, 3.0], device="tpu", requires_grad=True)
+    b = torch.tensor([4.0, 5.0, 6.0], device="tpu", requires_grad=True)
+    debugs: list[compile_lib.TpuCompileDebug] = []
+    compiled = torch.compile(
+        func,
+        backend="tpu",
+        options={"serializable": False, "debug_callback": debugs.append},
+    )
+    out = compiled(a, b)
+    out.backward()
+    self.assertLen(debugs, 1)
+    self.assertNotEmpty(debugs[0].stablehlo_forward_text)
+    self.assertNotEmpty(debugs[0].stablehlo_backward_text)
+    self.assertRegex(
+        debugs[0].stablehlo_forward_text[0],
+        r"module\s+@small_graph_test_L\d+_split\d+_fwd",
+    )
+    self.assertRegex(
+        debugs[0].stablehlo_backward_text[0],
+        r"module\s+@small_graph_test_L\d+_split\d+_bwd",
+    )
+
+  def test_hlo_naming_default_with_graph_break(self):
+    """Tests default module naming when a graph break occurs."""
+
+    def func(a, b):
+      x = a / (torch.abs(a) + 1)
+      if b.sum() < 0:
+        b = b * -1
+      return x * b
+
+    inputs_val = [
+        torch.tensor([0.1, 0.2, 0.3, 0.4, 0.5], device="tpu"),
+        torch.tensor([0.4, 0.5, 0.6, 0.7, 0.6], device="tpu"),
+    ]
+
+    debugs: list[compile_lib.TpuCompileDebug] = []
+    compiled = torch.compile(
+        func,
+        backend="tpu",
+        options={"serializable": False, "debug_callback": debugs.append},
+    )
+    _ = compiled(*inputs_val)
+    self.assertLen(debugs, 2)
+    self.assertRegex(
+        debugs[0].stablehlo_forward_text[0],
+        r"module\s+@small_graph_test_L\d+_split\d+_fwd",
+    )
+    self.assertRegex(
+        debugs[1].stablehlo_forward_text[0],
+        r"module\s+@small_graph_test_L\d+_split\d+_fwd",
+    )
+
+  def test_hlo_naming_default_fallback_on_exception(self):
+    """Tests that an exception during stack trace inspection safely falls back to 'module'."""
+    bad_gm = mock.MagicMock()
+    bad_gm.graph.nodes = mock.PropertyMock(
+        side_effect=RuntimeError("Simulated node traversal failure")
+    )
+    self.assertEqual(_backend._infer_default_base_name(bad_gm), "module")
 
   def test_data_dependent_dynamic_op(self):
     """Test that a dynamo will break on data dependent ops.
@@ -1242,7 +1349,6 @@ class ModuleTest(seed_test_utils.RepeatableTest):
             torch.allclose(p_before, p_after, rtol=1e-4, atol=1e-4),
             "Parameters did not change after optimizer.step()",
         )
-
 
   def test_geqrf_empty(self):
     # geqrf under torch.compile with empty inputs is not tested in the standard
