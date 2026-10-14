@@ -224,9 +224,9 @@ cleaner:
 
 ```python
 def rope_ref(pos: Tensor, dim: int, theta: int = 10000) -> Tensor:
-  scale = torch.arange(0, dim, 2, dtype=pos.dtype, device=pos.device) / dim
+  scale = torch.arange(0, dim, 2, dtype=torch.float32, device=pos.device) / dim
   omega = 1.0 / (theta**scale)
-  out = torch.einsum("...n,d->...nd", pos, omega)
+  out = torch.einsum("...n,d->...nd", pos.to(omega.dtype), omega)
   # Explicitly stacks 4 values per frequency pair: [cos, -sin, sin, cos]
   out = torch.stack(
       [torch.cos(out), -torch.sin(out), torch.sin(out), torch.cos(out)], dim=-1
@@ -248,9 +248,9 @@ def apply_rope_ref(xq: Tensor, xk: Tensor, freqs_cis: Tensor) -> tuple[Tensor, T
 
 ```python
 def rope(pos: Tensor, dim: int, theta: int = 10000) -> Tensor:
-  scale = torch.arange(0, dim, 2, dtype=pos.dtype, device=pos.device) / dim
+  scale = torch.arange(0, dim, 2, dtype=torch.float32, device=pos.device) / dim
   omega = 1.0 / (theta**scale)
-  out = torch.einsum("...n,d->...nd", pos, omega)
+  out = torch.einsum("...n,d->...nd", pos.to(omega.dtype), omega)
   # Stores only compact [cos, sin] pairs: (B, S, D/2, 2) — 50% less HBM footprint!
   return torch.stack([torch.cos(out).float(), torch.sin(out).float()], dim=-1)
 
