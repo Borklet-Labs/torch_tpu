@@ -20,10 +20,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
-#include <string>
+#include <string_view>
 #include <utility>
 
 #include "ATen/core/TensorBody.h"
+#include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "c10/core/Device.h"
 #include "c10/core/DispatchKeySet.h"
 #include "c10/core/SymInt.h"
@@ -49,6 +51,9 @@ namespace torch_tpu {
 // TensorImpl. Use ConstTensor when a function only inspects a tensor, e.g. for
 // logging or debug printing. Note that comparing the returned SymInts with
 // `==` (or other comparison operators) guards; print them instead.
+//
+// None of the accessors throw either: they return std::optional when there may
+// be no value, and absl::StatusOr when the query may be invalid for the tensor.
 //
 // Caveat: tensor subclasses with a Python-custom sizes/strides/device policy
 // forward some of these accessors to their `__torch_dispatch__`, which is
@@ -86,23 +91,24 @@ class ConstTensor {
     return tensor_.scalar_type();
   }
   [[nodiscard]] caffe2::TypeMeta dtype() const { return tensor_.dtype(); }
-  [[nodiscard]] c10::Device device() const { return tensor_.device(); }
-  [[nodiscard]] c10::DeviceIndex get_device() const {
-    return tensor_.get_device();
-  }
+  // Returns nullopt for tensors without a device, e.g. undefined tensors.
+  [[nodiscard]] std::optional<c10::Device> device() const;
+  [[nodiscard]] std::optional<c10::DeviceIndex> get_device() const;
   [[nodiscard]] c10::Layout layout() const { return tensor_.layout(); }
-  [[nodiscard]] c10::TensorOptions options() const { return tensor_.options(); }
+  [[nodiscard]] c10::TensorOptions options() const;
   [[nodiscard]] c10::DispatchKeySet key_set() const {
     return tensor_.key_set();
   }
-  [[nodiscard]] std::string toString() const { return tensor_.toString(); }
-  [[nodiscard]] size_t itemsize() const { return tensor_.itemsize(); }
-  [[nodiscard]] int64_t element_size() const { return tensor_.element_size(); }
+  // Return nullopt for tensors without a dtype, e.g. undefined tensors.
+  [[nodiscard]] std::optional<size_t> itemsize() const;
+  [[nodiscard]] std::optional<int64_t> element_size() const;
   [[nodiscard]] bool is_floating_point() const {
     return tensor_.is_floating_point();
   }
   [[nodiscard]] bool is_complex() const { return tensor_.is_complex(); }
-  [[nodiscard]] bool is_signed() const { return tensor_.is_signed(); }
+  // Returns nullopt for dtypes without a signedness: quantized, bits and
+  // undefined dtypes.
+  [[nodiscard]] std::optional<bool> is_signed() const;
 
   // Device predicates.
   [[nodiscard]] bool is_cpu() const { return tensor_.is_cpu(); }
@@ -146,72 +152,71 @@ class ConstTensor {
   }
   [[nodiscard]] bool has_storage() const { return tensor_.has_storage(); }
 
-  // Autograd. These read fields without creating autograd metadata.
+  // Autograd. These read fields without creating autograd metadata. Undefined
+  // tensors report the defaults of a tensor that never required grad.
   [[nodiscard]] bool requires_grad() const { return tensor_.requires_grad(); }
-  [[nodiscard]] bool is_leaf() const { return tensor_.is_leaf(); }
-  [[nodiscard]] int64_t output_nr() const { return tensor_.output_nr(); }
-  [[nodiscard]] bool retains_grad() const { return tensor_.retains_grad(); }
+  [[nodiscard]] bool is_leaf() const { return !defined() || tensor_.is_leaf(); }
+  [[nodiscard]] int64_t output_nr() const {
+    return defined() ? tensor_.output_nr() : 0;
+  }
+  [[nodiscard]] bool retains_grad() const {
+    return defined() && tensor_.retains_grad();
+  }
   [[nodiscard]] std::optional<c10::ScalarType> grad_dtype() const {
-    return tensor_.grad_dtype();
+    return defined() ? tensor_.grad_dtype() : scalar_type();
   }
   // Unlike at::Tensor::grad(), this does not warn for non-leaf tensors.
   [[nodiscard]] ConstTensor grad() const {
     return tensor_.unsafeGetTensorImpl()->grad();
   }
-  [[nodiscard]] bool is_view() const { return tensor_.is_view(); }
-  // Throws if the tensor is not a view.
-  [[nodiscard]] ConstTensor base() const { return at::Tensor(tensor_._base()); }
+  [[nodiscard]] bool is_view() const { return defined() && tensor_.is_view(); }
+  // Returns nullopt if the tensor is not a view.
+  [[nodiscard]] std::optional<ConstTensor> base() const;
 
   // Shape. These return symbolic values as is, without specializing them.
   [[nodiscard]] bool has_symbolic_sizes_strides() const {
     return tensor_.unsafeGetTensorImpl()->has_symbolic_sizes_strides();
   }
-  [[nodiscard]] int64_t dim() const { return tensor_.dim(); }
-  // Throws for nested tensors.
-  [[nodiscard]] c10::SymIntArrayRef sym_sizes() const {
-    return tensor_.sym_sizes();
-  }
-  [[nodiscard]] c10::SymInt sym_size(int64_t dim) const {
-    return tensor_.sym_size(dim);
-  }
-  // Throws for nested and sparse compressed tensors; all zeros for sparse COO
-  // tensors.
-  [[nodiscard]] c10::SymIntArrayRef sym_strides() const {
-    return tensor_.sym_strides();
-  }
-  [[nodiscard]] c10::SymInt sym_stride(int64_t dim) const {
-    return tensor_.sym_stride(dim);
-  }
+  // Fails for undefined tensors.
+  absl::StatusOr<int64_t> dim() const;
+  // Fail for undefined and nested tensors.
+  absl::StatusOr<c10::SymIntArrayRef> sym_sizes() const;
+  // Also fails with OutOfRange if `dim` is not in [-dim(), dim()).
+  absl::StatusOr<c10::SymInt> sym_size(int64_t dim) const;
+  // Fail for undefined, nested and sparse compressed tensors. Sparse COO
+  // tensors have all-zero strides.
+  absl::StatusOr<c10::SymIntArrayRef> sym_strides() const;
+  // Also fails with OutOfRange if `dim` is not in [-dim(), dim()).
+  absl::StatusOr<c10::SymInt> sym_stride(int64_t dim) const;
   [[nodiscard]] c10::SymInt sym_numel() const { return tensor_.sym_numel(); }
-  // Throws for sparse COO tensors.
-  [[nodiscard]] c10::SymInt sym_nbytes() const { return tensor_.sym_nbytes(); }
+  // Fails for undefined and sparse COO tensors.
+  absl::StatusOr<c10::SymInt> sym_nbytes() const;
   [[nodiscard]] c10::SymInt sym_storage_offset() const {
     return tensor_.sym_storage_offset();
   }
 
   // Returns whether the tensor is contiguous in `memory_format`, or nullopt if
-  // the tensor has symbolic sizes/strides or a non-strided layout.
+  // the tensor is undefined, has symbolic sizes/strides, is nested or has a
+  // non-strided layout.
   // at::Tensor::sym_is_contiguous() is deliberately not exposed: computing the
   // contiguity of backed symbolic shapes evaluates (and guards on) size and
   // stride comparisons.
   [[nodiscard]] std::optional<bool> maybe_is_contiguous(
       c10::MemoryFormat memory_format = c10::MemoryFormat::Contiguous) const;
 
-  // Sparse. These read the sparse TensorImpl when there is one, and otherwise
-  // fall back to the dispatcher (0 and dim() for strided tensors). They use
-  // dynamic_cast because wrapper subclasses can have the sparse dispatch keys
-  // without a sparse TensorImpl.
-  [[nodiscard]] int64_t sparse_dim() const;
-  [[nodiscard]] int64_t dense_dim() const;
-  // Throws for tensors that are not sparse COO.
-  [[nodiscard]] bool is_coalesced() const;
+  // Sparse. sparse_dim() and dense_dim() are 0 and dim() for strided tensors.
+  absl::StatusOr<int64_t> sparse_dim() const;
+  absl::StatusOr<int64_t> dense_dim() const;
+  // Fails for tensors that are not sparse COO.
+  absl::StatusOr<bool> is_coalesced() const;
   // Returns the number of specified elements of a sparse COO or sparse
   // compressed tensor. Unlike at::Tensor::_nnz(), this does not guard on a
-  // symbolic number of elements. Returns nullopt for tensors that are not
-  // sparse.
-  [[nodiscard]] std::optional<c10::SymInt> sym_nnz() const;
+  // symbolic number of elements. Fails for tensors that are not sparse.
+  absl::StatusOr<c10::SymInt> sym_nnz() const;
 
  private:
+  absl::Status ValidateDefined(std::string_view method) const;
+
   at::Tensor tensor_;  // UNINITIALIZED_TENSOR_OK: Set by the constructor.
 };
 

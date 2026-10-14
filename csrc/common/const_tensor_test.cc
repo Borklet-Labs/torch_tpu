@@ -26,12 +26,16 @@
 
 #include "ATen/SparseTensorImpl.h"
 #include "ATen/core/ATen_fwd.h"
+#include "ATen/ops/_empty_affine_quantized.h"
+#include "ATen/ops/_nested_tensor_from_tensor_list.h"
 #include "ATen/ops/arange.h"
 #include "ATen/ops/empty.h"
 #include "ATen/ops/ones.h"
 #include "ATen/ops/sparse_coo_tensor.h"
 #include "ATen/ops/sparse_csr_tensor.h"
 #include "ATen/ops/zeros.h"
+#include "absl/status/status_matchers.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "c10/core/ConstantSymNodeImpl.h"
 #include "c10/core/Device.h"
@@ -40,13 +44,21 @@
 #include "c10/core/SymNodeImpl.h"
 #include "c10/util/intrusive_ptr.h"
 #include "c10/util/typeid.h"
+#include "csrc/common/error_utils.h"
+#include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "torch/headeronly/core/DeviceType.h"
 #include "torch/headeronly/core/Layout.h"
 #include "torch/headeronly/core/MemoryFormat.h"
+#include "torch/headeronly/core/ScalarType.h"
 
 namespace torch_tpu {
 namespace {
+
+using absl_testing::IsOk;
+using absl_testing::IsOkAndHolds;
+using absl_testing::StatusIs;
+using testing::HasSubstr;
 
 // A SymInt node that behaves like a Dynamo size symbol: it reports no constant
 // value, so TensorImpl treats sizes built from it as symbolic, it prints as its
@@ -100,6 +112,12 @@ std::string SymIntToString(const c10::SymInt& value) {
   std::ostringstream stream;
   stream << value;
   return stream.str();
+}
+
+// Prints an ok StatusOr<SymInt> without guarding, or its status otherwise.
+std::string SymIntToString(const absl::StatusOr<c10::SymInt>& value) {
+  if (!value.ok()) return std::string(value.status().ToString());
+  return SymIntToString(*value);
 }
 
 // Returns a CPU tensor whose sizes/strides are {2, s0}/{s0, 1}, the way
@@ -168,6 +186,44 @@ TEST(ConstTensorTest, UndefinedTensor) {
   EXPECT_FALSE(tensor.has_storage());
   EXPECT_FALSE(tensor.has_symbolic_sizes_strides());
   EXPECT_FALSE(tensor.ToTensor().defined());
+  EXPECT_EQ(tensor.device(), std::nullopt);
+  EXPECT_EQ(tensor.get_device(), std::nullopt);
+  EXPECT_FALSE(tensor.options().has_device());
+  EXPECT_EQ(tensor.itemsize(), std::nullopt);
+  EXPECT_EQ(tensor.element_size(), std::nullopt);
+  EXPECT_EQ(tensor.base(), std::nullopt);
+  EXPECT_FALSE(tensor.is_view());
+  EXPECT_TRUE(tensor.is_leaf());
+  EXPECT_EQ(tensor.output_nr(), 0);
+  EXPECT_FALSE(tensor.retains_grad());
+  EXPECT_FALSE(tensor.requires_grad());
+  EXPECT_EQ(tensor.grad_dtype(), c10::ScalarType::Undefined);
+  EXPECT_FALSE(tensor.grad().defined());
+  EXPECT_EQ(tensor.maybe_is_contiguous(), std::nullopt);
+  EXPECT_EQ(tensor.is_signed(), std::nullopt);
+  EXPECT_EQ(tensor.scalar_type(), c10::ScalarType::Undefined);
+  EXPECT_FALSE(tensor.is_floating_point());
+  EXPECT_FALSE(tensor.is_complex());
+  EXPECT_THAT(tensor.sym_sizes(), StatusIs(error::kInvalidArgument,
+                                           HasSubstr("should be defined")));
+  EXPECT_THAT(tensor.sym_strides(), StatusIs(error::kInvalidArgument,
+                                             HasSubstr("should be defined")));
+  EXPECT_THAT(tensor.sym_size(0), StatusIs(error::kInvalidArgument,
+                                           HasSubstr("should be defined")));
+  EXPECT_THAT(tensor.sym_stride(0), StatusIs(error::kInvalidArgument,
+                                             HasSubstr("should be defined")));
+  EXPECT_THAT(tensor.sym_nbytes(), StatusIs(error::kInvalidArgument,
+                                            HasSubstr("should be defined")));
+  EXPECT_THAT(tensor.sparse_dim(), StatusIs(error::kInvalidArgument,
+                                            HasSubstr("should be defined")));
+  EXPECT_THAT(tensor.dense_dim(), StatusIs(error::kInvalidArgument,
+                                           HasSubstr("should be defined")));
+  EXPECT_THAT(tensor.is_coalesced(), StatusIs(error::kInvalidArgument,
+                                              HasSubstr("should be defined")));
+  EXPECT_THAT(tensor.sym_nnz(), StatusIs(error::kInvalidArgument,
+                                         HasSubstr("should be defined")));
+  EXPECT_THAT(tensor.dim(), StatusIs(error::kInvalidArgument,
+                                     HasSubstr("should be defined")));
 }
 
 TEST(ConstTensorTest, RoundTrip) {
@@ -255,13 +311,19 @@ TEST(ConstTensorTest, StaticTensorAccessorsMatchTensor) {
     EXPECT_FALSE(const_tensor.is_python_dispatch());
     EXPECT_EQ(const_tensor.requires_grad(), tensor.requires_grad());
     EXPECT_EQ(const_tensor.has_storage(), tensor.has_storage());
-    EXPECT_EQ(const_tensor.dim(), tensor.dim());
-    EXPECT_EQ(const_tensor.sym_sizes(), tensor.sym_sizes());
-    EXPECT_EQ(const_tensor.sym_strides(), tensor.sym_strides());
-    for (int64_t d = 0; d < tensor.dim(); ++d) {
-      EXPECT_EQ(const_tensor.sym_size(d), tensor.size(d));
-      EXPECT_EQ(const_tensor.sym_stride(d), tensor.stride(d));
+    EXPECT_THAT(const_tensor.dim(), IsOkAndHolds(tensor.dim()));
+    EXPECT_THAT(const_tensor.sym_sizes(), IsOkAndHolds(tensor.sym_sizes()));
+    EXPECT_THAT(const_tensor.sym_strides(), IsOkAndHolds(tensor.sym_strides()));
+    for (int64_t d = -tensor.dim(); d < tensor.dim(); ++d) {
+      EXPECT_THAT(const_tensor.sym_size(d), IsOkAndHolds(tensor.size(d)));
+      EXPECT_THAT(const_tensor.sym_stride(d), IsOkAndHolds(tensor.stride(d)));
     }
+    EXPECT_THAT(
+        const_tensor.sym_size(tensor.dim()),
+        StatusIs(error::kIndexError, HasSubstr("expected a dimension in")));
+    EXPECT_THAT(
+        const_tensor.sym_stride(-tensor.dim() - 1),
+        StatusIs(error::kIndexError, HasSubstr("expected a dimension in")));
     EXPECT_EQ(const_tensor.sym_numel(), tensor.numel());
     EXPECT_EQ(const_tensor.sym_storage_offset(), tensor.storage_offset());
     EXPECT_EQ(const_tensor.maybe_is_contiguous(), tensor.is_contiguous());
@@ -295,8 +357,7 @@ TEST(ConstTensorTest, StaticTensorAccessorsMatchTensor) {
     EXPECT_EQ(const_tensor.options().layout(), tensor.options().layout());
     EXPECT_EQ(const_tensor.itemsize(), tensor.itemsize());
     EXPECT_EQ(const_tensor.element_size(), tensor.element_size());
-    EXPECT_EQ(const_tensor.toString(), tensor.toString());
-    EXPECT_EQ(const_tensor.sym_nbytes(), tensor.nbytes());
+    EXPECT_THAT(const_tensor.sym_nbytes(), IsOkAndHolds(tensor.nbytes()));
     EXPECT_EQ(const_tensor.is_leaf(), tensor.is_leaf());
     EXPECT_EQ(const_tensor.output_nr(), tensor.output_nr());
     EXPECT_EQ(const_tensor.retains_grad(), tensor.retains_grad());
@@ -304,16 +365,37 @@ TEST(ConstTensorTest, StaticTensorAccessorsMatchTensor) {
     EXPECT_EQ(const_tensor.grad_dtype(), tensor.grad_dtype());
     EXPECT_FALSE(const_tensor.grad().defined());
     EXPECT_FALSE(const_tensor.is_wrapped_number());
-    EXPECT_EQ(const_tensor.sparse_dim(), 0);
-    EXPECT_EQ(const_tensor.dense_dim(), tensor.dim());
+    EXPECT_THAT(const_tensor.sparse_dim(), IsOkAndHolds(0));
+    EXPECT_THAT(const_tensor.dense_dim(), IsOkAndHolds(tensor.dim()));
+    EXPECT_THAT(const_tensor.is_coalesced(),
+                StatusIs(error::kInvalidArgument, HasSubstr("Strided")));
   }
   ASSERT_TRUE(ConstTensor(transposed).is_view());
-  EXPECT_TRUE(ConstTensor(transposed).base().is_same(base));
-  EXPECT_ANY_THROW({ (void)ConstTensor(base).base(); });
-  EXPECT_EQ(ConstTensor(base).sym_nnz(), std::nullopt);
+  ASSERT_TRUE(ConstTensor(transposed).base().has_value());
+  EXPECT_TRUE(ConstTensor(transposed).base()->is_same(base));
+  EXPECT_EQ(ConstTensor(base).base(), std::nullopt);
+  EXPECT_THAT(ConstTensor(base).sym_nnz(),
+              StatusIs(error::kInvalidArgument, HasSubstr("Strided")));
   EXPECT_EQ(ConstTensor(base).maybe_is_contiguous(), true);
   EXPECT_EQ(ConstTensor(transposed).maybe_is_contiguous(), false);
   EXPECT_EQ(ConstTensor(offset).sym_storage_offset(), 3);
+}
+
+TEST(ConstTensorTest, ZeroDimTensor) {
+  const ConstTensor tensor(at::ones({}));
+
+  EXPECT_THAT(tensor.dim(), IsOkAndHolds(0));
+  ASSERT_THAT(tensor.sym_sizes(), IsOk());
+  EXPECT_TRUE(tensor.sym_sizes()->empty());
+  ASSERT_THAT(tensor.sym_strides(), IsOk());
+  EXPECT_TRUE(tensor.sym_strides()->empty());
+  EXPECT_EQ(tensor.sym_numel(), 1);
+  EXPECT_THAT(
+      tensor.sym_size(0),
+      StatusIs(error::kIndexError, HasSubstr("expected a dimension in")));
+  EXPECT_THAT(
+      tensor.sym_stride(-1),
+      StatusIs(error::kIndexError, HasSubstr("expected a dimension in")));
 }
 
 TEST(ConstTensorTest, SymbolicTensorAccessorsDoNotSpecialize) {
@@ -325,12 +407,14 @@ TEST(ConstTensorTest, SymbolicTensorAccessorsDoNotSpecialize) {
 
   EXPECT_TRUE(tensor.defined());
   EXPECT_TRUE(tensor.has_symbolic_sizes_strides());
-  EXPECT_EQ(tensor.dim(), 2);
-  ASSERT_EQ(tensor.sym_sizes().size(), 2);
-  EXPECT_EQ(tensor.sym_sizes()[0], 2);
-  EXPECT_EQ(SymIntToString(tensor.sym_sizes()[1]), "s0");
-  EXPECT_EQ(SymIntToString(tensor.sym_strides()[0]), "s0");
-  EXPECT_EQ(tensor.sym_strides()[1], 1);
+  EXPECT_THAT(tensor.dim(), IsOkAndHolds(2));
+  ASSERT_THAT(tensor.sym_sizes(), IsOk());
+  ASSERT_EQ(tensor.sym_sizes()->size(), 2);
+  EXPECT_EQ((*tensor.sym_sizes())[0], 2);
+  EXPECT_EQ(SymIntToString((*tensor.sym_sizes())[1]), "s0");
+  ASSERT_THAT(tensor.sym_strides(), IsOk());
+  EXPECT_EQ(SymIntToString((*tensor.sym_strides())[0]), "s0");
+  EXPECT_EQ((*tensor.sym_strides())[1], 1);
   EXPECT_EQ(SymIntToString(tensor.sym_size(1)), "s0");
   EXPECT_EQ(SymIntToString(tensor.sym_size(-1)), "s0");
   EXPECT_EQ(SymIntToString(tensor.sym_stride(0)), "s0");
@@ -354,12 +438,12 @@ TEST(ConstTensorTest, SymbolicTensorAccessorsDoNotSpecialize) {
   EXPECT_FALSE(tensor.is_zerotensor());
   EXPECT_TRUE(tensor.is_floating_point());
   EXPECT_FALSE(tensor.is_complex());
-  EXPECT_TRUE(tensor.is_signed());
+  EXPECT_EQ(tensor.is_signed(), true);
+  EXPECT_THAT(tensor.sym_size(2), StatusIs(error::kIndexError));
   EXPECT_EQ(tensor.get_device(), -1);
   EXPECT_EQ(tensor.options().dtype(), caffe2::TypeMeta::Make<float>());
   EXPECT_EQ(tensor.itemsize(), sizeof(float));
   EXPECT_EQ(tensor.element_size(), sizeof(float));
-  EXPECT_EQ(tensor.toString(), "CPUFloatType");
   EXPECT_EQ(SymIntToString(tensor.sym_nbytes()), "2*s0*4");
   EXPECT_TRUE(tensor.is_leaf());
   EXPECT_EQ(tensor.output_nr(), 0);
@@ -368,8 +452,11 @@ TEST(ConstTensorTest, SymbolicTensorAccessorsDoNotSpecialize) {
   EXPECT_EQ(tensor.grad_dtype(), at::kFloat);
   EXPECT_FALSE(tensor.grad().defined());
   EXPECT_FALSE(tensor.is_wrapped_number());
-  EXPECT_EQ(tensor.sparse_dim(), 0);
-  EXPECT_EQ(tensor.dense_dim(), 2);
+  EXPECT_EQ(tensor.base(), std::nullopt);
+  EXPECT_THAT(tensor.sparse_dim(), IsOkAndHolds(0));
+  EXPECT_THAT(tensor.dense_dim(), IsOkAndHolds(2));
+  EXPECT_THAT(tensor.is_coalesced(), StatusIs(error::kInvalidArgument));
+  EXPECT_THAT(tensor.sym_nnz(), StatusIs(error::kInvalidArgument));
 
   EXPECT_EQ(num_specializations, 0);
 }
@@ -385,7 +472,8 @@ TEST(ConstTensorTest, SymbolicSanityCheck) {
   int num_specializations = 0;
   const ConstTensor tensor(MakeSymbolicTensor(&num_specializations));
 
-  EXPECT_EQ(tensor.sym_size(1).guard_int(__FILE__, __LINE__), 3);
+  ASSERT_THAT(tensor.sym_size(1), IsOk());
+  EXPECT_EQ(tensor.sym_size(1)->guard_int(__FILE__, __LINE__), 3);
   EXPECT_EQ(num_specializations, 1);
 }
 
@@ -409,15 +497,19 @@ TEST(ConstTensorTest, SparseCooTensor) {
 
   EXPECT_TRUE(const_tensor.is_sparse());
   EXPECT_EQ(const_tensor.layout(), c10::kSparse);
-  EXPECT_EQ(const_tensor.sparse_dim(), 2);
-  EXPECT_EQ(const_tensor.dense_dim(), 1);
-  EXPECT_EQ(const_tensor.sparse_dim(), tensor.sparse_dim());
-  EXPECT_EQ(const_tensor.dense_dim(), tensor.dense_dim());
-  ASSERT_TRUE(const_tensor.sym_nnz().has_value());
-  EXPECT_EQ(*const_tensor.sym_nnz(), 3);
-  EXPECT_EQ(*const_tensor.sym_nnz(), tensor._nnz());
-  EXPECT_FALSE(const_tensor.is_coalesced());
-  EXPECT_EQ(const_tensor.is_coalesced(), tensor.is_coalesced());
+  EXPECT_THAT(const_tensor.sparse_dim(), IsOkAndHolds(2));
+  EXPECT_THAT(const_tensor.dense_dim(), IsOkAndHolds(1));
+  EXPECT_THAT(const_tensor.sparse_dim(), IsOkAndHolds(tensor.sparse_dim()));
+  EXPECT_THAT(const_tensor.dense_dim(), IsOkAndHolds(tensor.dense_dim()));
+  EXPECT_THAT(const_tensor.sym_nnz(), IsOkAndHolds(3));
+  EXPECT_THAT(const_tensor.sym_nnz(), IsOkAndHolds(tensor._nnz()));
+  EXPECT_THAT(const_tensor.is_coalesced(), IsOkAndHolds(false));
+  EXPECT_THAT(const_tensor.is_coalesced(), IsOkAndHolds(tensor.is_coalesced()));
+  // Sparse COO tensors report all-zero strides and have no nbytes.
+  ASSERT_THAT(const_tensor.sym_strides(), IsOk());
+  EXPECT_THAT(
+      const_tensor.sym_nbytes(),
+      StatusIs(error::kInvalidArgument, HasSubstr("should not be sparse COO")));
   EXPECT_EQ(const_tensor.maybe_is_contiguous(), std::nullopt);
   EXPECT_FALSE(const_tensor.is_sparse_compressed());
 }
@@ -432,15 +524,23 @@ TEST(ConstTensorTest, SparseCsrTensor) {
   EXPECT_TRUE(const_tensor.is_sparse_csr());
   EXPECT_TRUE(const_tensor.is_sparse_compressed());
   EXPECT_EQ(const_tensor.layout(), c10::kSparseCsr);
-  EXPECT_EQ(const_tensor.sparse_dim(), 2);
-  EXPECT_EQ(const_tensor.dense_dim(), 0);
-  EXPECT_EQ(const_tensor.sparse_dim(), tensor.sparse_dim());
-  EXPECT_EQ(const_tensor.dense_dim(), tensor.dense_dim());
-  ASSERT_TRUE(const_tensor.sym_nnz().has_value());
-  EXPECT_EQ(*const_tensor.sym_nnz(), 2);
-  EXPECT_EQ(*const_tensor.sym_nnz(), tensor._nnz());
+  EXPECT_THAT(const_tensor.sparse_dim(), IsOkAndHolds(2));
+  EXPECT_THAT(const_tensor.dense_dim(), IsOkAndHolds(0));
+  EXPECT_THAT(const_tensor.sparse_dim(), IsOkAndHolds(tensor.sparse_dim()));
+  EXPECT_THAT(const_tensor.dense_dim(), IsOkAndHolds(tensor.dense_dim()));
+  EXPECT_THAT(const_tensor.sym_nnz(), IsOkAndHolds(2));
+  EXPECT_THAT(const_tensor.sym_nnz(), IsOkAndHolds(tensor._nnz()));
   // is_coalesced() is only defined for sparse COO tensors.
-  EXPECT_ANY_THROW({ (void)const_tensor.is_coalesced(); });
+  EXPECT_THAT(const_tensor.is_coalesced(),
+              StatusIs(error::kInvalidArgument, HasSubstr("SparseCsr")));
+  // Sparse compressed tensors have no strides.
+  EXPECT_THAT(
+      const_tensor.sym_strides(),
+      StatusIs(error::kInvalidArgument, HasSubstr("got a SparseCsr tensor")));
+  EXPECT_THAT(
+      const_tensor.sym_stride(0),
+      StatusIs(error::kInvalidArgument, HasSubstr("got a SparseCsr tensor")));
+  EXPECT_THAT(const_tensor.sym_sizes(), IsOk());
   EXPECT_EQ(const_tensor.maybe_is_contiguous(), std::nullopt);
 }
 
@@ -461,13 +561,46 @@ TEST(ConstTensorTest, SparseCooTensorWithSymbolicNnzDoesNotSpecialize) {
       std::vector<c10::SymInt>{c10::SymInt(1)});
   const ConstTensor const_tensor(tensor);
 
-  ASSERT_TRUE(const_tensor.sym_nnz().has_value());
-  EXPECT_EQ(SymIntToString(*const_tensor.sym_nnz()), "u0");
-  EXPECT_EQ(const_tensor.sparse_dim(), 2);
-  EXPECT_EQ(const_tensor.dense_dim(), 0);
-  EXPECT_FALSE(const_tensor.is_coalesced());
+  EXPECT_EQ(SymIntToString(const_tensor.sym_nnz()), "u0");
+  EXPECT_THAT(const_tensor.sparse_dim(), IsOkAndHolds(2));
+  EXPECT_THAT(const_tensor.dense_dim(), IsOkAndHolds(0));
+  EXPECT_THAT(const_tensor.is_coalesced(), IsOkAndHolds(false));
   EXPECT_EQ(const_tensor.maybe_is_contiguous(), std::nullopt);
   EXPECT_EQ(num_specializations, 0);
+}
+
+TEST(ConstTensorTest, NestedTensor) {
+  const at::Tensor tensor =
+      at::_nested_tensor_from_tensor_list({at::ones({2, 3}), at::ones({4, 3})});
+  const ConstTensor const_tensor(tensor);
+
+  ASSERT_TRUE(const_tensor.is_nested());
+  EXPECT_THAT(const_tensor.dim(), IsOkAndHolds(3));
+  EXPECT_THAT(const_tensor.sym_sizes(),
+              StatusIs(error::kInvalidArgument, HasSubstr("nested")));
+  EXPECT_THAT(const_tensor.sym_size(0),
+              StatusIs(error::kInvalidArgument, HasSubstr("nested")));
+  EXPECT_THAT(const_tensor.sym_strides(),
+              StatusIs(error::kInvalidArgument, HasSubstr("nested")));
+  EXPECT_THAT(const_tensor.sym_stride(0),
+              StatusIs(error::kInvalidArgument, HasSubstr("nested")));
+  EXPECT_THAT(const_tensor.sym_nnz(), StatusIs(error::kInvalidArgument));
+  EXPECT_THAT(const_tensor.is_coalesced(), StatusIs(error::kInvalidArgument));
+  EXPECT_THAT(const_tensor.sparse_dim(), IsOkAndHolds(0));
+  EXPECT_THAT(const_tensor.dense_dim(), IsOkAndHolds(3));
+  EXPECT_EQ(const_tensor.sym_numel(), 18);
+  EXPECT_THAT(const_tensor.sym_nbytes(), IsOkAndHolds(18 * sizeof(float)));
+  EXPECT_EQ(const_tensor.maybe_is_contiguous(), std::nullopt);
+}
+
+TEST(ConstTensorTest, QuantizedTensor) {
+  const ConstTensor tensor(at::_empty_affine_quantized(
+      {2}, at::TensorOptions().dtype(at::kQUInt8), /*scale=*/0.5,
+      /*zero_point=*/0));
+
+  ASSERT_TRUE(tensor.is_quantized());
+  EXPECT_EQ(tensor.is_signed(), std::nullopt);
+  EXPECT_EQ(tensor.itemsize(), 1u);
 }
 
 TEST(ConstTensorTest, MetaDeviceTensor) {

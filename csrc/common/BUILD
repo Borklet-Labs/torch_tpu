@@ -776,11 +776,14 @@ torch_tpu_cc_library(
     srcs = ["const_tensor.cc"],
     hdrs = ["const_tensor.h"],
     deps = [
+        ":error_utils",
         "//shims/torch:aten_headers",
         "//shims/torch:torch_headers",
         "//shims/torch/c10/core:base_headers",
         "//shims/torch/c10/util:base_headers",
         "//shims/torch/torch/headeronly:torch_headeronly",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
     ],
 )
 
@@ -789,6 +792,7 @@ torch_tpu_cc_test(
     srcs = ["const_tensor_test.cc"],
     deps = [
         ":const_tensor",
+        ":error_utils",
         "//csrc/common:oss_test_main",
         "//shims/torch",
         "//shims/torch:aten",
@@ -796,6 +800,8 @@ torch_tpu_cc_test(
         "//shims/torch/c10/core:base_headers",
         "//shims/torch/c10/util:base_headers",
         "//shims/torch/torch/headeronly:torch_headeronly",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
     ],
 )
