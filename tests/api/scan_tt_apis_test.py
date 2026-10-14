@@ -561,6 +561,37 @@ class ScanTtApisTest(seed_test_utils.RepeatableTest):
         entry_names,
     )
 
+  def test_extract_python_apis_lists_dataclass_fields(self):
+    """Verifies that dataclass fields are listed, with or without defaults."""
+
+    @dataclasses.dataclass(frozen=True)
+    class FakeProperties:
+      __module__ = "torch_tpu.dummy_pkg.fake"
+
+      name: str
+      sizes: list[int] = dataclasses.field(default_factory=list)
+      count: int = 1
+      _private: int = 0
+
+      __tt_api_stages__ = {
+          "count": annotations.ApiStageInfo(
+              stage=Stage.EXPERIMENTAL,
+              reason="count is experimental.",
+          ),
+      }
+
+    entries = scan_tt_apis._extract_python_apis(
+        [(FakeProperties, "fake_pkg.FakeProperties")]
+    )
+    entry_dict = {e.name: e.stage for e in entries}
+
+    self.assertIn("fake_pkg.FakeProperties.name", entry_dict)
+    self.assertIn("fake_pkg.FakeProperties.sizes", entry_dict)
+    self.assertEqual(
+        entry_dict["fake_pkg.FakeProperties.count"], Stage.EXPERIMENTAL
+    )
+    self.assertNotIn("fake_pkg.FakeProperties._private", entry_dict)
+
   def test_import_public_submodules_skips_private_and_excluded_modules(self):
     """Verifies that only public, non-excluded submodules are imported."""
     with tempfile.TemporaryDirectory() as temp_dir:

@@ -112,6 +112,8 @@ process. Use it at your own risk. Using it triggers a one-time warning.
 *   `torch.tpu.Stream.wait_stream`
 *   `torch.tpu.TpuLayout`
 *   `torch.tpu.TpuLayout.element_size_in_bits`
+*   `torch.tpu.TpuLayout.minor_to_major`
+*   `torch.tpu.TpuLayout.tiles`
 *   `torch.tpu.allow_excess_precision` (getter)
 *   `torch.tpu.allow_excess_precision` (setter)
 *   `torch.tpu.compiler.custom_compiler_options`
@@ -166,11 +168,18 @@ process. Use it at your own risk. Using it triggers a one-time warning.
 *   `torch.tpu.ops.strip_jagged_padding`
 *   `torch.tpu.optimizers.AdamW`
 *   `torch.tpu.optimizers.AdamW.ParamGroup`
+*   `torch.tpu.optimizers.AdamW.ParamGroup.opt_state_m`
+*   `torch.tpu.optimizers.AdamW.ParamGroup.opt_state_v`
+*   `torch.tpu.optimizers.AdamW.ParamGroup.opt_steps`
+*   `torch.tpu.optimizers.AdamW.ParamGroup.params`
 *   `torch.tpu.optimizers.AdamW.defaults` (getter)
 *   `torch.tpu.optimizers.AdamW.init_param_group`
 *   `torch.tpu.optimizers.AdamW.step`
 *   `torch.tpu.optimizers.Muon`
 *   `torch.tpu.optimizers.Muon.ParamGroup`
+*   `torch.tpu.optimizers.Muon.ParamGroup.opt_state_m`
+*   `torch.tpu.optimizers.Muon.ParamGroup.opt_steps`
+*   `torch.tpu.optimizers.Muon.ParamGroup.params`
 *   `torch.tpu.optimizers.Muon.defaults` (getter)
 *   `torch.tpu.optimizers.Muon.init_param_group`
 *   `torch.tpu.optimizers.Muon.step`
@@ -180,6 +189,9 @@ process. Use it at your own risk. Using it triggers a one-time warning.
 *   `torch.tpu.optimizers.Optimizer.step`
 *   `torch.tpu.optimizers.Sgd`
 *   `torch.tpu.optimizers.Sgd.ParamGroup`
+*   `torch.tpu.optimizers.Sgd.ParamGroup.opt_state_m`
+*   `torch.tpu.optimizers.Sgd.ParamGroup.opt_steps`
+*   `torch.tpu.optimizers.Sgd.ParamGroup.params`
 *   `torch.tpu.optimizers.Sgd.defaults` (getter)
 *   `torch.tpu.optimizers.Sgd.init_param_group`
 *   `torch.tpu.optimizers.Sgd.step`

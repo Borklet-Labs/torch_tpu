@@ -42,6 +42,14 @@ class TpuLayout:
   element_size_in_bits: int = 0
 
   __tt_api_stages__ = {
+      "minor_to_major": api_annotations.ApiStageInfo(
+          stage=api_annotations.Stage.EXPERIMENTAL,
+          reason="Minor-to-major ordering of dimensions.",
+      ),
+      "tiles": api_annotations.ApiStageInfo(
+          stage=api_annotations.Stage.EXPERIMENTAL,
+          reason="Tiling of the layout.",
+      ),
       "element_size_in_bits": api_annotations.ApiStageInfo(
           stage=api_annotations.Stage.EXPERIMENTAL,
           reason="Element size in bits, for sub-byte types.",

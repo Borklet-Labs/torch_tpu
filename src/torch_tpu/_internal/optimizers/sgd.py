@@ -46,6 +46,14 @@ class _SgdBase(_optim.Optimizer):
     )
     opt_steps: dict[str, torch.Tensor] = dataclasses.field(default_factory=dict)
 
+    __tt_api_stages__ = {
+        name: _annotations.ApiStageInfo(
+            stage=_annotations.Stage.EXPERIMENTAL,
+            reason=f"{name} is experimental and subject to change.",
+        )
+        for name in ("params", "opt_state_m", "opt_steps")
+    }
+
   _HYPERPARAMETER_NAMES: ClassVar[tuple[str, ...]] = (
       "lr",
       "momentum",

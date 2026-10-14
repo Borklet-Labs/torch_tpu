@@ -603,6 +603,16 @@ def _extract_python_apis(roots: Sequence[Tuple[Any, str]]) -> List[ApiEntry]:
           attr_names.update(cls.__dict__.keys())
     if isinstance(stages_map, dict):
       attr_names.update(stages_map.keys())
+    # `dir` only lists the dataclass fields that have a class-level default.
+    # Fields without one (or with a `default_factory`) exist only on instances,
+    # so add all of them explicitly.
+    dataclass_fields = (
+        {field.name for field in dataclasses.fields(current_object)}
+        if isinstance(current_object, type)
+        and dataclasses.is_dataclass(current_object)
+        else set()
+    )
+    attr_names.update(dataclass_fields)
 
     for attr_name in sorted(attr_names):
       if attr_name.startswith("_"):
@@ -677,7 +687,16 @@ def _extract_python_apis(roots: Sequence[Tuple[Any, str]]) -> List[ApiEntry]:
             )
         continue
 
-      # 4. For non-property attributes, safely retrieve the attribute value from the current object.
+      # 4. A dataclass field is an instance data member whose class-level
+      # value, if any, is only its default, so list it without inspecting it.
+      if attr_name in dataclass_fields:
+        _add(
+            full_name,
+            _get_python_api_stage_info(attr_name, None, current_object),
+        )
+        continue
+
+      # 5. For non-property attributes, safely retrieve the attribute value from the current object.
       try:
         attribute_value = getattr(current_object, attr_name)
       except Exception:  # pylint: disable=broad-except
@@ -687,7 +706,7 @@ def _extract_python_apis(roots: Sequence[Tuple[Any, str]]) -> List[ApiEntry]:
           attr_name, attribute_value, current_object
       )
 
-      # 5. List the members of TorchTPU modules and classes only once (see
+      # 6. List the members of TorchTPU modules and classes only once (see
       # `_list_members`); any other path to them gets a single entry. Modules
       # and classes from other libraries (e.g. torch.Tensor) are skipped.
       if isinstance(attribute_value, (types.ModuleType, type)):
@@ -1310,7 +1329,8 @@ def find_public_instance_attributes_of_class(
   TorchTPU base classes for assignments to public attributes of `self`.
   Methods of base classes from other libraries are ignored. So are assignments
   to properties and other data descriptors (they call a setter, which the
-  scanner lists), and dataclass fields, which are declared on the class.
+  scanner lists), and dataclass fields, which the scanner lists from
+  `dataclasses.fields`.
 
   Attributes set with `setattr`, by code outside the class, or by functions
   that aren't methods of the class aren't detected.

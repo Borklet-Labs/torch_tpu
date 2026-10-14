@@ -71,6 +71,8 @@ torch.tpu.Stream.wait_event: {category: Public Python API, defined_in: runtime, 
 torch.tpu.Stream.wait_stream: {category: Public Python API, defined_in: runtime, stage: Experimental}
 torch.tpu.TpuLayout: {category: Public Python API, defined_in: runtime, stage: Experimental}
 torch.tpu.TpuLayout.element_size_in_bits: {category: Public Python API, defined_in: runtime, stage: Experimental}
+torch.tpu.TpuLayout.minor_to_major: {category: Public Python API, defined_in: runtime, stage: Experimental}
+torch.tpu.TpuLayout.tiles: {category: Public Python API, defined_in: runtime, stage: Experimental}
 torch.tpu.allow_excess_precision getter: {category: Public Python API, defined_in: runtime, stage: Experimental}
 torch.tpu.allow_excess_precision setter: {category: Public Python API, defined_in: runtime, stage: Experimental}
 torch.tpu.compiler.custom_compiler_options: {category: Public Python API, defined_in: runtime, stage: Experimental}
@@ -140,11 +142,18 @@ torch.tpu.ops.splash_sdpa: {category: Public Python API, defined_in: runtime, st
 torch.tpu.ops.strip_jagged_padding: {category: Public Python API, defined_in: runtime, stage: Experimental}
 torch.tpu.optimizers.AdamW: {category: Public Python API, defined_in: runtime, stage: Experimental}
 torch.tpu.optimizers.AdamW.ParamGroup: {category: Public Python API, defined_in: runtime, stage: Experimental}
+torch.tpu.optimizers.AdamW.ParamGroup.opt_state_m: {category: Public Python API, defined_in: runtime, stage: Experimental}
+torch.tpu.optimizers.AdamW.ParamGroup.opt_state_v: {category: Public Python API, defined_in: runtime, stage: Experimental}
+torch.tpu.optimizers.AdamW.ParamGroup.opt_steps: {category: Public Python API, defined_in: runtime, stage: Experimental}
+torch.tpu.optimizers.AdamW.ParamGroup.params: {category: Public Python API, defined_in: runtime, stage: Experimental}
 torch.tpu.optimizers.AdamW.defaults getter: {category: Public Python API, defined_in: runtime, stage: Experimental}
 torch.tpu.optimizers.AdamW.init_param_group: {category: Public Python API, defined_in: runtime, stage: Experimental}
 torch.tpu.optimizers.AdamW.step: {category: Public Python API, defined_in: runtime, stage: Experimental}
 torch.tpu.optimizers.Muon: {category: Public Python API, defined_in: runtime, stage: Experimental}
 torch.tpu.optimizers.Muon.ParamGroup: {category: Public Python API, defined_in: runtime, stage: Experimental}
+torch.tpu.optimizers.Muon.ParamGroup.opt_state_m: {category: Public Python API, defined_in: runtime, stage: Experimental}
+torch.tpu.optimizers.Muon.ParamGroup.opt_steps: {category: Public Python API, defined_in: runtime, stage: Experimental}
+torch.tpu.optimizers.Muon.ParamGroup.params: {category: Public Python API, defined_in: runtime, stage: Experimental}
 torch.tpu.optimizers.Muon.defaults getter: {category: Public Python API, defined_in: runtime, stage: Experimental}
 torch.tpu.optimizers.Muon.init_param_group: {category: Public Python API, defined_in: runtime, stage: Experimental}
 torch.tpu.optimizers.Muon.step: {category: Public Python API, defined_in: runtime, stage: Experimental}
@@ -154,6 +163,9 @@ torch.tpu.optimizers.Optimizer.init_param_group: {category: Public Python API, d
 torch.tpu.optimizers.Optimizer.step: {category: Public Python API, defined_in: runtime, stage: Experimental}
 torch.tpu.optimizers.Sgd: {category: Public Python API, defined_in: runtime, stage: Experimental}
 torch.tpu.optimizers.Sgd.ParamGroup: {category: Public Python API, defined_in: runtime, stage: Experimental}
+torch.tpu.optimizers.Sgd.ParamGroup.opt_state_m: {category: Public Python API, defined_in: runtime, stage: Experimental}
+torch.tpu.optimizers.Sgd.ParamGroup.opt_steps: {category: Public Python API, defined_in: runtime, stage: Experimental}
+torch.tpu.optimizers.Sgd.ParamGroup.params: {category: Public Python API, defined_in: runtime, stage: Experimental}
 torch.tpu.optimizers.Sgd.defaults getter: {category: Public Python API, defined_in: runtime, stage: Experimental}
 torch.tpu.optimizers.Sgd.init_param_group: {category: Public Python API, defined_in: runtime, stage: Experimental}
 torch.tpu.optimizers.Sgd.step: {category: Public Python API, defined_in: runtime, stage: Experimental}
