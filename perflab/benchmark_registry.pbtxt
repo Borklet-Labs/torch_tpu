@@ -16,7 +16,7 @@ benchmarks {
   environment_configs {
     id: "tpu-v7"
     runner_label: "linux-x86-tpu7x-224-4tpu"
-    container_image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest@sha256:43c523372c4b7f7ce649a1ff204b908727bd338353303c0444af34cb305e5832"
+    container_image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest@sha256:dddf008479144c57182b56a6d00bfc1f38f8f2ef206e2bc26ff6c0a401ded47e"
     workload_action_inputs { key: "torch_index" value: "https://download.pytorch.org/whl/cpu" }
     workload_action_inputs { key: "torch_spec" value: "torch==2.14.0" }
     workload_action_inputs { key: "libtpu_spec" value: "libtpu==0.0.49" }
@@ -58,7 +58,7 @@ benchmarks {
   environment_configs {
     id: "tpu-v7"
     runner_label: "linux-x86-tpu7x-224-4tpu"
-    container_image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest@sha256:43c523372c4b7f7ce649a1ff204b908727bd338353303c0444af34cb305e5832"
+    container_image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest@sha256:dddf008479144c57182b56a6d00bfc1f38f8f2ef206e2bc26ff6c0a401ded47e"
     workload_action_inputs { key: "torch_index" value: "https://download.pytorch.org/whl/cpu" }
     workload_action_inputs { key: "torch_spec" value: "torch==2.14.0" }
     workload_action_inputs { key: "libtpu_spec" value: "libtpu==0.0.49" }
@@ -100,7 +100,7 @@ benchmarks {
   environment_configs {
     id: "tpu-v7"
     runner_label: "linux-x86-tpu7x-224-4tpu"
-    container_image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest@sha256:43c523372c4b7f7ce649a1ff204b908727bd338353303c0444af34cb305e5832"
+    container_image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest@sha256:dddf008479144c57182b56a6d00bfc1f38f8f2ef206e2bc26ff6c0a401ded47e"
     workload_action_inputs { key: "torch_index" value: "https://download.pytorch.org/whl/cpu" }
     workload_action_inputs { key: "torch_spec" value: "torch==2.14.0" }
     workload_action_inputs { key: "libtpu_spec" value: "libtpu==0.0.49" }
@@ -142,7 +142,7 @@ benchmarks {
   environment_configs {
     id: "tpu-v7"
     runner_label: "linux-x86-tpu7x-224-4tpu"
-    container_image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest@sha256:43c523372c4b7f7ce649a1ff204b908727bd338353303c0444af34cb305e5832"
+    container_image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest@sha256:dddf008479144c57182b56a6d00bfc1f38f8f2ef206e2bc26ff6c0a401ded47e"
     workload_action_inputs { key: "torch_index" value: "https://download.pytorch.org/whl/cpu" }
     workload_action_inputs { key: "torch_spec" value: "torch==2.14.0" }
     workload_action_inputs { key: "libtpu_spec" value: "libtpu==0.0.49" }
@@ -184,7 +184,7 @@ benchmarks {
   environment_configs {
     id: "tpu-v7"
     runner_label: "linux-x86-tpu7x-224-4tpu"
-    container_image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest@sha256:43c523372c4b7f7ce649a1ff204b908727bd338353303c0444af34cb305e5832"
+    container_image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest@sha256:dddf008479144c57182b56a6d00bfc1f38f8f2ef206e2bc26ff6c0a401ded47e"
     workload_action_inputs { key: "torch_index" value: "https://download.pytorch.org/whl/cpu" }
     workload_action_inputs { key: "torch_spec" value: "torch==2.14.0" }
     workload_action_inputs { key: "libtpu_spec" value: "libtpu==0.0.49" }
@@ -226,7 +226,7 @@ benchmarks {
   environment_configs {
     id: "tpu-v7"
     runner_label: "linux-x86-tpu7x-224-4tpu"
-    container_image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest@sha256:43c523372c4b7f7ce649a1ff204b908727bd338353303c0444af34cb305e5832"
+    container_image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest@sha256:dddf008479144c57182b56a6d00bfc1f38f8f2ef206e2bc26ff6c0a401ded47e"
     workload_action_inputs { key: "torch_index" value: "https://download.pytorch.org/whl/cpu" }
     workload_action_inputs { key: "torch_spec" value: "torch==2.14.0" }
     workload_action_inputs { key: "libtpu_spec" value: "libtpu==0.0.49" }
@@ -268,7 +268,7 @@ benchmarks {
   environment_configs {
     id: "tpu-v7"
     runner_label: "linux-x86-tpu7x-224-4tpu"
-    container_image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest@sha256:43c523372c4b7f7ce649a1ff204b908727bd338353303c0444af34cb305e5832"
+    container_image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest@sha256:dddf008479144c57182b56a6d00bfc1f38f8f2ef206e2bc26ff6c0a401ded47e"
     workload_action_inputs { key: "torch_index" value: "https://download.pytorch.org/whl/cpu" }
     workload_action_inputs { key: "torch_spec" value: "torch==2.14.0" }
     workload_action_inputs { key: "libtpu_spec" value: "libtpu==0.0.49" }
@@ -310,7 +310,7 @@ benchmarks {
   environment_configs {
     id: "tpu-v7"
     runner_label: "linux-x86-tpu7x-224-4tpu"
-    container_image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest@sha256:43c523372c4b7f7ce649a1ff204b908727bd338353303c0444af34cb305e5832"
+    container_image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest@sha256:dddf008479144c57182b56a6d00bfc1f38f8f2ef206e2bc26ff6c0a401ded47e"
     workload_action_inputs { key: "torch_index" value: "https://download.pytorch.org/whl/cpu" }
     workload_action_inputs { key: "torch_spec" value: "torch==2.14.0" }
     workload_action_inputs { key: "libtpu_spec" value: "libtpu==0.0.49" }
@@ -352,7 +352,7 @@ benchmarks {
   environment_configs {
     id: "tpu-v7"
     runner_label: "linux-x86-tpu7x-224-4tpu"
-    container_image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest@sha256:43c523372c4b7f7ce649a1ff204b908727bd338353303c0444af34cb305e5832"
+    container_image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest@sha256:dddf008479144c57182b56a6d00bfc1f38f8f2ef206e2bc26ff6c0a401ded47e"
     workload_action_inputs { key: "torch_index" value: "https://download.pytorch.org/whl/cpu" }
     workload_action_inputs { key: "torch_spec" value: "torch==2.14.0" }
     workload_action_inputs { key: "libtpu_spec" value: "libtpu==0.0.49" }
@@ -394,7 +394,7 @@ benchmarks {
   environment_configs {
     id: "tpu-v7"
     runner_label: "linux-x86-tpu7x-224-4tpu"
-    container_image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest@sha256:43c523372c4b7f7ce649a1ff204b908727bd338353303c0444af34cb305e5832"
+    container_image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest@sha256:dddf008479144c57182b56a6d00bfc1f38f8f2ef206e2bc26ff6c0a401ded47e"
     workload_action_inputs { key: "torch_index" value: "https://download.pytorch.org/whl/cpu" }
     workload_action_inputs { key: "torch_spec" value: "torch==2.14.0" }
     workload_action_inputs { key: "libtpu_spec" value: "libtpu==0.0.49" }
@@ -436,7 +436,7 @@ benchmarks {
   environment_configs {
     id: "tpu-v7"
     runner_label: "linux-x86-tpu7x-224-4tpu"
-    container_image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest@sha256:43c523372c4b7f7ce649a1ff204b908727bd338353303c0444af34cb305e5832"
+    container_image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest@sha256:dddf008479144c57182b56a6d00bfc1f38f8f2ef206e2bc26ff6c0a401ded47e"
     workload_action_inputs { key: "torch_index" value: "https://download.pytorch.org/whl/cpu" }
     workload_action_inputs { key: "torch_spec" value: "torch==2.14.0" }
     workload_action_inputs { key: "libtpu_spec" value: "libtpu==0.0.49" }
@@ -478,7 +478,7 @@ benchmarks {
   environment_configs {
     id: "tpu-v7"
     runner_label: "linux-x86-tpu7x-224-4tpu"
-    container_image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest@sha256:43c523372c4b7f7ce649a1ff204b908727bd338353303c0444af34cb305e5832"
+    container_image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest@sha256:dddf008479144c57182b56a6d00bfc1f38f8f2ef206e2bc26ff6c0a401ded47e"
     workload_action_inputs { key: "torch_index" value: "https://download.pytorch.org/whl/cpu" }
     workload_action_inputs { key: "torch_spec" value: "torch==2.14.0" }
     workload_action_inputs { key: "libtpu_spec" value: "libtpu==0.0.49" }
@@ -520,7 +520,7 @@ benchmarks {
   environment_configs {
     id: "tpu-v7"
     runner_label: "linux-x86-tpu7x-224-4tpu"
-    container_image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest@sha256:43c523372c4b7f7ce649a1ff204b908727bd338353303c0444af34cb305e5832"
+    container_image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest@sha256:dddf008479144c57182b56a6d00bfc1f38f8f2ef206e2bc26ff6c0a401ded47e"
     workload_action_inputs { key: "torch_index" value: "https://download.pytorch.org/whl/cpu" }
     workload_action_inputs { key: "torch_spec" value: "torch==2.14.0" }
     workload_action_inputs { key: "libtpu_spec" value: "libtpu==0.0.49" }
@@ -562,7 +562,7 @@ benchmarks {
   environment_configs {
     id: "tpu-v7"
     runner_label: "linux-x86-tpu7x-224-4tpu"
-    container_image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest@sha256:43c523372c4b7f7ce649a1ff204b908727bd338353303c0444af34cb305e5832"
+    container_image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest@sha256:dddf008479144c57182b56a6d00bfc1f38f8f2ef206e2bc26ff6c0a401ded47e"
     workload_action_inputs { key: "torch_index" value: "https://download.pytorch.org/whl/cpu" }
     workload_action_inputs { key: "torch_spec" value: "torch==2.14.0" }
     workload_action_inputs { key: "libtpu_spec" value: "libtpu==0.0.49" }
@@ -604,7 +604,7 @@ benchmarks {
   environment_configs {
     id: "tpu-v7"
     runner_label: "linux-x86-tpu7x-224-4tpu"
-    container_image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest@sha256:43c523372c4b7f7ce649a1ff204b908727bd338353303c0444af34cb305e5832"
+    container_image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest@sha256:dddf008479144c57182b56a6d00bfc1f38f8f2ef206e2bc26ff6c0a401ded47e"
     workload_action_inputs { key: "torch_index" value: "https://download.pytorch.org/whl/cpu" }
     workload_action_inputs { key: "torch_spec" value: "torch==2.14.0" }
     workload_action_inputs { key: "libtpu_spec" value: "libtpu==0.0.49" }
@@ -646,7 +646,7 @@ benchmarks {
   environment_configs {
     id: "tpu-v7"
     runner_label: "linux-x86-tpu7x-224-4tpu"
-    container_image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest@sha256:43c523372c4b7f7ce649a1ff204b908727bd338353303c0444af34cb305e5832"
+    container_image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest@sha256:dddf008479144c57182b56a6d00bfc1f38f8f2ef206e2bc26ff6c0a401ded47e"
     workload_action_inputs { key: "torch_index" value: "https://download.pytorch.org/whl/cpu" }
     workload_action_inputs { key: "torch_spec" value: "torch==2.14.0" }
     workload_action_inputs { key: "libtpu_spec" value: "libtpu==0.0.49" }
@@ -687,7 +687,7 @@ benchmarks {
   environment_configs {
     id: "tpu-v7"
     runner_label: "linux-x86-tpu7x-224-4tpu"
-    container_image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest@sha256:43c523372c4b7f7ce649a1ff204b908727bd338353303c0444af34cb305e5832"
+    container_image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest@sha256:dddf008479144c57182b56a6d00bfc1f38f8f2ef206e2bc26ff6c0a401ded47e"
     workload_action_inputs { key: "torch_index" value: "https://download.pytorch.org/whl/cpu" }
     workload_action_inputs { key: "torch_spec" value: "torch==2.14.0" }
     workload_action_inputs { key: "libtpu_spec" value: "libtpu==0.0.49" }
@@ -728,7 +728,7 @@ benchmarks {
   environment_configs {
     id: "tpu-v7"
     runner_label: "linux-x86-tpu7x-224-4tpu"
-    container_image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest@sha256:43c523372c4b7f7ce649a1ff204b908727bd338353303c0444af34cb305e5832"
+    container_image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest@sha256:dddf008479144c57182b56a6d00bfc1f38f8f2ef206e2bc26ff6c0a401ded47e"
     workload_action_inputs { key: "torch_index" value: "https://download.pytorch.org/whl/cpu" }
     workload_action_inputs { key: "torch_spec" value: "torch==2.14.0" }
     workload_action_inputs { key: "libtpu_spec" value: "libtpu==0.0.49" }
@@ -769,7 +769,7 @@ benchmarks {
   environment_configs {
     id: "tpu-v7"
     runner_label: "linux-x86-tpu7x-224-4tpu"
-    container_image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest@sha256:43c523372c4b7f7ce649a1ff204b908727bd338353303c0444af34cb305e5832"
+    container_image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest@sha256:dddf008479144c57182b56a6d00bfc1f38f8f2ef206e2bc26ff6c0a401ded47e"
     workload_action_inputs { key: "torch_index" value: "https://download.pytorch.org/whl/cpu" }
     workload_action_inputs { key: "torch_spec" value: "torch==2.14.0" }
     workload_action_inputs { key: "libtpu_spec" value: "libtpu==0.0.49" }
