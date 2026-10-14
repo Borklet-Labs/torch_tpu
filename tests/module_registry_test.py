@@ -276,7 +276,8 @@ class ModuleRegistryTest(seed_test_utils.RepeatableTest):
 
   def test_transformers_causal_lm_architecture_casing_resolution(self):
     def modify_config(config):
-      # Simulate AdaptLLM / ChatQA casing: "LLaMAForCausalLM" instead of "LlamaForCausalLM"
+      # Simulate AdaptLLM / ChatQA casing: "LLaMAForCausalLM" instead of
+      # "LlamaForCausalLM"
       config.architectures = ["LLaMAForCausalLM"]
       return config
 
@@ -1414,7 +1415,7 @@ class ModuleRegistryTest(seed_test_utils.RepeatableTest):
         architectures=["BrosModel"],
         vocab_size=30522,
     )
-    inputs_bros = module_registry._generate_transformers_inputs(
+    inputs_bros = transformers_inputs.generate_transformers_inputs(
         cfg_bros, module_registry.Modality.CAUSAL_LM, shape=(1, 32)
     )
     self.assertIn("bbox", inputs_bros)
@@ -1427,7 +1428,7 @@ class ModuleRegistryTest(seed_test_utils.RepeatableTest):
         max_patches=16,
         text_config=mock.MagicMock(hidden_size=768),
     )
-    inputs_p2s = module_registry._generate_transformers_inputs(
+    inputs_p2s = transformers_inputs.generate_transformers_inputs(
         cfg_p2s, module_registry.Modality.MULTIMODAL, shape=(1, 32)
     )
     self.assertNotIn("pixel_values", inputs_p2s)
@@ -1441,7 +1442,7 @@ class ModuleRegistryTest(seed_test_utils.RepeatableTest):
         architectures=["Qwen2_5_VLForConditionalGeneration"],
         image_size=224,
     )
-    inputs_qwenvl = module_registry._generate_transformers_inputs(
+    inputs_qwenvl = transformers_inputs.generate_transformers_inputs(
         cfg_qwenvl, module_registry.Modality.MULTIMODAL
     )
     self.assertIn("image_grid_thw", inputs_qwenvl)
@@ -1453,7 +1454,7 @@ class ModuleRegistryTest(seed_test_utils.RepeatableTest):
         architectures=["InstructBlipForConditionalGeneration"],
         image_size=224,
     )
-    inputs_iblip = module_registry._generate_transformers_inputs(
+    inputs_iblip = transformers_inputs.generate_transformers_inputs(
         cfg_iblip, module_registry.Modality.MULTIMODAL
     )
     self.assertIn("qformer_input_ids", inputs_iblip)
@@ -1467,7 +1468,7 @@ class ModuleRegistryTest(seed_test_utils.RepeatableTest):
         vocab_size=30522,
         visual_feat_dim=2048,
     )
-    inputs_lxmert = module_registry._generate_transformers_inputs(
+    inputs_lxmert = transformers_inputs.generate_transformers_inputs(
         cfg_lxmert, module_registry.Modality.CAUSAL_LM, shape=(1, 32)
     )
     self.assertIn("visual_feats", inputs_lxmert)
@@ -1482,7 +1483,7 @@ class ModuleRegistryTest(seed_test_utils.RepeatableTest):
         vocab_size=81,
         num_mel_bins=80,
     )
-    inputs_tts = module_registry._generate_transformers_inputs(
+    inputs_tts = transformers_inputs.generate_transformers_inputs(
         cfg_speecht5_tts, module_registry.Modality.AUDIO
     )
     self.assertIn("input_ids", inputs_tts)
@@ -1504,7 +1505,7 @@ class ModuleRegistryTest(seed_test_utils.RepeatableTest):
         vocab_size=81,
         num_mel_bins=80,
     )
-    inputs_asr = module_registry._generate_transformers_inputs(
+    inputs_asr = transformers_inputs.generate_transformers_inputs(
         cfg_speecht5_asr, module_registry.Modality.AUDIO
     )
     self.assertIn("input_values", inputs_asr)
@@ -1524,7 +1525,7 @@ class ModuleRegistryTest(seed_test_utils.RepeatableTest):
         vocab_size=81,
         num_mel_bins=80,
     )
-    inputs_vc = module_registry._generate_transformers_inputs(
+    inputs_vc = transformers_inputs.generate_transformers_inputs(
         cfg_speecht5_vc, module_registry.Modality.AUDIO
     )
     self.assertIn("input_values", inputs_vc)
@@ -1796,7 +1797,7 @@ class ModuleRegistryTest(seed_test_utils.RepeatableTest):
     # Unwrap
     self.assertIs(cfg.unwrap(), obj)
 
-  def test_load_transformers_config_with_fallback_returns_wrapper(self):
+  def test_load_and_sanitize_transformers_config_returns_wrapper(self):
     with tempfile.TemporaryDirectory() as tmp_dir:
       config_path = pathlib.Path(tmp_dir) / "config.json"
       config_path.write_text(
@@ -1806,13 +1807,34 @@ class ModuleRegistryTest(seed_test_utils.RepeatableTest):
               "vision_config": {"image_size": 224},
           })
       )
-      cfg = module_registry._load_transformers_config_with_fallback(
+      cfg = module_registry._load_and_sanitize_transformers_config(
           config_path, load_weights=False
       )
       self.assertIsInstance(cfg, module_registry._ConfigWrapper)
       self.assertEqual(cfg.model_type, "bert")
       self.assertEqual(cfg.hidden_size, 768)
       self.assertEqual(cfg.vision_config.image_size, 224)
+
+  def test_five_stage_transformers_pipeline(self):
+    provider = module_registry.TransformersProvider(base_path="")
+    with provider._resolve_transformers_config_path(
+        "google/gemma-3-270m", load_weights=False
+    ) as (cfg_path, model_dir):
+      self.assertTrue(cfg_path.exists())
+      self.assertIsNone(model_dir)
+      cfg = module_registry._load_and_sanitize_transformers_config(
+          cfg_path, load_weights=False
+      )
+    self.assertIsInstance(cfg, module_registry._ConfigWrapper)
+    modality = module_registry._determine_modality(cfg)
+    self.assertEqual(modality, module_registry.Modality.CAUSAL_LM)
+    model_cls = module_registry._resolve_transformers_model_class(cfg, modality)
+    self.assertIsNotNone(model_cls)
+    with torch.device("meta"):
+      model = module_registry._instantiate_transformers_model(
+          model_cls, cfg, torch.bfloat16
+      )
+    self.assertIsInstance(model, torch.nn.Module)
 
   def test_transformers_config_caching_and_hook_isolation(self):
     module_registry.clear_config_cache()
@@ -1846,9 +1868,9 @@ class ModuleRegistryTest(seed_test_utils.RepeatableTest):
     spec1 = self.module_registry.get_module_spec("transformers", model_name)
     self.assertIsNotNone(spec1.config)
 
-    # Mock AutoConfig.from_pretrained to verify cache hit avoids disk/network load
+    # Mock _load_and_sanitize_transformers_config to verify cache hit avoids I/O
     with mock.patch.object(
-        module_registry.transformers.AutoConfig, "from_pretrained"
+        module_registry, "_load_and_sanitize_transformers_config"
     ) as mock_load:
       spec2 = self.module_registry.get_module_spec("transformers", model_name)
       mock_load.assert_not_called()
@@ -1933,10 +1955,7 @@ class ModuleRegistryTest(seed_test_utils.RepeatableTest):
     results: list[module_registry.ModuleSpec | None] = [None] * num_threads
     errors: list[Exception] = []
 
-    # Mock from_pretrained to count calls and simulate slight loading latency
-    original_from_pretrained = (
-        module_registry.transformers.AutoConfig.from_pretrained
-    )
+    original_load = module_registry._load_and_sanitize_transformers_config
     call_count = [0]
     count_lock = threading.Lock()
 
@@ -1944,11 +1963,11 @@ class ModuleRegistryTest(seed_test_utils.RepeatableTest):
       with count_lock:
         call_count[0] += 1
       time.sleep(0.01)  # Increase likelihood of thread race
-      return original_from_pretrained(*args, **kwargs)
+      return original_load(*args, **kwargs)
 
     with mock.patch.object(
-        module_registry.transformers.AutoConfig,
-        "from_pretrained",
+        module_registry,
+        "_load_and_sanitize_transformers_config",
         side_effect=instrumented_load,
     ):
 
@@ -2099,10 +2118,12 @@ class ModuleRegistryTest(seed_test_utils.RepeatableTest):
             "/tmp/fake_text_model", modality=text_mod
         )
         self.assertIs(loaded, fake_tokenizer)
-      # 1 call for gemma-3-270m + 1 call for /tmp/fake_text_model across all 3 text modalities
+      # 1 call for gemma-3-270m + 1 call for /tmp/fake_text_model across all 3
+      # text modalities
       self.assertEqual(mock_tok_load.call_count, 2)
 
-      # Non-text modalities (VISION, MULTIMODAL, None) share the same cache entry
+      # Non-text modalities (VISION, MULTIMODAL, None) share the same cache
+      # entry
       for non_text_mod in (
           module_registry.Modality.VISION,
           module_registry.Modality.MULTIMODAL,
@@ -2114,7 +2135,8 @@ class ModuleRegistryTest(seed_test_utils.RepeatableTest):
         self.assertIs(loaded_proc, fake_processor)
       mock_proc_load.assert_called_once()
 
-      # Vision input generation reuses the cached processor via preprocessor_loader
+      # Vision input generation reuses the cached processor via
+      # preprocessor_loader
       fake_processor.size = {"height": 384}
       vision_cfg = mock.MagicMock(
           model_type="vit",
@@ -2139,28 +2161,28 @@ class ModuleRegistryTest(seed_test_utils.RepeatableTest):
     module_registry.clear_preprocessor_cache()
     self.assertEmpty(module_registry._PREPROCESSOR_CACHE)
 
-  def test_transformers_preprocessor_text_modality_fallback_to_processor(self):
+  def test_transformers_preprocessor_deterministic_file_selection(self):
     module_registry.clear_config_cache()
-    model_name = "google/gemma-3-270m"
-
     fake_processor = mock.MagicMock(name="FakeProcessor")
-    with (
-        mock.patch.object(
-            module_registry.transformers.AutoTokenizer,
-            "from_pretrained",
-            side_effect=OSError("no tokenizer"),
-        ) as mock_tok_load,
-        mock.patch.object(
-            module_registry.transformers.AutoProcessor,
-            "from_pretrained",
-            return_value=fake_processor,
-        ) as mock_proc_load,
-    ):
-      spec = self.module_registry.get_module_spec("transformers", model_name)
-      loaded = spec.preprocessor_factory()
-      self.assertIs(loaded, fake_processor)
-      mock_tok_load.assert_called_once()
-      mock_proc_load.assert_called_once()
+    with tempfile.TemporaryDirectory() as tmp_dir:
+      (pathlib.Path(tmp_dir) / "preprocessor_config.json").write_text("{}")
+      with (
+          mock.patch.object(
+              module_registry.transformers.AutoTokenizer,
+              "from_pretrained",
+          ) as mock_tok_load,
+          mock.patch.object(
+              module_registry.transformers.AutoProcessor,
+              "from_pretrained",
+              return_value=fake_processor,
+          ) as mock_proc_load,
+      ):
+        loaded = module_registry._load_transformers_preprocessor(
+            tmp_dir, modality=module_registry.Modality.CAUSAL_LM
+        )
+        self.assertIs(loaded, fake_processor)
+        mock_tok_load.assert_not_called()
+        mock_proc_load.assert_called_once()
 
   def test_concurrent_preprocessor_cache_access(self):
     module_registry.clear_config_cache()

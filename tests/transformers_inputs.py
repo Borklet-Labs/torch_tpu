@@ -181,7 +181,7 @@ _TIME_SERIES_MODEL_TYPES: frozenset[str] = frozenset({
 
 
 class _ConfigWrapper:
-  """Wrapper around HF config dictionaries and objects for consistent attribute and dict access."""
+  """Wrapper around HF config objects for attribute and dict access."""
 
   def __init__(self, data: Any):
     if isinstance(data, _ConfigWrapper):
@@ -280,7 +280,7 @@ class _ConfigWrapper:
 
 
 def _wrap_config(config: Any) -> Any:
-  """Wraps a config dictionary or object in _ConfigWrapper if not already wrapped."""
+  """Wraps a config in _ConfigWrapper if not already wrapped."""
   if config is None or isinstance(config, _ConfigWrapper):
     return config
   if isinstance(
@@ -401,7 +401,7 @@ def _get_max_seq_len(config: Any, default: int = 512) -> int:
 
 
 def _parse_image_size(config: Any, default_size: int = 224) -> int:
-  """Extracts image_size as an integer from config or vision_config or encoder."""
+  """Extracts image_size as an int from config, vision_config, or encoder."""
   cfg = _wrap_config(config)
   vision_config = (
       cfg.get("vision_config")
@@ -744,7 +744,7 @@ def _cfg_int(
     default: int | None = None,
     min_val: int = 1,
 ) -> int | None:
-  """_safe_int(_cfg_lookup(...)) — replaces the `x.get() if x else None` chains."""
+  """Looks up config value via _cfg_lookup and converts via _safe_int."""
   val = _cfg_lookup(cfg, *paths, default=None)
   if val is None:
     return default
@@ -772,7 +772,7 @@ def _build_text_tokens(
     min_token_id: int = 0,
     eos_token_id: int | None = None,
 ) -> dict[str, torch.Tensor]:
-  """Returns {"input_ids", "attention_mask"} — the one place token sampling happens."""
+  """Returns {"input_ids", "attention_mask"} for sampled text tokens."""
   actual_shape = (ctx.batch_size, seq_len)
   input_ids = ctx.randint(min_token_id, vocab_size, actual_shape)
   attention_mask = ctx.ones(actual_shape)
@@ -789,7 +789,7 @@ def _ensure_min_seq_len(
     vocab_size: int,
     target_len: int | None = None,
 ) -> int:
-  """Regenerates input_ids/attention_mask if shorter than needed (capped by max positions)."""
+  """Regenerates input_ids/attention_mask if shorter than needed_len."""
   cur_seq_len = input_kwargs["input_ids"].shape[1]
   if cur_seq_len < needed_len:
     target = needed_len if target_len is None else target_len
@@ -810,7 +810,7 @@ def _inject_token_span(
     start: int,
     count: int,
 ) -> int:
-  """Injects a span of token_id into input_ids; returns actual injected count."""
+  """Injects a span of token_id into input_ids and returns injected count."""
   cur_len = input_ids.shape[1]
   valid_count = min(count, max(0, cur_len - start))
   if valid_count > 0:
@@ -824,7 +824,7 @@ def _mm_token_type_ids(
     start: int,
     count: int,
 ) -> torch.Tensor:
-  """Builds mm_token_type_ids tensor matching input_ids with 1s in [start, start + count)."""
+  """Builds mm_token_type_ids matching input_ids with 1s in [start, end)."""
   mm_types = torch.zeros_like(input_ids, dtype=torch.int)
   valid_count = min(count, max(0, input_ids.shape[1] - start))
   if valid_count > 0:
@@ -888,7 +888,7 @@ def _build_spatial_merged_patches(
     image_size: int,
     num_channels: int,
 ) -> int:
-  """Qwen-VL / GLM-4V / GLM-OCR flattened patches + image_grid_thw; returns num_img_tokens."""
+  """Builds Qwen-VL / GLM-4V flattened patches and returns num_img_tokens."""
   vision_config = ctx.config.get("vision_config")
   patch_size = _cfg_int(vision_config, "patch_size", default=14)
   temporal_patch_size = _cfg_int(
@@ -963,7 +963,7 @@ def _cast_floating_point_inputs(
     config: Any,
     input_kwargs: dict[str, Any],
 ) -> dict[str, Any]:
-  """Casts floating-point tensors in input_kwargs to the model's target dtype."""
+  """Casts floating-point tensors in input_kwargs to target dtype."""
   target_dtype = _extract_target_dtype(config)
 
   def _cast_floating_point(val: Any) -> Any:
@@ -1006,11 +1006,7 @@ def _apply_builders(
     *,
     first_match_only: bool,
 ) -> None:
-  """`elif` ladders become first_match_only=True tables; independent `if`s become
-
-  first_match_only=False tables. Row order == original statement order (behavior
-  preserving).
-  """
+  """Applies matching input builders from table in order."""
   for matcher, builder in table:
     if matcher(ctx):
       builder(ctx, input_kwargs)
@@ -1691,7 +1687,8 @@ def _build_vits_audio_inputs(
           ctx, seq_len=safe_seq_len, vocab_size=max_vocab, min_token_id=2
       )
   )
-  # High speaking_rate prevents uninitialized to_empty log_duration exp() overflow
+  # High speaking_rate prevents uninitialized to_empty log_duration exp()
+  # overflow
   input_kwargs["speaking_rate"] = 1e15
 
 
