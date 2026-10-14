@@ -83,6 +83,7 @@ def _worker_init_process_group() -> None:
       backend="gloo",
       init_method="env://",
   )
+  torch.distributed.barrier()
   torch.distributed.destroy_process_group()
 
 

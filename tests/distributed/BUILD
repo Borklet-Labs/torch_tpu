@@ -59,6 +59,7 @@ torch_tpu_py_library(
 torch_tpu_py_test(
     name = "distributed_utils_test",
     srcs = ["distributed_utils_test.py"],
+    shard_count = 5,
     deps = [
         ":distributed_utils",
         "//shims/absl_py/testing:absltest",
