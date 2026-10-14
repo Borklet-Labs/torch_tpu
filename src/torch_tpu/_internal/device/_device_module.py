@@ -1015,23 +1015,83 @@ class _DeviceModule(abc.ABC, metaclass=_DeviceModuleMeta):
 @experimental(
     "_TpuDeviceProperties is experimental and subject to change without notice."
 )
-@dataclasses.dataclass(frozen=True)
+# `slots=True` makes each field a class attribute (a slot descriptor), so that
+# `scan_tt_apis.py`, which discovers class members with `dir()`, tracks the
+# fields as public APIs.
+@dataclasses.dataclass(frozen=True, slots=True)
 class _TpuDeviceProperties:
   """Static TPU device properties, analog of _CudaDeviceProperties.
 
   .. warning::
       This API is experimental and subject to change in future releases.
 
-  ``total_memory`` is HBM visible to a single device, in bytes. Peak FLOP/s
-  is intentionally absent: it is a dtype-dependent published constant, not a
-  queryable hardware property, and no torch device module reports it.
+  ``name`` is the name of the TPU generation, as returned by
+  ``torch.tpu.get_device_name()``.
+  ``devices_per_chip`` is the number of PyTorch devices per physical TPU chip.
+  ``hbm_bytes_per_chip`` and ``hbm_bytes_per_device`` are the physical HBM
+  capacity per chip and visible to a single device, in bytes.
+  ``bf16_flops_per_chip`` and ``bf16_flops_per_device`` are the peak dense
+  bfloat16 compute, in FLOP/s, per physical TPU chip and for a single device.
+  ``sparse_cores_per_device`` is the number of SparseCores per TPU device (0 if
+  the TPU has no SparseCores), and ``sparse_core_simd_width`` is the SIMD width
+  of each SparseCore (or None if the TPU has no SparseCores).
+  ``total_memory``, the same as ``hbm_bytes_per_device``, and
+  ``multi_processor_count``, always 1, mirror the fields of
+  ``torch.cuda.get_device_properties()``.
   """
 
   name: str
   total_memory: int
+  devices_per_chip: int
+  hbm_bytes_per_chip: int
+  hbm_bytes_per_device: int
+  bf16_flops_per_chip: int
+  bf16_flops_per_device: int
+  sparse_cores_per_device: int
+  sparse_core_simd_width: int | None
   multi_processor_count: int = 1
 
   __tt_api_stages__ = {
+      "name": annotations.ApiStageInfo(
+          stage=annotations.Stage.EXPERIMENTAL,
+          reason="name is experimental and subject to change.",
+      ),
+      "total_memory": annotations.ApiStageInfo(
+          stage=annotations.Stage.EXPERIMENTAL,
+          reason="total_memory is experimental and subject to change.",
+      ),
+      "devices_per_chip": annotations.ApiStageInfo(
+          stage=annotations.Stage.EXPERIMENTAL,
+          reason="devices_per_chip is experimental and subject to change.",
+      ),
+      "hbm_bytes_per_chip": annotations.ApiStageInfo(
+          stage=annotations.Stage.EXPERIMENTAL,
+          reason="hbm_bytes_per_chip is experimental and subject to change.",
+      ),
+      "hbm_bytes_per_device": annotations.ApiStageInfo(
+          stage=annotations.Stage.EXPERIMENTAL,
+          reason="hbm_bytes_per_device is experimental and subject to change.",
+      ),
+      "bf16_flops_per_chip": annotations.ApiStageInfo(
+          stage=annotations.Stage.EXPERIMENTAL,
+          reason="bf16_flops_per_chip is experimental and subject to change.",
+      ),
+      "bf16_flops_per_device": annotations.ApiStageInfo(
+          stage=annotations.Stage.EXPERIMENTAL,
+          reason="bf16_flops_per_device is experimental and subject to change.",
+      ),
+      "sparse_cores_per_device": annotations.ApiStageInfo(
+          stage=annotations.Stage.EXPERIMENTAL,
+          reason=(
+              "sparse_cores_per_device is experimental and subject to change."
+          ),
+      ),
+      "sparse_core_simd_width": annotations.ApiStageInfo(
+          stage=annotations.Stage.EXPERIMENTAL,
+          reason=(
+              "sparse_core_simd_width is experimental and subject to change."
+          ),
+      ),
       "multi_processor_count": annotations.ApiStageInfo(
           stage=annotations.Stage.EXPERIMENTAL,
           reason="multi_processor_count is experimental and subject to change.",
@@ -1050,18 +1110,26 @@ class TpuDeviceModule(_DeviceModule):
   )
   def get_device_name(
       cls, device: int | str | torch.device | None = None
-  ) -> str:
+  ) -> str | None:
     """Human-readable name of the attached TPU, e.g. "TPU v7".
 
     .. warning::
         This API is experimental and subject to change in future releases.
 
+    Identifies the TPU from its PCI device ID, so it doesn't initialize the TPU
+    runtime.
+
     Args:
-      device: Optional device index, string, or torch.device to query properties
-        for.
+      device: Optional device index, string, or torch.device to query the name
+        of.
+
+    Returns:
+      The name of the attached TPU generation, or None if no TPU generation that
+      TorchTPU supports is attached.
     """
     del device  # Unused
-    return hardware.get_tpu_device_name()
+    tpu_spec = hardware.get_tpu_spec()
+    return None if tpu_spec is None else tpu_spec.name
 
   @classmethod
   @experimental(
@@ -1076,6 +1144,9 @@ class TpuDeviceModule(_DeviceModule):
     .. warning::
         This API is experimental and subject to change in future releases.
 
+    Identifies the TPU from its PCI device ID, so it doesn't initialize the TPU
+    runtime.
+
     Args:
       device: Optional device index, string, or torch.device to query properties
         for.
@@ -1084,18 +1155,32 @@ class TpuDeviceModule(_DeviceModule):
       A _TpuDeviceProperties instance for the specified device.
 
     Raises:
-      RuntimeError: If the TPU generation is unrecognized or memory properties
-        cannot be determined.
+      RuntimeError: If no TPU generation that TorchTPU supports is attached.
     """
-    total_memory = hardware.get_hbm_bytes_per_device()
-    name = cls._public_module().get_device_name(device)
-    if total_memory is None:
+    del device  # Unused
+    tpu_spec = hardware.get_tpu_spec()
+    if tpu_spec is None:
       raise RuntimeError(
-          f"unrecognized TPU {name!r}; cannot determine device memory"
+          "cannot determine TPU device properties: no TPU generation that"
+          " TorchTPU supports is attached"
       )
+    sparse_core_spec = tpu_spec.sparse_core_spec
     return _TpuDeviceProperties(
-        name=name,
-        total_memory=total_memory,
+        name=tpu_spec.name,
+        total_memory=tpu_spec.hbm_bytes_per_device,
+        devices_per_chip=tpu_spec.devices_per_chip,
+        hbm_bytes_per_chip=tpu_spec.hbm_bytes_per_chip,
+        hbm_bytes_per_device=tpu_spec.hbm_bytes_per_device,
+        bf16_flops_per_chip=tpu_spec.bf16_flops_per_chip,
+        bf16_flops_per_device=tpu_spec.bf16_flops_per_device,
+        sparse_cores_per_device=(
+            0
+            if sparse_core_spec is None
+            else sparse_core_spec.sparse_cores_per_device
+        ),
+        sparse_core_simd_width=(
+            None if sparse_core_spec is None else sparse_core_spec.simd_width
+        ),
     )
 
   @classmethod

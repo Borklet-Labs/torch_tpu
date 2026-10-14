@@ -1197,6 +1197,22 @@ class TestPallasCompat(seed_test_utils.RepeatableTest):
     ):
       x.cpu()
 
+  def _skip_if_fp4_unsupported(self) -> None:
+    """Skips the test without TPU devices, e.g. on TPU v4 and older generations.
+
+    TorchTPU only supports TPU v5e and newer generations, which all support
+    FP4, so it has no TPU devices on older TPUs, as on hosts without a TPU.
+    Checking the accelerator type first keeps e.g. the GPUs of a GPU run from
+    counting as TPU devices.
+    """
+    accelerator = torch.accelerator.current_accelerator()
+    if (
+        accelerator is None
+        or accelerator.type != "tpu"
+        or not torch.accelerator.is_available()
+    ):
+      self.skipTest("FP4 requires a TPU generation supported by TorchTPU")
+
   def test_warn_deprecation_with_skip(self):
     if sys.version_info >= (3, 12):
       with warnings.catch_warnings(record=True) as w:
@@ -1249,13 +1265,7 @@ class TestPallasCompat(seed_test_utils.RepeatableTest):
   def test_fp4_pallas(self):
 
     # Check hardware support
-    try:
-      attrs = torch.get_device_module("tpu")._get_local_device_attributes()
-      device_kind = attrs.get("device_kind", "")
-      if any(old in device_kind for old in ["v2", "v3", "v4"]):
-        self.skipTest(f"FP4 not supported on TPU device: {device_kind}")
-    except (RuntimeError, AttributeError):
-      self.skipTest("No TPU device found")
+    self._skip_if_fp4_unsupported()
 
     def copy_kernel(x_ref, o_ref):
       o_ref[...] = x_ref[...]
@@ -1278,13 +1288,7 @@ class TestPallasCompat(seed_test_utils.RepeatableTest):
 
   def test_fp4_unpack_repro(self):
 
-    try:
-      attrs = torch.get_device_module("tpu")._get_local_device_attributes()
-      device_kind = attrs.get("device_kind", "")
-      if any(old in device_kind for old in ["v2", "v3", "v4"]):
-        self.skipTest(f"FP4 not supported on TPU device: {device_kind}")
-    except (RuntimeError, AttributeError):
-      self.skipTest("No TPU device found")
+    self._skip_if_fp4_unsupported()
 
     def fn_unpack(u8: jax.Array) -> jax.Array:
       f = jax.lax.bitcast_convert_type(u8, jax.numpy.float4_e2m1fn)
@@ -1301,13 +1305,7 @@ class TestPallasCompat(seed_test_utils.RepeatableTest):
 
   def test_fp4_identity_repro(self):
 
-    try:
-      attrs = torch.get_device_module("tpu")._get_local_device_attributes()
-      device_kind = attrs.get("device_kind", "")
-      if any(old in device_kind for old in ["v2", "v3", "v4"]):
-        self.skipTest(f"FP4 not supported on TPU device: {device_kind}")
-    except (RuntimeError, AttributeError):
-      self.skipTest("No TPU device found")
+    self._skip_if_fp4_unsupported()
 
     def fn_identity(x: jax.Array) -> jax.Array:
       return x
@@ -1345,13 +1343,7 @@ class TestPallasCompat(seed_test_utils.RepeatableTest):
 
   def test_fp4_outer_non_contiguous_supported(self):
 
-    try:
-      attrs = torch.get_device_module("tpu")._get_local_device_attributes()
-      device_kind = attrs.get("device_kind", "")
-      if any(old in device_kind for old in ["v2", "v3", "v4"]):
-        self.skipTest(f"FP4 not supported on TPU device: {device_kind}")
-    except (RuntimeError, AttributeError):
-      self.skipTest("No TPU device found")
+    self._skip_if_fp4_unsupported()
 
     u8_t = torch.zeros((8, 256), dtype=torch.uint8)
     fp4_t = u8_t.view(torch.float4_e2m1fn_x2).to("tpu")
@@ -1379,13 +1371,7 @@ class TestPallasCompat(seed_test_utils.RepeatableTest):
     to the container) to JAX during tracing, rather than the physical container
     shape, so that shape invariants with other tensors (like scales) hold.
     """
-    try:
-      attrs = torch.get_device_module("tpu")._get_local_device_attributes()
-      device_kind = attrs.get("device_kind", "")
-      if any(old in device_kind for old in ["v2", "v3", "v4"]):
-        self.skipTest(f"FP4 not supported on TPU device: {device_kind}")
-    except (RuntimeError, AttributeError):
-      self.skipTest("No TPU device found")
+    self._skip_if_fp4_unsupported()
 
     def probe(w: jax.Array, s: jax.Array) -> jax.Array:
       # gmm_v2-style invariant: the fp4 weight's LOGICAL last-dim must equal the

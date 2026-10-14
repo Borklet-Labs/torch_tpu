@@ -20,6 +20,7 @@ from typing import Any, Callable
 
 from absl import logging
 import portpicker
+import torch
 import torch.multiprocessing as mp
 from torch_tpu._internal import env
 from torch_tpu._internal import env_utils
@@ -70,7 +71,7 @@ def set_launch_env(nproc_per_node: int) -> bool:
 
   repick_slicebuilder_ports = False
   if (
-      hardware.get_tpu_device_count()
+      _has_tpu_devices()
       or env.get_str_env_once("JOB_COMPLETION_INDEX") is not None
   ):
     # Imported lazily so GPU runs (TORCH_DEVICE_BACKEND_AUTOLOAD=0) never depend
@@ -243,6 +244,24 @@ def dist_run(
           max_retries,
           default_master_port,
       )
+
+
+def _has_tpu_devices() -> bool:
+  """Returns whether this host has TPU devices for the workers to use.
+
+  TorchTPU only makes the TPU the current accelerator on hosts with TPU devices
+  of a generation that it supports; elsewhere, e.g. in GPU runs,
+  `torch.accelerator` refers to other devices. For the TPU,
+  `torch.accelerator.is_available()` counts the TPU devices without initializing
+  the TPU runtime in this process, which would keep the workers from claiming
+  them.
+  """
+  accelerator = torch.accelerator.current_accelerator()
+  return (
+      accelerator is not None
+      and accelerator.type == "tpu"
+      and torch.accelerator.is_available()
+  )
 
 
 def _is_single_host() -> bool:

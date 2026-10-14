@@ -131,7 +131,16 @@ process. Use it at your own risk. Using it triggers a one-time warning.
 *   `torch.tpu.get_device_layout_if_materialized`
 *   `torch.tpu.get_device_name`
 *   `torch.tpu.get_device_properties`
+*   `torch.tpu.get_device_properties.bf16_flops_per_chip`
+*   `torch.tpu.get_device_properties.bf16_flops_per_device`
+*   `torch.tpu.get_device_properties.devices_per_chip`
+*   `torch.tpu.get_device_properties.hbm_bytes_per_chip`
+*   `torch.tpu.get_device_properties.hbm_bytes_per_device`
 *   `torch.tpu.get_device_properties.multi_processor_count`
+*   `torch.tpu.get_device_properties.name`
+*   `torch.tpu.get_device_properties.sparse_core_simd_width`
+*   `torch.tpu.get_device_properties.sparse_cores_per_device`
+*   `torch.tpu.get_device_properties.total_memory`
 *   `torch.tpu.is_initialized`
 *   `torch.tpu.manual_seed`
 *   `torch.tpu.manual_seed_all`

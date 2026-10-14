@@ -54,7 +54,6 @@ from torch import distributed as dist
 from torch.distributed import device_mesh
 import torch.multiprocessing as mp
 
-from torch_tpu._internal.utils import hardware
 from torch_tpu._internal.utils import test_utils as utils
 from torch_tpu._internal.distributed import multiprocessing
 from tests import seed_test_utils
@@ -63,7 +62,7 @@ from tests.distributed import distributed_utils
 _SKIP_P2P_ON_TPU_V7_REASON = (
     "P2P send/recv aborts in libtpu on TPU v7 (b/540414751)."
 )
-_IS_TPU_V7 = hardware.get_tpu_version() is hardware.TpuVersion.V7
+_IS_TPU_V7 = torch.tpu.get_device_name() == "TPU v7"
 
 
 def _test_wrapper(

@@ -20,8 +20,6 @@ import numpy as np
 import torch
 from torch_tpu._internal.compile import tpu_torch_compile
 import torch_tpu._internal.device_utils.annotations as tpu_annotations
-from torch_tpu._internal.utils.hardware import get_tpu_version
-from torch_tpu._internal.utils.hardware import TpuVersion
 from tests import op_testing
 
 
@@ -47,7 +45,9 @@ def preprocess_sparse_dense_matmul_input(
     batch_size: Batch size per device.
     combiner: Reduction combiner for sample IDs ("sum", "mean", etc.).
     options: Optional dict specifying additional options (local_device_count,
-      global_device_count, num_sc_per_device, allow_id_dropping).
+      global_device_count, num_sc_per_device, sc_simd_width,
+      hbm_word_size_in_4b, allow_id_dropping). num_sc_per_device and
+      sc_simd_width default to the values of the attached TPU.
     table_name: Table name for logging and identification.
 
   Returns:
@@ -59,6 +59,19 @@ def preprocess_sparse_dense_matmul_input(
   if options is None:
     options = {}
 
+  # Only query the attached TPU for the values that aren't given, since
+  # `torch.tpu.get_device_properties()` raises without a TPU generation that
+  # TorchTPU supports.
+  num_sc_per_device = (
+      options["num_sc_per_device"]
+      if "num_sc_per_device" in options
+      else torch.tpu.get_device_properties().sparse_cores_per_device
+  )
+  sc_simd_width = (
+      options["sc_simd_width"]
+      if "sc_simd_width" in options
+      else torch.tpu.get_device_properties().sparse_core_simd_width
+  )
   return torch.ops.tpu.preprocess_sparse_dense_matmul_input(
       input_indices,
       input_offsets,
@@ -69,36 +82,12 @@ def preprocess_sparse_dense_matmul_input(
       combiner,
       options.get("local_device_count", 1),
       options.get("global_device_count", 1),
-      options.get("num_sc_per_device", _get_num_sc_per_device()),
-      options.get("sc_simd_width", _get_sc_simd_width()),
+      num_sc_per_device,
+      sc_simd_width,
       options.get("hbm_word_size_in_4b", _get_hbm_word_size_in_4b()),
       options.get("allow_id_dropping", True),
       table_name,
   )
-
-
-def _get_num_sc_per_device():
-  tpu_version = get_tpu_version()
-  if tpu_version in (TpuVersion.V7, TpuVersion.V6E):
-    return 2
-  elif tpu_version == TpuVersion.V5P:
-    return 4
-  else:
-    raise ValueError(
-        f"Unsupported TPU version for sparse_dense_matmul: {tpu_version}"
-    )
-
-
-def _get_sc_simd_width():
-  tpu_version = get_tpu_version()
-  if tpu_version == TpuVersion.V7:
-    return 16
-  elif tpu_version in (TpuVersion.V6E, TpuVersion.V5P):
-    return 8
-  else:
-    raise ValueError(
-        f"Unsupported TPU version for sparse_dense_matmul: {tpu_version}"
-    )
 
 
 def _get_hbm_word_size_in_4b():
@@ -155,14 +144,6 @@ class SparseDenseMatmulTest(op_testing.TorchTpuTestBase):
         .repeat(1, embedding_dim)
     )
 
-    options = {
-        "local_device_count": 1,
-        "global_device_count": 1,
-        "num_sc_per_device": _get_num_sc_per_device(),
-        "sc_simd_width": _get_sc_simd_width(),
-        "allow_id_dropping": True,
-    }
-
     table_0_outputs = preprocess_sparse_dense_matmul_input(
         values,
         offsets,
@@ -171,7 +152,6 @@ class SparseDenseMatmulTest(op_testing.TorchTpuTestBase):
         suggested_coo_buffer_size=128,
         batch_size=device_batch_size,
         combiner="sum",
-        options=options,
     )
 
     rp = table_0_outputs["row_pointers"]
@@ -185,7 +165,7 @@ class SparseDenseMatmulTest(op_testing.TorchTpuTestBase):
         .repeat(1, embedding_dim)
     )
 
-    num_sc = _get_num_sc_per_device()
+    num_sc = torch.tpu.get_device_properties().sparse_cores_per_device
     sharded_tables = []
     for core_id in range(num_sc):
       chunk = logical_table[core_id::num_sc]
@@ -245,7 +225,7 @@ class SparseDenseMatmulTest(op_testing.TorchTpuTestBase):
 
   def test_input_preprocessing_stats(self):
     """Tests that preprocess_sparse_dense_matmul_input returns stats dict."""
-    num_sc = _get_num_sc_per_device()
+    num_sc = torch.tpu.get_device_properties().sparse_cores_per_device
     ids_per_sample = 5 * num_sc
     val_f0 = torch.arange(ids_per_sample * num_sc, dtype=torch.int32)
     off_f0 = torch.arange(
@@ -256,7 +236,9 @@ class SparseDenseMatmulTest(op_testing.TorchTpuTestBase):
         "local_device_count": 1,
         "global_device_count": 1,
         "num_sc_per_device": num_sc,
-        "sc_simd_width": _get_sc_simd_width(),
+        "sc_simd_width": (
+            torch.tpu.get_device_properties().sparse_core_simd_width
+        ),
         "allow_id_dropping": True,
     }
 
@@ -390,7 +372,7 @@ class SparseDenseMatmulTest(op_testing.TorchTpuTestBase):
         1,  # local_device_count
         global_device_count,
         num_sc_per_device,
-        _get_sc_simd_width(),  # sc_simd_width
+        torch.tpu.get_device_properties().sparse_core_simd_width,
         _get_hbm_word_size_in_4b(),  # hbm_word_size_in_4b
         True,  # allow_id_dropping
         "table_parity",
@@ -427,7 +409,7 @@ class SparseDenseMatmulTest(op_testing.TorchTpuTestBase):
       torch.ops.tpu.compute_sparse_dense_matmul_stats(val_float, off, 1, 2)
 
   def _get_inputs(self, device):
-    num_sc = _get_num_sc_per_device()
+    num_sc = torch.tpu.get_device_properties().sparse_cores_per_device
     input_indices = torch.tensor([2, 1, 4, 0, 3, 6, 0, 2], dtype=torch.int32)
     input_offsets = torch.tensor(
         [0, 1, 2, 3, 4, 4, 4, 4, 4, 5, 6, 7, 8, 8, 8, 8, 8],
@@ -445,7 +427,9 @@ class SparseDenseMatmulTest(op_testing.TorchTpuTestBase):
             "local_device_count": 1,
             "global_device_count": 1,
             "num_sc_per_device": num_sc,
-            "sc_simd_width": _get_sc_simd_width(),
+            "sc_simd_width": (
+                torch.tpu.get_device_properties().sparse_core_simd_width
+            ),
             "allow_id_dropping": False,
         },
     )
@@ -461,7 +445,7 @@ class SparseDenseMatmulTest(op_testing.TorchTpuTestBase):
     return row_pointers, embedding_ids, sample_ids, gains, embedding_table
 
   def _get_updated_rows(self, vocab_size: int = 32) -> list[int]:
-    num_sc = _get_num_sc_per_device()
+    num_sc = torch.tpu.get_device_properties().sparse_cores_per_device
     shard_size = vocab_size // num_sc
     logical_ids = [0, 1, 2, 3, 4, 6]
     return sorted(
@@ -469,7 +453,7 @@ class SparseDenseMatmulTest(op_testing.TorchTpuTestBase):
     )
 
   def _get_expected_forward_output(self, vocab_size: int = 32) -> torch.Tensor:
-    num_sc = _get_num_sc_per_device()
+    num_sc = torch.tpu.get_device_properties().sparse_cores_per_device
     shard_size = vocab_size // num_sc
 
     def phys_row(k: int) -> float:
@@ -556,7 +540,9 @@ class SparseDenseMatmulTest(op_testing.TorchTpuTestBase):
     row_pointers, embedding_ids, sample_ids, gains, embedding_table = (
         self._get_inputs(device)
     )
-    num_sc_per_device = _get_num_sc_per_device()
+    num_sc_per_device = (
+        torch.tpu.get_device_properties().sparse_cores_per_device
+    )
     vocab_size, embedding_dim = embedding_table.shape
 
     sharded_tables = []
@@ -598,7 +584,9 @@ class SparseDenseMatmulTest(op_testing.TorchTpuTestBase):
     row_pointers, embedding_ids, sample_ids, gains, embedding_table = (
         self._get_inputs(device)
     )
-    num_sc_per_device = _get_num_sc_per_device()
+    num_sc_per_device = (
+        torch.tpu.get_device_properties().sparse_cores_per_device
+    )
     vocab_size, embedding_dim = embedding_table.shape
 
     sharded_tables = []
@@ -649,7 +637,9 @@ class SparseDenseMatmulTest(op_testing.TorchTpuTestBase):
         self._get_inputs(device)
     )
 
-    num_sc_per_device = _get_num_sc_per_device()
+    num_sc_per_device = (
+        torch.tpu.get_device_properties().sparse_cores_per_device
+    )
 
     # Shard the table for TPU (MOD sharding)
     vocab_size = embedding_table.shape[0]
@@ -774,7 +764,9 @@ class SparseDenseMatmulTest(op_testing.TorchTpuTestBase):
     row_pointers, embedding_ids, sample_ids, gains, embedding_table = (
         self._get_inputs(device)
     )
-    num_sc_per_device = _get_num_sc_per_device()
+    num_sc_per_device = (
+        torch.tpu.get_device_properties().sparse_cores_per_device
+    )
     vocab_size = embedding_table.shape[0]
     embedding_dim = embedding_table.shape[1]
     sharded_tables = []
@@ -926,7 +918,9 @@ class SparseDenseMatmulTest(op_testing.TorchTpuTestBase):
     row_pointers, embedding_ids, sample_ids, gains, embedding_table = (
         self._get_inputs(device)
     )
-    num_sc_per_device = _get_num_sc_per_device()
+    num_sc_per_device = (
+        torch.tpu.get_device_properties().sparse_cores_per_device
+    )
     vocab_size = embedding_table.shape[0]
     embedding_dim = embedding_table.shape[1]
     sharded_tables = []
@@ -1074,7 +1068,9 @@ class SparseDenseMatmulTest(op_testing.TorchTpuTestBase):
         self._get_inputs(device)
     )
 
-    num_sc_per_device = _get_num_sc_per_device()
+    num_sc_per_device = (
+        torch.tpu.get_device_properties().sparse_cores_per_device
+    )
 
     # Shard the table for TPU (MOD sharding)
     vocab_size = embedding_table.shape[0]
@@ -1284,7 +1280,9 @@ class SparseDenseMatmulTest(op_testing.TorchTpuTestBase):
         self._get_inputs(device)
     )
 
-    num_sc_per_device = _get_num_sc_per_device()
+    num_sc_per_device = (
+        torch.tpu.get_device_properties().sparse_cores_per_device
+    )
 
     # Shard the table for TPU (MOD sharding)
     vocab_size = embedding_table.shape[0]

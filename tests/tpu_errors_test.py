@@ -3122,12 +3122,24 @@ module {
     ):
       torch.tpu.ops.sparse_gather(row_pointers, indices_wrong_len, operand, 8)
 
+  def _skip_unless_tpu_without_sparse_cores(self) -> None:
+    # `torch.tpu.get_device_properties()` raises without TPU devices. Checking
+    # the accelerator type first keeps e.g. the GPUs of a GPU run from counting
+    # as TPU devices.
+    accelerator = torch.accelerator.current_accelerator()
+    if (
+        accelerator is None
+        or accelerator.type != "tpu"
+        or not torch.accelerator.is_available()
+        or torch.tpu.get_device_properties().sparse_cores_per_device > 0
+    ):
+      self.skipTest("Requires a supported TPU generation without SparseCores.")
+
   @et.why_tpu_only("Custom op sparse_gather is TPU only.")
   def test_sparse_gather_unsupported_device_without_sparse_core(self):
     # TODO(b/563396617): Pin tpu_errors_test to TPU v5 in OSS CI or isolate
     # SparseCore-unsupported error tests to prevent test coverage loss.
-    if et.is_sparsecore_supported():
-      self.skipTest("SparseCore is supported on this TPU device.")
+    self._skip_unless_tpu_without_sparse_cores()
     device = et.device()
     row_pointers = torch.tensor([0, 8], dtype=torch.int32, device=device)
     indices = torch.tensor([0] * 16, dtype=torch.int32, device=device)
@@ -3599,8 +3611,7 @@ module {
   def test_sparse_map_row_unsupported_device_without_sparse_core(self):
     # TODO(b/563396617): Pin tpu_errors_test to TPU v5 in OSS CI or isolate
     # SparseCore-unsupported error tests to prevent test coverage loss.
-    if et.is_sparsecore_supported():
-      self.skipTest("SparseCore is supported on this TPU device.")
+    self._skip_unless_tpu_without_sparse_cores()
     device = et.device()
     dummy = torch.empty(8, dtype=torch.int32, device=device)
 
