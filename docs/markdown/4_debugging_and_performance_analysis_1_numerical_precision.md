@@ -28,20 +28,20 @@ alongside TPU-specific controls (`torch.tpu.Precision` and
 | Dimension          | PyTorch on CUDA                      | PyTorch on TPU (TorchTPU)              |
 | :----------------- | :----------------------------------- | :------------------------------------- |
 | **Default          | `"highest"` (pure `float32`)         | `"medium"` (`Precision.DEFAULT`)       |
-: Precision Mode**   :                                      :                                        :
-| **Fast Math        | Tensor Cores (`TF32`)                | Systolic MXUs (`bfloat16`)             |
-: Accelerator        :                                      :                                        :
-: Primitive**        :                                      :                                        :
-| **Fast Math Bits** | 1 sign + 8 exponent + 10 mantissa    | 1 sign + 8 exponent + 7 mantissa bits  |
+: precision mode**   :                                      :                                        :
+| **Fast math        | Tensor Cores (`TF32`)                | Systolic MXUs (`bfloat16`)             |
+: accelerator        :                                      :                                        :
+: primitive**        :                                      :                                        :
+| **Fast math bits** | 1 sign + 8 exponent + 10 mantissa    | 1 sign + 8 exponent + 7 mantissa bits  |
 :                    : bits (19-bit `TF32`)                 : (16-bit `bfloat16`)                    :
 | **Accumulation     | `float32` (`"highest"`, `"high"`),   | `float32` across all modes             |
-: Precision**        : `TF32` (`"medium"`)                  :                                        :
-| **Higher Precision | Dedicated hardware `float32`/`TF32`  | Multi-pass decomposition (3x or 6x MXU |
-: Mechanism**        : units                                : passes)                                :
+: precision**        : `TF32` (`"medium"`)                  :                                        :
+| **Higher precision | Dedicated hardware `float32`/`TF32`  | Multi-pass decomposition (3x or 6x MXU |
+: mechanism**        : units                                : passes)                                :
 | **Performance      | Baseline speed or modest slowdown    | ~3x MXU compute cost for `"high"`; ~6x |
-: Impact of          : (~1–2x)                              : for `"highest"`                        :
+: impact of          : (~1–2x)                              : for `"highest"`                        :
 : `high`/`highest`** :                                      :                                        :
-| **Scoping API**    | Global                               | Global                                 |
+| **Scoping API**    | Global                               | Global <br>                            |
 :                    : `torch.set_float32_matmul_precision` : `torch.set_float32_matmul_precision` + :
 :                    :                                      : scoped `torch.tpu.precision`           :
 
@@ -72,10 +72,14 @@ You can configure matrix multiplication precision in two ways:
     warning (`TORCH_WARN_ONCE`). Keep the default `"medium"` mode unless you
     observe precision-related convergence issues.
 
-> [!NOTE] Entering or exiting `torch.tpu.precision` introduces a `torch.compile`
-> graph break. When using `torch.compile(..., fullgraph=True)`, set precision
-> outside the compiled function with `torch.set_float32_matmul_precision(...)`
-> or wrap the outer call in `with torch.tpu.precision(...):`.
+!!! note
+
+```
+Entering or exiting `torch.tpu.precision` introduces a `torch.compile`
+graph break. When using `torch.compile(..., fullgraph=True)`, set precision
+outside the compiled function with `torch.set_float32_matmul_precision(...)`
+or wrap the outer call in `with torch.tpu.precision(...):`.
+```
 
 Use `torch.tpu.precision` to compare steady-state execution time across the
 three modes:
@@ -233,10 +237,14 @@ defaults to `False`):
     True` to allow the compiler to elide intermediate downcasts and keep fused
     intermediate results in `float32`.
 
-> [!IMPORTANT] Set `torch.tpu.allow_excess_precision` at the very beginning of
-> your script before running or compiling any TPU operations. The XLA runtime
-> locks this flag when the first compilation starts; attempting to change it to
-> a different value afterward raises a `RuntimeError`.
+!!! important
+
+```
+Set `torch.tpu.allow_excess_precision` at the very beginning of your script
+before running or compiling any TPU operations. The XLA runtime locks this
+flag when the first compilation starts; attempting to change it to a
+different value afterward raises a `RuntimeError`.
+```
 
 ## Understand TPU MXU precision
 
