@@ -1035,6 +1035,7 @@ class _TpuDeviceProperties:
   ``sparse_cores_per_device`` is the number of SparseCores per TPU device (0 if
   the TPU has no SparseCores), and ``sparse_core_simd_width`` is the SIMD width
   of each SparseCore (or None if the TPU has no SparseCores).
+  ``topology()`` returns the topology of a number of devices of the TPU.
   """
 
   name: str
@@ -1045,6 +1046,7 @@ class _TpuDeviceProperties:
   bf16_flops_per_device: int
   sparse_cores_per_device: int
   sparse_core_simd_width: int | None
+  _tpu_spec: hardware.TpuSpec = dataclasses.field(repr=False, compare=False)
 
   @property
   @annotations.deprecated(
@@ -1104,6 +1106,28 @@ class _TpuDeviceProperties:
           ),
       ),
   }
+
+  @experimental(
+      "topology() is experimental and subject to change without notice."
+  )
+  def topology(self, world_size: int | None = None) -> tuple[int, ...]:
+    """Returns the topology of a number of devices of the TPU.
+
+    Args:
+      world_size: The number of devices to return the topology of. Defaults to
+        the number of TPU devices of this host.
+
+    Returns:
+      The dimensions of the mesh of chips, with a trailing dimension for the
+      devices of each chip on generations whose chips have several devices (e.g.
+      ``(2, 2, 1)`` for 4 TPU v5p devices and ``(1, 2, 1, 2)`` for 4 TPU v7
+      devices).
+
+    Raises:
+      RuntimeError: If the TPU generation has no topology for ``world_size``
+        devices.
+    """
+    return self._tpu_spec.topology(world_size)
 
 
 class TpuDeviceModule(_DeviceModule):
@@ -1187,6 +1211,7 @@ class TpuDeviceModule(_DeviceModule):
         sparse_core_simd_width=(
             None if sparse_core_spec is None else sparse_core_spec.simd_width
         ),
+        _tpu_spec=tpu_spec,
     )
 
   @classmethod

@@ -5373,7 +5373,9 @@ class EnvironmentErrorsTest(et.TpuOnlyErrorTestBase):
   def test_singlehost_no_tpu_devices_raises(self):
     with _mock_launch_env({}):
       with (
-          mock.patch.object(hardware, "get_tpu_topology", return_value=None),
+          mock.patch.object(
+              internal_distributed, "_has_tpu_devices", return_value=False
+          ),
           mock.patch.object(hardware, "get_tpu_device_count", return_value=0),
       ):
         with et.assert_raises_message(

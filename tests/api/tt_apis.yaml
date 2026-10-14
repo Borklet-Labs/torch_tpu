@@ -103,6 +103,7 @@ torch.tpu.get_device_properties.multi_processor_count getter: {category: Public 
 torch.tpu.get_device_properties.name: {category: Public Python API, defined_in: runtime, stage: Experimental}
 torch.tpu.get_device_properties.sparse_core_simd_width: {category: Public Python API, defined_in: runtime, stage: Experimental}
 torch.tpu.get_device_properties.sparse_cores_per_device: {category: Public Python API, defined_in: runtime, stage: Experimental}
+torch.tpu.get_device_properties.topology: {category: Public Python API, defined_in: runtime, stage: Experimental}
 torch.tpu.get_device_properties.total_memory getter: {category: Public Python API, defined_in: runtime, deprecated_in: 0.2.1, stage: Deprecated}
 torch.tpu.get_rng_state: {category: Public Python API, defined_in: runtime, prefer: torch.accelerator.random.get_rng_state, stage: Internal}
 torch.tpu.initial_seed: {category: Public Python API, defined_in: runtime, prefer: torch.accelerator.random.initial_seed, stage: Internal}

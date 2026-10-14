@@ -45,67 +45,67 @@ _PCI_DEVICES_DIR: Final[pathlib.Path] = pathlib.Path("/sys/bus/pci/devices")
 _VFIO_DIR: Final[pathlib.Path] = pathlib.Path("/dev/vfio")
 
 # TPU topology maps represent the logical mesh of TPU chips as (X, Y, Z)
-# coordinates. For example, "2,2,1" indicates a 2x2x1 mesh of 4 chips.
+# dimensions. For example, (2, 2, 1) indicates a 2x2x1 mesh of 4 chips.
 # The keys are the number of TPU devices, and the values are the topology
-# strings. Generations that expose each TensorCore of a chip as a separate
+# dimensions. Generations that expose each TensorCore of a chip as a separate
 # device (TPU v7 and TPU v8i) have a trailing cores-per-chip dimension, e.g.
-# "1,2,1,2" for the 4 devices of a 1x2x1 mesh of 2 chips.
-_V5P_TOPOLOGY: Final[Mapping[int, str]] = immutabledict.immutabledict({
-    1: "1,1,1",
-    2: "1,2,1",
-    4: "2,2,1",
-    8: "2,2,2",
-})
+# (1, 2, 1, 2) for the 4 devices of a 1x2x1 mesh of 2 chips.
+_V5P_TOPOLOGY: Final[Mapping[int, tuple[int, ...]]] = (
+    immutabledict.immutabledict({
+        1: (1, 1, 1),
+        2: (1, 2, 1),
+        4: (2, 2, 1),
+        8: (2, 2, 2),
+    })
+)
 
-_V5E_TOPOLOGY: Final[Mapping[int, str]] = immutabledict.immutabledict({
-    1: "1,1,1",
-    4: "2,2,1",
-    # TPU v5e (8-chip) topology differs between environments:
-    # - Cloud TPU VMs: The physical hardware interconnect is wired as a 2D mesh
-    #   (2x4):
-    #   https://docs.cloud.google.com/tpu/docs/v5e#tpu-v5e-config
-    # - Internal test environments: A virtual 3D cube mapping (2x2x2) is used to
-    #   prevent coordinate collisions during local discovery in the absence of
-    #   physical wrap cabling.
-    # copybara:uncomment 8: "2,2,2",
-    8: "2,4,1",  # copybara:comment(oss-only)
-})
+_V5E_TOPOLOGY: Final[Mapping[int, tuple[int, ...]]] = (
+    immutabledict.immutabledict({
+        1: (1, 1, 1),
+        4: (2, 2, 1),
+        # TPU v5e (8-chip) topology differs between environments:
+        # - Cloud TPU VMs: The physical hardware interconnect is wired as a 2D mesh
+        #   (2x4):
+        #   https://docs.cloud.google.com/tpu/docs/v5e#tpu-v5e-config
+        # - Internal test environments: A virtual 3D cube mapping (2x2x2) is used to
+        #   prevent coordinate collisions during local discovery in the absence of
+        #   physical wrap cabling.
+        # copybara:uncomment 8: (2, 2, 2),
+        8: (2, 4, 1),  # copybara:comment(oss-only)
+    })
+)
 
-_V6E_TOPOLOGY: Final[Mapping[int, str]] = immutabledict.immutabledict({
-    1: "1,1,1",
-    4: "2,2,1",
-    8: "2,4,1",
-})
+_V6E_TOPOLOGY: Final[Mapping[int, tuple[int, ...]]] = (
+    immutabledict.immutabledict({
+        1: (1, 1, 1),
+        4: (2, 2, 1),
+        8: (2, 4, 1),
+    })
+)
 
-_V7_TOPOLOGY: Final[Mapping[int, str]] = immutabledict.immutabledict({
-    2: "1,1,1,2",
-    4: "1,2,1,2",
-    8: "2,2,1,2",
-})
+_V7_TOPOLOGY: Final[Mapping[int, tuple[int, ...]]] = (
+    immutabledict.immutabledict({
+        2: (1, 1, 1, 2),
+        4: (1, 2, 1, 2),
+        8: (2, 2, 1, 2),
+    })
+)
 
-_V8I_TOPOLOGY: Final[Mapping[int, str]] = immutabledict.immutabledict({
-    2: "1,1,1,2",
-    4: "2,1,1,2",
-    8: "4,1,1,2",
-})
+_V8I_TOPOLOGY: Final[Mapping[int, tuple[int, ...]]] = (
+    immutabledict.immutabledict({
+        2: (1, 1, 1, 2),
+        4: (2, 1, 1, 2),
+        8: (4, 1, 1, 2),
+    })
+)
 
 # TPU v8t has one TensorCore per chip, unlike TPU v7 and TPU v8i, so its
 # topologies have no trailing cores-per-chip dimension.
-_V8T_TOPOLOGY: Final[Mapping[int, str]] = immutabledict.immutabledict({
-    1: "1,1,1",
-    2: "1,2,1",
-    4: "2,2,1",
-})
-
-# Verified IDs from util/platforminfo/pci_ids.h
-_TOPOLOGY_BY_TPU_PCI_DEVICE_ID: Final[Mapping[str, Mapping[int, str]]] = (
+_V8T_TOPOLOGY: Final[Mapping[int, tuple[int, ...]]] = (
     immutabledict.immutabledict({
-        "0x0062": _V5P_TOPOLOGY,  # TPU v5p
-        "0x0063": _V5E_TOPOLOGY,  # TPU v5e
-        "0x006f": _V6E_TOPOLOGY,  # TPU v6e
-        "0x0076": _V7_TOPOLOGY,  # TPU v7
-        "0x007c": _V8T_TOPOLOGY,  # TPU v8t
-        "0x0083": _V8I_TOPOLOGY,  # TPU v8i
+        1: (1, 1, 1),
+        2: (1, 2, 1),
+        4: (2, 2, 1),
     })
 )
 
@@ -158,6 +158,8 @@ class TpuSpec:
     bf16_flops_per_chip: Peak dense bf16 compute per chip, in FLOP/s. Stored as
       the published per-chip figure (easy to check against the docs); the
       per-device value is derived via `devices_per_chip`.
+    topologies: Topology dimensions of each number of devices that a host can
+      use (see the TPU topology maps above).
     sparse_core_spec: SparseCore specs of the generation, or None if it has no
       SparseCores.
   """
@@ -166,6 +168,7 @@ class TpuSpec:
   devices_per_chip: int
   hbm_bytes_per_chip: int
   bf16_flops_per_chip: int
+  topologies: Mapping[int, tuple[int, ...]]
   sparse_core_spec: SparseCoreSpec | None = None
 
   V5P: ClassVar[TpuSpec]
@@ -198,6 +201,27 @@ class TpuSpec:
     """
     return self.bf16_flops_per_chip // self.devices_per_chip
 
+  def topology(self, world_size: int | None = None) -> tuple[int, ...]:
+    """Returns the topology of TPU devices of this generation.
+
+    Args:
+      world_size: The number of devices to return the topology of. Defaults to
+        the number of TPU devices that VFIO exposes on this host. Allows
+        sub-slicing only on a single host, in supported topologies.
+
+    Returns:
+      The topology dimensions, like (2, 2, 1) or (1, 2, 1, 2).
+
+    Raises:
+      RuntimeError: If the generation has no topology for `world_size` devices.
+    """
+    if world_size is None:
+      world_size, _ = _scan_pci_tpus()
+    if world_size not in self.topologies:
+      # torchtpu_agents' engine_compatibility_check.py matches this message.
+      raise RuntimeError(f"No TPU topology found for count: {world_size}")
+    return self.topologies[world_size]
+
 
 # HBM and bf16 FLOP/s sources:
 # - v5e, v5p, v6e, v7: https://cloud.google.com/tpu/docs/{v5e,v5p,v6e,tpu7x}
@@ -215,6 +239,7 @@ TpuSpec.V5P = TpuSpec(
     devices_per_chip=1,
     hbm_bytes_per_chip=95 * 1024**3,
     bf16_flops_per_chip=459 * 10**12,
+    topologies=_V5P_TOPOLOGY,
     sparse_core_spec=SparseCoreSpec(sparse_cores_per_device=4, simd_width=8),
 )
 TpuSpec.V5E = TpuSpec(
@@ -222,6 +247,7 @@ TpuSpec.V5E = TpuSpec(
     devices_per_chip=1,
     hbm_bytes_per_chip=16 * 1024**3,
     bf16_flops_per_chip=197 * 10**12,
+    topologies=_V5E_TOPOLOGY,
     sparse_core_spec=None,
 )
 TpuSpec.V6E = TpuSpec(
@@ -229,6 +255,7 @@ TpuSpec.V6E = TpuSpec(
     devices_per_chip=1,
     hbm_bytes_per_chip=32 * 1024**3,
     bf16_flops_per_chip=918 * 10**12,
+    topologies=_V6E_TOPOLOGY,
     sparse_core_spec=SparseCoreSpec(sparse_cores_per_device=2, simd_width=8),
 )
 TpuSpec.V7 = TpuSpec(
@@ -236,6 +263,7 @@ TpuSpec.V7 = TpuSpec(
     devices_per_chip=2,
     hbm_bytes_per_chip=192 * 1024**3,
     bf16_flops_per_chip=2307 * 10**12,
+    topologies=_V7_TOPOLOGY,
     sparse_core_spec=SparseCoreSpec(sparse_cores_per_device=2, simd_width=16),
 )
 TpuSpec.V8I = TpuSpec(
@@ -243,6 +271,7 @@ TpuSpec.V8I = TpuSpec(
     devices_per_chip=2,
     hbm_bytes_per_chip=309 * 10**9,
     bf16_flops_per_chip=1101 * 10**12,
+    topologies=_V8I_TOPOLOGY,
     sparse_core_spec=SparseCoreSpec(sparse_cores_per_device=1, simd_width=16),
 )
 TpuSpec.V8T = TpuSpec(
@@ -250,10 +279,12 @@ TpuSpec.V8T = TpuSpec(
     devices_per_chip=1,
     hbm_bytes_per_chip=231 * 10**9,
     bf16_flops_per_chip=9961 * 10**11,
+    topologies=_V8T_TOPOLOGY,
     sparse_core_spec=SparseCoreSpec(sparse_cores_per_device=2, simd_width=16),
 )
 
-# The `TpuSpec` of each TPU PCI device ID in `_TOPOLOGY_BY_TPU_PCI_DEVICE_ID`.
+# The `TpuSpec` of each TPU PCI device ID. Verified IDs from
+# util/platforminfo/pci_ids.h.
 _TPU_SPEC_BY_PCI_DEVICE_ID: Final[Mapping[str, TpuSpec]] = (
     immutabledict.immutabledict({
         "0x0062": TpuSpec.V5P,
@@ -335,16 +366,16 @@ def get_hbm_bytes_per_device() -> int | None:
   return None if tpu_spec is None else tpu_spec.hbm_bytes_per_device
 
 
-def _scan_pci_tpus() -> tuple[int, Mapping[int, str] | None]:
+def _scan_pci_tpus() -> tuple[int, TpuSpec | None]:
   """Scans PCI bus for TPU devices.
 
   Returns:
-    A tuple of (count, topology_map). `count` is the number of TPU devices
-    exposed via VFIO. `topology_map` is the Mapping of TPU device counts to
-    topology strings for the detected TPU generation.
+    A tuple of (count, tpu_spec). `count` is the number of TPU devices exposed
+    via VFIO. `tpu_spec` is the `TpuSpec` of the first of them, or None if VFIO
+    exposes no TPU device.
   """
   count = 0
-  topology_map = None
+  first_tpu_spec = None
 
   try:
     for device_path in _PCI_DEVICES_DIR.iterdir():
@@ -355,7 +386,8 @@ def _scan_pci_tpus() -> tuple[int, Mapping[int, str] | None]:
 
         device_id = (device_path / "device").read_text().strip()
 
-        if device_id in _TOPOLOGY_BY_TPU_PCI_DEVICE_ID:
+        tpu_spec = _TPU_SPEC_BY_PCI_DEVICE_ID.get(device_id)
+        if tpu_spec is not None:
           # Some devices have multiple tensorcores sharing the same bus.
           # We count only those that are exposed via VFIO.
           try:
@@ -365,15 +397,14 @@ def _scan_pci_tpus() -> tuple[int, Mapping[int, str] | None]:
             continue
 
           count += 1
-          # Use the first matching device's topology map.
-          if topology_map is None:
-            topology_map = _TOPOLOGY_BY_TPU_PCI_DEVICE_ID[device_id]
+          if first_tpu_spec is None:
+            first_tpu_spec = tpu_spec
       except (OSError, IOError):
         continue
   except (OSError, IOError):
     pass
 
-  return count, topology_map
+  return count, first_tpu_spec
 
 
 @annotations.deprecated(
@@ -393,8 +424,17 @@ def get_tpu_device_count() -> int:
   return count
 
 
+@annotations.deprecated(
+    version="0.2.1",
+    reason="Use torch.tpu.get_device_properties().topology() instead.",
+)
 def get_tpu_topology(world_size: int | None = None) -> str | None:
-  """Returns the topology string and device count for attached TPU devices.
+  """Returns the topology string of the attached TPU devices.
+
+  Deprecated: code outside TorchTPU should call
+  `torch.tpu.get_device_properties().topology()` instead, which raises a
+  RuntimeError rather than returning None if no TPU generation that TorchTPU
+  supports is attached.
 
   Args:
     world_size: If provided, use this as the target device count for topology
@@ -402,22 +442,17 @@ def get_tpu_topology(world_size: int | None = None) -> str | None:
       single-host, in supported topologies.
 
   Returns:
-    A topology string like "2,2,1" or None if no TPU is found.
+    A topology string like "2,2,1", or None if VFIO exposes no TPU device.
 
   Raises:
     RuntimeError: If a TPU device is detected but no topology is found for the
       `target_count` (either `world_size` or the auto-detected count).
   """
-  count, topology_map = _scan_pci_tpus()
-
-  if topology_map:
-    target_size = world_size if world_size is not None else count
-    if target_size in topology_map:
-      return topology_map[target_size]
-    else:
-      raise RuntimeError(f"No TPU topology found for count: {target_size}")
-
-  return None
+  count, tpu_spec = _scan_pci_tpus()
+  if tpu_spec is None:
+    return None
+  topology = tpu_spec.topology(count if world_size is None else world_size)
+  return ",".join(map(str, topology))
 
 
 def has_nvidia_gpu() -> bool:

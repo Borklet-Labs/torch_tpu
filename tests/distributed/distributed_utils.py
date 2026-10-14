@@ -24,7 +24,6 @@ import torch
 import torch.multiprocessing as mp
 from torch_tpu._internal import env
 from torch_tpu._internal import env_utils
-from torch_tpu._internal.utils import hardware
 from torch_tpu._internal.distributed import multiprocessing
 from tests import seed_test_utils
 
@@ -289,6 +288,7 @@ def _set_topology_unless_pinned(nproc_per_node: int) -> None:
   A topology picked by an earlier `dist_run` call with a different
   `nproc_per_node` would no longer match the number of SliceBuilder addresses,
   so it is replaced. A value set by someone else counts as pinned and is kept.
+  Only called on hosts with TPU devices.
 
   Args:
     nproc_per_node: The number of processes, i.e. devices, on this host.
@@ -298,9 +298,12 @@ def _set_topology_unless_pinned(nproc_per_node: int) -> None:
   current = os.environ.get(_TOPOLOGY_ENV)  # PY_ENVIRON_OK=must not memoize.
   if current is not None and current not in _picked_topologies:
     return
-  topology = hardware.get_tpu_topology(nproc_per_node)
-  if topology is None:
-    return
+  topology = ",".join(
+      map(
+          str,
+          torch.tpu.get_device_properties().topology(nproc_per_node),
+      )
+  )
   env_utils.set_str_env(_TOPOLOGY_ENV, topology)
   _picked_topologies.add(topology)
 

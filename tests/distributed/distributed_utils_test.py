@@ -19,6 +19,7 @@ import os
 import random
 import socket
 import sys
+import types
 from unittest import mock
 
 from absl.testing import absltest
@@ -249,9 +250,11 @@ class DistributedUtilsTest(seed_test_utils.MultiProcessRepeatableTest):
             distributed_utils, "_has_tpu_devices", return_value=True
         ),
         mock.patch.object(
-            distributed_utils.hardware,
-            "get_tpu_topology",
-            side_effect=lambda n=None: f"topology_for_{n}",
+            torch.tpu,
+            "get_device_properties",
+            return_value=types.SimpleNamespace(
+                topology=lambda world_size: (1, world_size, 1)
+            ),
         ),
         mock.patch.object(mp, "spawn", side_effect=mock_spawn),
     ):
@@ -260,7 +263,7 @@ class DistributedUtilsTest(seed_test_utils.MultiProcessRepeatableTest):
       distributed_utils.dist_run(8, lambda: None)
       distributed_utils.dist_run(4, lambda: None)
 
-    self.assertEqual(seen, [(8, 8, "topology_for_8"), (4, 4, "topology_for_4")])
+    self.assertEqual(seen, [(8, 8, "1,8,1"), (4, 4, "1,4,1")])
 
   def test_dist_run_keeps_pinned_topology(self) -> None:
     """Verifies a caller-pinned topology is not replaced."""

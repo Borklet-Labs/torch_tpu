@@ -89,6 +89,8 @@ class NoTpuDeviceModuleTest(
     self.assertEqual(
         props.sparse_core_simd_width, expected_sparse_core_simd_width
     )
+    for num_devices, topology in tpu_spec.topologies.items():
+      self.assertEqual(props.topology(num_devices), topology)
 
   def test_device_properties_multi_processor_count_is_deprecated(self):
     tpu_spec = hardware.TpuSpec.V7

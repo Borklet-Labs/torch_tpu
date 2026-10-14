@@ -97,7 +97,7 @@ class TpuTopologyMockTest(seed_test_utils.RepeatableTest):
       (1, "1,1,1"),
       (4, "2,2,1"),
       # The 8-chip topology differs between internal and OSS builds.
-      (8, hardware._V5E_TOPOLOGY[8]),
+      (8, ",".join(map(str, hardware._V5E_TOPOLOGY[8]))),
   )
   def test_v5e_chips(self, num_chips, expected_topology):
     self._run_mock_test(
@@ -289,6 +289,24 @@ class TpuTopologyMockTest(seed_test_utils.RepeatableTest):
     ):
       hardware.get_tpu_topology()
 
+  @parameterized.parameters(
+      (2, (1, 1, 1, 2)),
+      (4, (1, 2, 1, 2)),
+      (8, (2, 2, 1, 2)),
+  )
+  def test_tpu_spec_topology_with_world_size(self, world_size, expected):
+    self.assertEqual(hardware.TpuSpec.V7.topology(world_size), expected)
+
+  def test_tpu_spec_topology_defaults_to_device_count(self):
+    self._set_up_pci_fs(_fake_tpus("0x0076", 4, devices_per_chip=2))
+    self.assertEqual(hardware.TpuSpec.V7.topology(), (2, 2, 1, 2))
+
+  def test_tpu_spec_topology_raises_for_unsupported_world_size(self):
+    with self.assertRaisesRegex(
+        RuntimeError, "No TPU topology found for count: 3"
+    ):
+      hardware.TpuSpec.V7.topology(3)
+
   def _set_up_pci_fs(self, devices: Sequence[_FakePciDevice]) -> None:
     """Makes `hardware` scan a fake sysfs and devfs with the given devices."""
     root = pathlib.Path(self.create_tempdir().full_path)
@@ -359,6 +377,11 @@ class DeprecatedFunctionsTest(seed_test_utils.RepeatableTest):
           "get_tpu_device_name",
           hardware.get_tpu_device_name,
           "torch.tpu.get_device_name()",
+      ),
+      (
+          "get_tpu_topology",
+          hardware.get_tpu_topology,
+          "torch.tpu.get_device_properties().topology()",
       ),
   )
   def test_deprecated_in_favor_of_public_api(self, function, replacement):
@@ -494,32 +517,26 @@ class DeviceCapabilityTest(seed_test_utils.RepeatableTest):
     self.assertEqual(tpu_spec.sparse_core_spec, expected_sparse_core_spec)
 
   def test_each_tpu_spec_has_pci_device_id_and_topologies(self):
+    tpu_specs = [
+        value
+        for value in vars(hardware.TpuSpec).values()
+        if isinstance(value, hardware.TpuSpec)
+    ]
     self.assertCountEqual(
-        hardware._TPU_SPEC_BY_PCI_DEVICE_ID.values(),
-        [
-            value
-            for value in vars(hardware.TpuSpec).values()
-            if isinstance(value, hardware.TpuSpec)
-        ],
+        hardware._TPU_SPEC_BY_PCI_DEVICE_ID.values(), tpu_specs
     )
-    self.assertEqual(
-        hardware._TPU_SPEC_BY_PCI_DEVICE_ID.keys(),
-        hardware._TOPOLOGY_BY_TPU_PCI_DEVICE_ID.keys(),
-    )
+    for tpu_spec in tpu_specs:
+      with self.subTest(tpu=tpu_spec.name):
+        self.assertNotEmpty(tpu_spec.topologies)
 
   def test_topologies_match_device_counts_and_devices_per_chip(self):
-    for (
-        device_id,
-        topologies,
-    ) in hardware._TOPOLOGY_BY_TPU_PCI_DEVICE_ID.items():
-      tpu_spec = hardware._TPU_SPEC_BY_PCI_DEVICE_ID[device_id]
-      for num_devices, topology in topologies.items():
+    for tpu_spec in hardware._TPU_SPEC_BY_PCI_DEVICE_ID.values():
+      for num_devices, topology in tpu_spec.topologies.items():
         with self.subTest(tpu=tpu_spec.name, num_devices=num_devices):
-          dims = [int(dim) for dim in topology.split(",")]
-          self.assertEqual(math.prod(dims), num_devices)
+          self.assertEqual(math.prod(topology), num_devices)
           # Only generations with several devices per chip have a trailing
           # cores-per-chip dimension.
-          self.assertEqual(math.prod(dims[3:]), tpu_spec.devices_per_chip)
+          self.assertEqual(math.prod(topology[3:]), tpu_spec.devices_per_chip)
 
   @parameterized.parameters(
       (hardware.TpuSpec.V5P, False),

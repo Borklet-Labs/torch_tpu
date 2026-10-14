@@ -23,10 +23,12 @@ from multiprocessing import spawn as mp_spawn
 import os
 import subprocess
 import sys
+import types
 from unittest import mock
 
 from absl import flags
 from absl.testing import absltest
+import torch
 from torch.tpu import distributed  # pyrefly: ignore[missing-import]
 from torch_tpu._internal import env
 from torch_tpu._internal import env_utils
@@ -56,6 +58,24 @@ def _mock_env(values: dict[str, str]):
     stack.enter_context(
         mock.patch.object(env, "get_int_env_once", side_effect=get_int_env_once)
     )
+    yield
+
+
+@contextlib.contextmanager
+def _attached_tpu(topology: tuple[int, ...]):
+  """Makes the launcher see TPU devices of the given topology."""
+  with (
+      mock.patch.object(
+          internal_distributed, "_has_tpu_devices", return_value=True
+      ),
+      mock.patch.object(
+          torch.tpu,
+          "get_device_properties",
+          return_value=types.SimpleNamespace(
+              topology=lambda world_size=None: topology
+          ),
+      ),
+  ):
     yield
 
 
@@ -107,11 +127,11 @@ class EnvironmentTest(seed_test_utils.RepeatableTest):
   def test_singlehost_auto_detection(self):
     with _mock_env({}):
       with (
-          mock.patch.object(hardware, "get_tpu_topology", return_value="2x2x1"),
+          _attached_tpu((2, 2, 1)),
           mock.patch.object(hardware, "get_tpu_device_count", return_value=4),
       ):
         distributed.set_tpu_launch_env()
-        self.assertEqual(os.environ.get("TORCH_TPU_TOPOLOGY"), "2x2x1")
+        self.assertEqual(os.environ.get("TORCH_TPU_TOPOLOGY"), "2,2,1")
         addresses = os.environ.get("TORCH_TPU_SLICEBUILDER_ADDRESSES", "")
         self.assertLen(addresses.split(","), 4)
         self.assertTrue(
@@ -121,11 +141,11 @@ class EnvironmentTest(seed_test_utils.RepeatableTest):
   def test_single_worker_hostname_inferred_as_singlehost(self):
     with _mock_env({"TPU_WORKER_HOSTNAMES": "localhost"}):
       with (
-          mock.patch.object(hardware, "get_tpu_topology", return_value="2x2x2"),
+          _attached_tpu((2, 2, 2)),
           mock.patch.object(hardware, "get_tpu_device_count", return_value=8),
       ):
         distributed.set_tpu_launch_env()
-        self.assertEqual(os.environ.get("TORCH_TPU_TOPOLOGY"), "2x2x2")
+        self.assertEqual(os.environ.get("TORCH_TPU_TOPOLOGY"), "2,2,2")
         self.assertIsNone(os.environ.get("NNODES"))
         addresses = os.environ.get("TORCH_TPU_SLICEBUILDER_ADDRESSES", "")
         self.assertLen(addresses.split(","), 8)
@@ -184,7 +204,7 @@ class EnvironmentTest(seed_test_utils.RepeatableTest):
   def test_print_launch_env_singlehost(self):
     with _mock_env({}):
       with (
-          mock.patch.object(hardware, "get_tpu_topology", return_value="2x2x1"),
+          _attached_tpu((2, 2, 1)),
           mock.patch.object(hardware, "get_tpu_device_count", return_value=4),
       ):
         buf = io.StringIO()
@@ -193,7 +213,7 @@ class EnvironmentTest(seed_test_utils.RepeatableTest):
         lines = dict(
             line.split("=", 1) for line in buf.getvalue().strip().splitlines()
         )
-        self.assertEqual(lines.get("TORCH_TPU_TOPOLOGY"), '"2x2x1"')
+        self.assertEqual(lines.get("TORCH_TPU_TOPOLOGY"), '"2,2,1"')
         self.assertEqual(lines.get("WORLD_SIZE"), "4")
         self.assertIn("TORCH_TPU_SLICEBUILDER_ADDRESSES", lines)
         self.assertEqual(lines.get("NODE_RANK"), '"0"')
@@ -201,7 +221,7 @@ class EnvironmentTest(seed_test_utils.RepeatableTest):
   def test_print_launch_env_always_prints_node_rank(self):
     with _mock_env({"NODE_RANK": "3"}):
       with (
-          mock.patch.object(hardware, "get_tpu_topology", return_value="2x2x1"),
+          _attached_tpu((2, 2, 1)),
           mock.patch.object(hardware, "get_tpu_device_count", return_value=4),
       ):
         buf = io.StringIO()
@@ -217,6 +237,10 @@ class EnvironmentTest(seed_test_utils.RepeatableTest):
     }):
       with (
           mock.patch.object(hardware, "get_tpu_device_count", return_value=4),
+          # There is no actual TPU to get the topology of.
+          mock.patch.object(
+              internal_distributed, "_has_tpu_devices", return_value=False
+          ),
           mock.patch.object(
               subprocess, "run", return_value=_coords_process([2, 0, 0])
           ),
@@ -420,6 +444,12 @@ class TopologicalNodeRankTest(seed_test_utils.RepeatableTest):
     self.enterContext(
         mock.patch.object(hardware, "get_tpu_device_count", return_value=4)
     )
+    # There is no actual TPU to get the topology of.
+    self.enterContext(
+        mock.patch.object(
+            internal_distributed, "_has_tpu_devices", return_value=False
+        )
+    )
 
   def test_set_tpu_launch_env_with_coordinates(self):
     with _mock_env({
@@ -516,9 +546,7 @@ class TopologicalNodeRankTest(seed_test_utils.RepeatableTest):
         "JOB_COMPLETION_INDEX": "1",
     }):
       with (
-          mock.patch.object(
-              hardware, "get_tpu_topology", return_value="2,2,1,2"
-          ),
+          _attached_tpu((2, 2, 1, 2)),
           mock.patch.object(subprocess, "run") as run,
       ):
         distributed.set_tpu_launch_env()
@@ -541,13 +569,45 @@ class TopologicalNodeRankTest(seed_test_utils.RepeatableTest):
     with _mock_env({
         "TORCH_TPU_TOPOLOGY": "2,2,1",
     }):
-      with (
-          mock.patch.object(hardware, "get_tpu_topology", return_value="2,2,1"),
-          mock.patch.object(subprocess, "run") as run,
-      ):
+      with mock.patch.object(subprocess, "run") as run:
         distributed.set_tpu_launch_env()
       run.assert_not_called()
       self.assertIsNone(os.environ.get("NODE_RANK"))
+
+
+class HasTpuDevicesTest(seed_test_utils.RepeatableTest):
+
+  def _has_tpu_devices(
+      self, accelerator_type: str | None, *, available: bool
+  ) -> bool:
+    # Stands in for `torch.device`, which only accepts registered device types.
+    accelerator = (
+        None
+        if accelerator_type is None
+        else types.SimpleNamespace(type=accelerator_type)
+    )
+    with (
+        mock.patch.object(
+            torch.accelerator, "current_accelerator", return_value=accelerator
+        ),
+        mock.patch.object(
+            torch.accelerator, "is_available", return_value=available
+        ),
+    ):
+      return internal_distributed._has_tpu_devices()
+
+  def test_with_available_tpu_devices(self):
+    self.assertTrue(self._has_tpu_devices("tpu", available=True))
+
+  def test_without_available_tpu_devices(self):
+    self.assertFalse(self._has_tpu_devices("tpu", available=False))
+
+  def test_with_other_accelerator(self):
+    # E.g. on GPU hosts, where TorchTPU doesn't make the TPU the accelerator.
+    self.assertFalse(self._has_tpu_devices("cuda", available=True))
+
+  def test_without_accelerator(self):
+    self.assertFalse(self._has_tpu_devices(None, available=False))
 
 
 class QueryLocalDeviceCoordsTest(seed_test_utils.RepeatableTest):
@@ -556,6 +616,12 @@ class QueryLocalDeviceCoordsTest(seed_test_utils.RepeatableTest):
     super().setUp()
     self.enterContext(
         mock.patch.object(hardware, "get_tpu_device_count", return_value=4)
+    )
+    # There is no actual TPU to get the topology of.
+    self.enterContext(
+        mock.patch.object(
+            internal_distributed, "_has_tpu_devices", return_value=False
+        )
     )
 
   def test_without_tpu_devices_returns_none(self):

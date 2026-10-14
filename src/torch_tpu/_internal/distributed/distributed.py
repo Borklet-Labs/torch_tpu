@@ -80,6 +80,7 @@ import time
 
 from absl import logging
 import portpicker
+import torch
 from torch_tpu._internal import env
 from torch_tpu._internal import env_utils
 from torch_tpu._internal.utils import annotations
@@ -321,6 +322,23 @@ def _print_local_device_coords() -> None:
   print(f"{_LOCAL_DEVICE_COORDS_PREFIX}{json.dumps(coords)}")
 
 
+def _has_tpu_devices() -> bool:
+  """Returns whether this host has TPU devices.
+
+  TorchTPU only makes the TPU the current accelerator on hosts with TPU devices
+  of a generation that it supports; elsewhere, e.g. on GPU hosts,
+  `torch.accelerator` refers to other devices. For the TPU,
+  `torch.accelerator.is_available()` counts the TPU devices without initializing
+  the TPU runtime, which would keep the workers from claiming them.
+  """
+  accelerator = torch.accelerator.current_accelerator()
+  return (
+      accelerator is not None
+      and accelerator.type == "tpu"
+      and torch.accelerator.is_available()
+  )
+
+
 @annotations.experimental(
     "torch.tpu.distributed.set_tpu_launch_env is experimental"
     " and subject to change."
@@ -350,6 +368,8 @@ def set_tpu_launch_env(
       `TPU_WORKER_HOSTNAMES` is needed to derive an unset variable but is unset,
       or `NODE_RANK` is unset and can be derived neither from the TPU device
       coordinates and `TORCH_TPU_TOPOLOGY` nor from `JOB_COMPLETION_INDEX`.
+    RuntimeError: If `TORCH_TPU_TOPOLOGY` is unset and the TPU generation has
+      no topology for the number of devices.
   """
   multiprocessing.init_spawn()
 
@@ -447,11 +467,14 @@ def set_tpu_launch_env(
     )
     env_utils.get_and_set_str_env_once("MASTER_PORT", lambda: "29500")
 
-    topology = hardware.get_tpu_topology()
-    if topology is not None:
-      env_utils.get_and_set_str_env_once("TORCH_TPU_TOPOLOGY", lambda: topology)
+    if _has_tpu_devices():
+      env_utils.get_and_set_str_env_once(
+          "TORCH_TPU_TOPOLOGY",
+          lambda: ",".join(
+              map(str, torch.tpu.get_device_properties().topology())
+          ),
+      )
   else:
-    topology = hardware.get_tpu_topology(nproc_per_node)
     count = (
         nproc_per_node
         if nproc_per_node is not None
@@ -465,10 +488,15 @@ def set_tpu_launch_env(
       )
 
     def require_topology() -> str:
-      """Returns the detected topology, which must not be empty."""
-      if topology is None:
+      """Returns the topology of this host's TPU devices, which must exist."""
+      if not _has_tpu_devices():
         raise ValueError("set_tpu_launch_env(): expected TPU devices, got none")
-      return topology
+      return ",".join(
+          map(
+              str,
+              torch.tpu.get_device_properties().topology(nproc_per_node),
+          )
+      )
 
     env_utils.get_and_set_str_env_once(
         "TORCH_TPU_SLICEBUILDER_ADDRESSES", pick_slicebuilder_addresses

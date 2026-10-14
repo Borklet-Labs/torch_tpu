@@ -53,6 +53,7 @@ torch_tpu_py_library(
     deps = [
         ":tpu_distributed",
         "//shims/absl_py/logging",
+        "//shims/torch:pytorch",
         "//src/torch_tpu/_internal:env",
         "//src/torch_tpu/_internal:env_utils",
         "//src/torch_tpu/_internal/distributed:multiprocessing",
@@ -70,6 +71,7 @@ torch_tpu_py_test(
         ":distributed",
         "//shims/absl_py/flags",
         "//shims/absl_py/testing:absltest",
+        "//shims/torch:pytorch",
         "//src/torch_tpu",
         "//src/torch_tpu/_internal:env",
         "//src/torch_tpu/_internal:env_utils",
