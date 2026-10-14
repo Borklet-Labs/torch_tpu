@@ -467,8 +467,8 @@ def run_conflicting_device_assignments_error() -> None:
     return kernel2(kernel1(a))
 
   expected_msg = re.compile(
-      r".*conflicting device assignments detected: differing Pallas mesh device"
-      r" assignments in the same compilation traversal.*",
+      r".*expected Pallas kernels and scans in the same program to have the"
+      r" same device assignment, got .*",
       re.DOTALL,
   )
   with et.assert_raises_message(RuntimeError, tpu=expected_msg):

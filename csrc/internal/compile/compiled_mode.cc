@@ -499,6 +499,10 @@ absl::StatusOr<AsyncCompileResult> TraverseAndCompile(
                   unique_donated_inputs, options.module_name);
             }),
         _ << "failed to build MLIR module");
+    // BuildMlirModule() already resolved (and cached) the device assignment.
+    TT_ASSIGN_OR_RETURN(std::vector<int64_t> device_assignment,  // INT_VEC_OK
+                        traversal->ResolveDeviceAssignment());
+    contexted_module.set_device_assignment(std::move(device_assignment));
     module = std::make_shared<ContextedModule>(std::move(contexted_module));
   }
 

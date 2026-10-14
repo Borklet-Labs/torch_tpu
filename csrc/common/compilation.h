@@ -252,6 +252,18 @@ class ContextedModule {
     return xla::MaybeOwningMlirModule(std::move(context_), std::move(module_));
   }
 
+  // The resolved device assignment of the traced graph (empty if no op carries
+  // one), which ops that embed this module (e.g. scans) must carry.
+  [[nodiscard]] const std::vector<int64_t>& device_assignment()  // INT_VEC_OK
+      const {
+    return device_assignment_;
+  }
+
+  void set_device_assignment(
+      std::vector<int64_t> device_assignment) {  // INT_VEC_OK
+    device_assignment_ = std::move(device_assignment);
+  }
+
  private:
   ContextedModule() = delete;
 
@@ -261,6 +273,7 @@ class ContextedModule {
   absl_nonnull std::unique_ptr<mlir::MLIRContext> context_;
   // The module. If the context is dropped, the module will be invalidated.
   mlir::OwningOpRef<mlir::ModuleOp> module_;
+  std::vector<int64_t> device_assignment_;  // INT_VEC_OK
 };
 
 // Lifts a MlirComputationBuilder into an ExecutableBuilder.

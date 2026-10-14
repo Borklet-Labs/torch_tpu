@@ -145,12 +145,10 @@ std::vector<int64_t> ResolvePallasDeviceAssignment(  // INT_VEC_OK
     }
     TT_CHECK_THROW(authoritative_pallas_da == pallas_op.device_assignment,
                    error::kInvalidArgument)
-        << "conflicting device assignments detected: differing Pallas mesh "
-           "device assignments in the same compilation traversal. Kernel DA "
-           "0: "
-        << VectorToString(authoritative_pallas_da)
-        << " vs Kernel DA: " << VectorToString(pallas_op.device_assignment)
-        << ". All Pallas kernels in a traversal must share the identical mesh";
+        << "expected Pallas kernels and scans in the same program to have the "
+           "same device assignment, got "
+        << VectorToString(authoritative_pallas_da) << " and "
+        << VectorToString(pallas_op.device_assignment);
   }
   return authoritative_pallas_da;
 }

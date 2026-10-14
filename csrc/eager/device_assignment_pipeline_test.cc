@@ -218,6 +218,9 @@ TEST(DeviceAssignmentPipelineTest,
     da1[i] = i;
     da2[i] = 127 - i;
   }
+  constexpr std::string_view kExpectedMessage =
+      "expected Pallas kernels and scans in the same program to have the same "
+      "device assignment, got ";
   bool caught = false;
   try {
     (void)ResolveDeviceAssignment({}, {
@@ -226,12 +229,10 @@ TEST(DeviceAssignmentPipelineTest,
                                       });
   } catch (const c10::Error& e) {
     caught = true;
-    EXPECT_THAT(e.what(),
-                testing::HasSubstr("conflicting device assignments detected"));
+    EXPECT_THAT(e.what(), testing::HasSubstr(kExpectedMessage));
   } catch (const torch_tpu::TtError& e) {
     caught = true;
-    EXPECT_THAT(e.what(),
-                testing::HasSubstr("conflicting device assignments detected"));
+    EXPECT_THAT(e.what(), testing::HasSubstr(kExpectedMessage));
   }
   EXPECT_TRUE(caught);
 }

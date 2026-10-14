@@ -722,7 +722,8 @@ def run_two_mesh_probe(probe_id: str) -> None:
     elif probe_id == "two_conflicting_mesh_kernels_are_rejected":
       with absltest.TestCase().assertRaisesRegex(  # ABSLTEST_OK=helper only ASSERT_RAISES_OK=Requires multi-device hardware to test mesh conflict rejection in traversal
           (RuntimeError, torch._dynamo.exc.BackendCompilerFailed),
-          r"conflicting device assignments",
+          r"expected Pallas kernels and scans in the same program to have the"
+          r" same device assignment",
       ):
         _ = compiled(x)
     else:
