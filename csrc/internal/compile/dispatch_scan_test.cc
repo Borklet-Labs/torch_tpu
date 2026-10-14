@@ -51,6 +51,7 @@
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/MLIRContext.h"
+#include "mlir/IR/OperationSupport.h"
 #include "mlir/IR/OwningOpRef.h"
 #include "mlir/IR/Types.h"
 #include "mlir/IR/Verifier.h"
@@ -317,11 +318,32 @@ class DispatchScanTest : public testing::Test {
     };
   }
 
+  // Expects the deferred ops producing `lhs_results[output_buffer_index]` and
+  // `rhs_results[output_buffer_index]` to have identical op param cache keys.
+  void ExpectSameCacheKeys(const std::vector<at::Tensor>& lhs_results,
+                           const std::vector<at::Tensor>& rhs_results,
+                           int64_t output_buffer_index) {
+    ASSERT_LT(output_buffer_index, static_cast<int64_t>(lhs_results.size()));
+    ASSERT_LT(output_buffer_index, static_cast<int64_t>(rhs_results.size()));
+    TT_ASSERT_OK_AND_ASSIGN(const DeviceBufferRef lhs_buffer,
+                            GetBuffer(lhs_results[output_buffer_index]));
+    TT_ASSERT_OK_AND_ASSIGN(const DeviceBufferRef rhs_buffer,
+                            GetBuffer(rhs_results[output_buffer_index]));
+    const std::shared_ptr<DeferredOp> lhs_op = lhs_buffer.deferred_op();
+    const std::shared_ptr<DeferredOp> rhs_op = rhs_buffer.deferred_op();
+    ASSERT_TRUE(lhs_op != nullptr);
+    ASSERT_TRUE(rhs_op != nullptr);
+    const OpParamCacheKeys& lhs_keys = lhs_op->op_param_cache_keys();
+    EXPECT_THAT(rhs_op->op_param_cache_keys(),
+                testing::ElementsAreArray(lhs_keys.begin(), lhs_keys.end()));
+  }
+
   void LowerAndVerify(const std::vector<at::Tensor>& results,
                       absl::Span<const at::Tensor> input_tensors,
                       int64_t expected_results_size,
                       int64_t output_buffer_index = 1,
-                      std::string* lowered_mlir_out = nullptr) {
+                      std::string* lowered_mlir_out = nullptr,
+                      bool print_locations = false) {
     ASSERT_EQ(results.size(), expected_results_size);
     TT_ASSERT_OK_AND_ASSIGN(const DeviceBufferRef outputs_buf,
                             GetBuffer(results[output_buffer_index]));
@@ -335,7 +357,9 @@ class DispatchScanTest : public testing::Test {
 
     if (lowered_mlir_out != nullptr) {
       llvm::raw_string_ostream os(*lowered_mlir_out);
-      lowered.module.get().print(os);
+      mlir::OpPrintingFlags flags;
+      if (print_locations) flags.enableDebugInfo();
+      lowered.module.get().print(os, flags);
     }
   }
 
@@ -519,6 +543,49 @@ TEST_F(DispatchScanTest, VerifyCacheKeys) {
           testing::Pair("scan_direction", Fingerprint("forward")),
           testing::Pair("num_scan_inputs", 1), testing::Pair("num_carries", 1),
           testing::Pair("body_mlir", testing::_)));
+}
+
+// kAddStepMlir with a named location on the add. XLA names HLO instructions
+// after these, so dropping them renames ops (e.g. Pallas kernels) in profiles.
+static constexpr std::string_view kNamedAddStepMlir = R"mlir(
+  module {
+    func.func @main(%carry: tensor<1xi32>, %x: tensor<1xi32>) -> (tensor<1xi32>, tensor<1xi32>) {
+      %0 = stablehlo.add %x, %carry : tensor<1xi32> loc("my_named_op")
+      return %0, %0 : tensor<1xi32>, tensor<1xi32>
+    }
+  }
+)mlir";
+
+TEST_F(DispatchScanTest, BodyOpLocationsArePreserved) {
+  const auto [input, carry_init, dummy_output, body_module] =
+      GetStandard1DInputs(kNamedAddStepMlir);
+
+  const std::vector<at::Tensor> results = PyCreateScanOp(
+      {carry_init}, {input}, body_module, ScanDirection::kForward,
+      {dummy_output}, /*num_scan_inputs=*/1);
+
+  std::string lowered_mlir;
+  LowerAndVerify(results, {carry_init, input}, /*expected_results_size=*/2,
+                 /*output_buffer_index=*/1, &lowered_mlir,
+                 /*print_locations=*/true);
+  EXPECT_THAT(lowered_mlir, HasSubstr("my_named_op"));
+}
+
+TEST_F(DispatchScanTest, BodyLocationsDoNotAffectCacheKeys) {
+  const auto [input, carry_init, dummy_output, unnamed_body] =
+      GetStandard1DInputs(kAddStepMlir);
+  const std::shared_ptr<ContextedModule> named_body =
+      CreateBodyModule(kNamedAddStepMlir);
+
+  const std::vector<at::Tensor> unnamed_results = PyCreateScanOp(
+      {carry_init}, {input}, unnamed_body, ScanDirection::kForward,
+      {dummy_output}, /*num_scan_inputs=*/1);
+  const std::vector<at::Tensor> named_results =
+      PyCreateScanOp({carry_init}, {input}, named_body, ScanDirection::kForward,
+                     {dummy_output}, /*num_scan_inputs=*/1);
+
+  ExpectSameCacheKeys(unnamed_results, named_results,
+                      /*output_buffer_index=*/1);
 }
 
 TEST_F(DispatchScanTest, CpuTensorInputsError) {
@@ -856,6 +923,52 @@ TEST_F(DispatchScanTest, AssociativeScanInfersIdentityAndEmitsChloScan) {
     EXPECT_THAT(lowered_mlir, testing::Not(HasSubstr("stablehlo.while")));
     EXPECT_THAT(lowered_mlir, testing::Not(HasSubstr("stablehlo.concatenate")));
   }
+}
+
+TEST_F(DispatchScanTest, AssociativeScanBodyOpLocationsArePreserved) {
+  static constexpr std::string_view kNamedAddCombineMlir = R"mlir(
+    module {
+      func.func @main(%lhs: tensor<3xi32>, %rhs: tensor<3xi32>) -> tensor<3xi32> {
+        %0 = stablehlo.add %lhs, %rhs : tensor<3xi32> loc("my_named_combine")
+        return %0 : tensor<3xi32>
+      }
+    }
+  )mlir";
+  const at::Tensor input = MakePlaceholderI32({4, 3});
+  const std::shared_ptr<ContextedModule> body_module =
+      CreateBodyModule(kNamedAddCombineMlir);
+
+  const std::vector<at::Tensor> results = PyCreateAssociativeScanOp(
+      {input}, body_module, ScanDirection::kForward, /*dim=*/0,
+      /*num_scan_inputs=*/1);
+
+  std::string lowered_mlir;
+  LowerAndVerify(results, {input}, /*expected_results_size=*/1,
+                 /*output_buffer_index=*/0, &lowered_mlir,
+                 /*print_locations=*/true);
+  EXPECT_THAT(lowered_mlir, HasSubstr("my_named_combine"));
+}
+
+TEST_F(DispatchScanTest, AssociativeScanBodyLocationsDoNotAffectCacheKeys) {
+  static constexpr std::string_view kNamedAddCombineMlir = R"mlir(
+    module {
+      func.func @main(%lhs: tensor<3xi32>, %rhs: tensor<3xi32>) -> tensor<3xi32> {
+        %0 = stablehlo.add %lhs, %rhs : tensor<3xi32> loc("my_named_combine")
+        return %0 : tensor<3xi32>
+      }
+    }
+  )mlir";
+  const at::Tensor input = MakePlaceholderI32({4, 3});
+
+  const std::vector<at::Tensor> unnamed_results = PyCreateAssociativeScanOp(
+      {input}, CreateBodyModule(kAssociativeAddCombineMlir),
+      ScanDirection::kForward, /*dim=*/0, /*num_scan_inputs=*/1);
+  const std::vector<at::Tensor> named_results = PyCreateAssociativeScanOp(
+      {input}, CreateBodyModule(kNamedAddCombineMlir), ScanDirection::kForward,
+      /*dim=*/0, /*num_scan_inputs=*/1);
+
+  ExpectSameCacheKeys(unnamed_results, named_results,
+                      /*output_buffer_index=*/0);
 }
 
 TEST_F(DispatchScanTest, AssociativeScanMambaSsmTupleInfersIdentity) {

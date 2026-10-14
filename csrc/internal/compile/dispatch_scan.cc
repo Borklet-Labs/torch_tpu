@@ -64,6 +64,7 @@
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/OpDefinition.h"
+#include "mlir/IR/OperationSupport.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/IR/Value.h"
@@ -78,6 +79,27 @@
 namespace torch_tpu {
 
 namespace {
+
+// Prints `module` as MLIR text, keeping op locations so that re-parsing the
+// text doesn't lose them. XLA derives HLO instruction names, and thus the op
+// names shown in XProf, from those locations. Without them, e.g. every Pallas
+// kernel in a scan body would show up under XLA's fallback name `name.N`.
+std::string PrintModuleWithLocations(mlir::ModuleOp module) {
+  std::string printed;
+  llvm::raw_string_ostream os(printed);
+  module.print(os, mlir::OpPrintingFlags().enableDebugInfo());
+  return printed;
+}
+
+// Prints `module` as MLIR text without locations, for use as a cache key.
+// Bodies that differ only in their source locations thus share a cache entry
+// (and the op names of whichever body was compiled first).
+std::string PrintModuleForCacheKey(mlir::ModuleOp module) {
+  std::string printed;
+  llvm::raw_string_ostream os(printed);
+  module.print(os);
+  return printed;
+}
 
 std::vector<DeviceBufferRef> GetInputBuffers(
     const std::vector<at::Tensor>& inits,
@@ -1026,14 +1048,12 @@ std::vector<at::Tensor> PyCreateScanOp(
       << "expected " << num_outputs << " dummy outputs, got "
       << dummy_outputs.size();
 
-  // Serialize the body MLIR module to a string to act as a cache key and to
-  // pass across different `MLIRContext`s.
-  std::string serialized_mlir;
-  {
-    llvm::raw_string_ostream os(serialized_mlir);
-    body_module->get().print(os);
-    os.flush();
-  }
+  // Serialize the body MLIR module to strings: one without locations to act as
+  // a cache key, and one with locations to pass across different
+  // `MLIRContext`s.
+  const std::string cache_key_mlir = PrintModuleForCacheKey(body_module->get());
+  const std::string serialized_mlir =
+      PrintModuleWithLocations(body_module->get());
 
   const int64_t total_inputs = inputs.size();
 
@@ -1097,7 +1117,7 @@ std::vector<at::Tensor> PyCreateScanOp(
 
   TT_ASSIGN_OR_THROW(auto cache_keys,
                      *(OpParamCacheKeysBuilder()
-                           .SetParam("body_mlir", serialized_mlir)
+                           .SetParam("body_mlir", cache_key_mlir)
                            .SetParam("scan_direction", scan_direction)
                            .SetParam("num_scan_inputs", num_scan_inputs)
                            .SetParam("num_carries", num_carries)));
@@ -1179,12 +1199,9 @@ std::vector<at::Tensor> PyCreateAssociativeScanOp(
       const int64_t effective_dim,
       SafeWrapDim(unwrap_movedim ? *unwrapped_base_dim : dim, first_rank));
 
-  std::string serialized_mlir;
-  {
-    llvm::raw_string_ostream os(serialized_mlir);
-    body_module->get().print(os);
-    os.flush();
-  }
+  const std::string cache_key_mlir = PrintModuleForCacheKey(body_module->get());
+  const std::string serialized_mlir =
+      PrintModuleWithLocations(body_module->get());
 
   MlirOpBuilder op_builder = [serialized_mlir, total_inputs, scan_direction,
                               effective_dim, num_scan_inputs](
@@ -1199,7 +1216,7 @@ std::vector<at::Tensor> PyCreateAssociativeScanOp(
   TT_ASSIGN_OR_THROW(auto cache_keys,
                      *(OpParamCacheKeysBuilder()
                            .SetParam("op_kind", "associative_scan")
-                           .SetParam("body_mlir", serialized_mlir)
+                           .SetParam("body_mlir", cache_key_mlir)
                            .SetParam("scan_direction", scan_direction)
                            .SetParam("dim", effective_dim)
                            .SetParam("num_scan_inputs", num_scan_inputs)));
