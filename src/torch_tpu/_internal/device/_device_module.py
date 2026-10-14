@@ -1035,13 +1035,9 @@ class _TpuDeviceProperties:
   ``sparse_cores_per_device`` is the number of SparseCores per TPU device (0 if
   the TPU has no SparseCores), and ``sparse_core_simd_width`` is the SIMD width
   of each SparseCore (or None if the TPU has no SparseCores).
-  ``total_memory``, the same as ``hbm_bytes_per_device``, and
-  ``multi_processor_count``, always 1, mirror the fields of
-  ``torch.cuda.get_device_properties()``.
   """
 
   name: str
-  total_memory: int
   devices_per_chip: int
   hbm_bytes_per_chip: int
   hbm_bytes_per_device: int
@@ -1049,16 +1045,31 @@ class _TpuDeviceProperties:
   bf16_flops_per_device: int
   sparse_cores_per_device: int
   sparse_core_simd_width: int | None
-  multi_processor_count: int = 1
+
+  @property
+  @annotations.deprecated(
+      version="0.2.1",
+      reason="multi_processor_count is a CUDA concept with no TPU equivalent.",
+  )
+  def multi_processor_count(self) -> int:
+    """Deprecated: a CUDA concept with no TPU equivalent, always 1."""
+    return 1
+
+  @property
+  @annotations.deprecated(
+      version="0.2.1",
+      reason=(
+          "Use torch.tpu.get_device_properties().hbm_bytes_per_device instead."
+      ),
+  )
+  def total_memory(self) -> int:
+    """Deprecated: use ``hbm_bytes_per_device`` instead."""
+    return self.hbm_bytes_per_device
 
   __tt_api_stages__ = {
       "name": annotations.ApiStageInfo(
           stage=annotations.Stage.EXPERIMENTAL,
           reason="name is experimental and subject to change.",
-      ),
-      "total_memory": annotations.ApiStageInfo(
-          stage=annotations.Stage.EXPERIMENTAL,
-          reason="total_memory is experimental and subject to change.",
       ),
       "devices_per_chip": annotations.ApiStageInfo(
           stage=annotations.Stage.EXPERIMENTAL,
@@ -1091,10 +1102,6 @@ class _TpuDeviceProperties:
           reason=(
               "sparse_core_simd_width is experimental and subject to change."
           ),
-      ),
-      "multi_processor_count": annotations.ApiStageInfo(
-          stage=annotations.Stage.EXPERIMENTAL,
-          reason="multi_processor_count is experimental and subject to change.",
       ),
   }
 
@@ -1167,7 +1174,6 @@ class TpuDeviceModule(_DeviceModule):
     sparse_core_spec = tpu_spec.sparse_core_spec
     return _TpuDeviceProperties(
         name=tpu_spec.name,
-        total_memory=tpu_spec.hbm_bytes_per_device,
         devices_per_chip=tpu_spec.devices_per_chip,
         hbm_bytes_per_chip=tpu_spec.hbm_bytes_per_chip,
         hbm_bytes_per_device=tpu_spec.hbm_bytes_per_device,

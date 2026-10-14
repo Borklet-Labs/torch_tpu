@@ -165,15 +165,13 @@ class TpuDeviceModuleTest(
     self.assertIs(p1, p2)
 
   def test_get_device_properties_multi_processor_count(self):
+    # The deprecated `multi_processor_count` stays readable through
+    # `torch.tpu` and the Dynamo device interface.
     props = self.device_module.get_device_properties()
-    self.assertTrue(hasattr(props, "multi_processor_count"))
-    self.assertIsInstance(props.multi_processor_count, int)
-    self.assertGreaterEqual(props.multi_processor_count, 1)
-
     iface_props = get_interface_for_device("tpu").get_device_properties("tpu")
-    self.assertTrue(hasattr(iface_props, "multi_processor_count"))
-    self.assertIsInstance(iface_props.multi_processor_count, int)
-    self.assertGreaterEqual(iface_props.multi_processor_count, 1)
+    with self.assertWarns(DeprecationWarning):
+      self.assertEqual(props.multi_processor_count, 1)
+      self.assertEqual(iface_props.multi_processor_count, 1)
 
   def test_get_multi_processor_count(self):
     """Verifies TpuDeviceInterface implements get_multi_processor_count and not exposed on torch.tpu."""

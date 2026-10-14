@@ -57,16 +57,15 @@ generic equivalent.
 :                                                 :                                                : TPU (e.g., `"TPU v6e"`).   :
 | `torch.cuda.get_device_properties(device=None)` | `torch.tpu.get_device_properties(device=None)` | Returns static TPU device  |
 :                                                 :                                                : properties (including      :
-:                                                 :                                                : `name`, `total_memory`,    :
+:                                                 :                                                : `name`,                    :
 :                                                 :                                                : `devices_per_chip`,        :
 :                                                 :                                                : `hbm_bytes_per_chip`,      :
 :                                                 :                                                : `hbm_bytes_per_device`,    :
 :                                                 :                                                : `bf16_flops_per_chip`,     :
 :                                                 :                                                : `bf16_flops_per_device`,   :
 :                                                 :                                                : `sparse_cores_per_device`, :
-:                                                 :                                                : `sparse_core_simd_width`,  :
 :                                                 :                                                : and                        :
-:                                                 :                                                : `multi_processor_count`).  :
+:                                                 :                                                : `sparse_core_simd_width`). :
 
 The `torch.accelerator` APIs in this table require PyTorch 2.11 or later. In the
 rare case that you use an older PyTorch version, use the corresponding
