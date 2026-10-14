@@ -49,6 +49,7 @@ def _(mo):
     *   [The TorchTPU execution model](2_in_depth_3_torchtpu_execution_modes.py): In depth detail of the execution modes TorchTPU supports. 
     *   [Custom kernel support](2_in_depth_4_custom_kernels.py): How to write custom kernels for TorchTPU.
     *   [Distributed support](2_in_depth_5_distributed.py): In depth detail of distributed functionality for TorchTPU.
+    *   [Dynamic shapes support](2_in_depth_6_dynamic_shapes.py): In-depth concepts and mechanics of how TorchTPU compiles and executes dynamic shapes using bounded dynamism.
     *   [Supported feature set](6_reference_1_supported_feature_set.py):
         Supported feature set table.
     *   [torch.tpu API](6_reference_2_torchtpu_api.py):
@@ -60,7 +61,7 @@ def _(mo):
     *   [Using FSDP](3_practical_examples_3_fsdp_best_practices.py): Description of recommended approach to FSDP for TorchTPU.
     *   [Write custom kernels with Pallas](3_practical_examples_4_adding_custom_kernels_using_pallas.py): Integration of a pallas kernel.
     *   [Write custom communicating kernels with Pallas](3_practical_examples_5_distributed_pallas_kernels.py): As above, but adding distributed functionality and showing how to map between Pytorch and Pallas.
-    *   [Reduce recompilation from dynamic shapes](3_practical_examples_6_bounded_dynamism.py): Basics of bounded dynamism and the limits of the current implementation.
+    *   [Reduce recompilation from dynamic shapes](3_practical_examples_6_bounded_dynamism.py): Hands-on walkthrough applying bounded dynamism to an end-to-end LLM inference decode loop with a dynamic KV cache.
     *   [Case study: FLUX Optimization](5_case_studies_1_flux_optimization.py): Example demonstrating how to identify and apply multiple optimizations on FLUX.
     *   Case study: Muse Glimmer Optimization: Example demonstrating how to identify and apply multiple optimizations on Muse Glimmer.
 

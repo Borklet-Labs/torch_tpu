@@ -11,7 +11,7 @@ optimization guides for TorchTPU on Google Cloud TPUs.
 *   [Introduction to TorchTPU](./1_basics_1_intro_to_torchtpu.md): Why TorchTPU
     was created, what it provides, and how it can help you.
 *   [Get started with TorchTPU on a VM](./1_basics_2_get_started_on_vm.md):
-    Setup TorchTPU on a TPU VM..
+    Setup TorchTPU on a TPU VM.
 *   [Get started with TorchTPU on GKE](./1_basics_3_get_started_on_gke.md): Use
     TorchTPU through GKE.
 *   [Run PyTorch examples and tests](./1_basics_4_run_upstream_pytorch_examples.md):
@@ -29,6 +29,9 @@ optimization guides for TorchTPU on Google Cloud TPUs.
     custom kernels for TorchTPU.
 *   [Distributed support](./2_in_depth_5_distributed.md): In depth detail of
     distributed functionality for TorchTPU.
+*   [Dynamic shapes support](./2_in_depth_6_dynamic_shapes.md): In-depth
+    concepts and mechanics of how TorchTPU compiles and executes dynamic shapes
+    using bounded dynamism.
 *   [Supported feature set](./6_reference_1_supported_feature_set.md): Supported
     feature set table.
 *   [torch.tpu API](./6_reference_2_torchtpu_api.md): In-depth API and
@@ -48,7 +51,8 @@ optimization guides for TorchTPU on Google Cloud TPUs.
     As above, but adding distributed functionality and showing how to map
     between Pytorch and Pallas.
 *   [Reduce recompilation from dynamic shapes](./3_practical_examples_6_bounded_dynamism.md):
-    Basics of bounded dynamism and the limits of the current implementation.
+    Hands-on walkthrough applying bounded dynamism to an end-to-end LLM
+    inference decode loop with a dynamic KV cache.
 *   [Case study: FLUX Optimization](./5_case_studies_1_flux_optimization.md):
     Example demonstrating how to identify and apply multiple optimizations on
     FLUX.
