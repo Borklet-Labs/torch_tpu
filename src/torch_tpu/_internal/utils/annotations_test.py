@@ -14,6 +14,7 @@
 
 """Unit tests for TorchTPU API lifecycle stage annotations."""
 
+import dataclasses
 import enum
 import sys
 import types
@@ -333,6 +334,53 @@ class AnnotationsTest(seed_test_utils.RepeatableTest):
     self.assertIsNone(
         getattr(ServiceClass.unannotated_method, annotations.TT_API_STAGE, None)
     )
+
+  def test_dataclass_tt_api_stages_emits_field_warnings(self):
+    """Verifies fields in __tt_api_stages__ emit one-time stage warnings."""
+
+    @stable("SampleProps is stable.")
+    @dataclasses.dataclass(frozen=True)
+    class SampleProps:
+      name: str
+      total_memory: int
+
+      __tt_api_stages__ = {
+          "name": annotations.ApiStageInfo(
+              stage=annotations.Stage.EXPERIMENTAL,
+              reason="name is experimental.",
+          ),
+          "total_memory": annotations.ApiStageInfo(
+              stage=annotations.Stage.DEPRECATED,
+              reason="Use new_memory instead.",
+              version="0.2.1",
+          ),
+      }
+
+      @property
+      @deprecated(version="0.2.1", reason="Use total_memory instead.")
+      def old_memory(self) -> int:
+        return 1024
+
+    props = SampleProps("TPU v5e", 1024)
+    with self.assertWarnsRegex(
+        DeprecationWarning, "old_memory is deprecated as of TorchTPU 0.2.1"
+    ):
+      self.assertEqual(props.old_memory, 1024)
+    with self.assertWarnsRegex(
+        DeprecationWarning, "total_memory is deprecated as of TorchTPU 0.2.1"
+    ):
+      self.assertEqual(props.total_memory, 1024)
+    with self.assertWarnsRegex(UserWarning, "name is experimental"):
+      self.assertEqual(props.name, "TPU v5e")
+
+    # Verify that the warnings are only emitted once
+    with warnings.catch_warnings(record=True) as w:
+      warnings.simplefilter("always")
+      self.assertEqual(props.old_memory, 1024)
+      self.assertEqual(props.total_memory, 1024)
+      self.assertEqual(props.name, "TPU v5e")
+      self.assertEmpty(w)
+    self.assertNotIn("__getattribute__", SampleProps.__dict__)
 
   # ---------------------------------------------------------------------------
   # 4. Enum Class & Enum Member Tests

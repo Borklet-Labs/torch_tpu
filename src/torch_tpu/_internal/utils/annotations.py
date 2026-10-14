@@ -253,9 +253,15 @@ def _create_warning_wrapper(
     # caller check.
     if (raises or not _warned) and not torch.compiler.is_compiling():
       try:
-        caller_frame = sys._getframe(1)
+        frame = sys._getframe(1)
+        frames_skipped = 0
+        while frame is not None and frame.f_globals.get("__name__") == __name__:
+          frame = frame.f_back
+          frames_skipped += 1
+        caller_frame = frame
       except (AttributeError, ValueError):
         caller_frame = None
+        frames_skipped = 0
 
       if not _is_framework_caller_frame(caller_frame):
         name = getattr(display_target, "__name__", str(display_target))
@@ -268,10 +274,49 @@ def _create_warning_wrapper(
         msg = stage.format_warning_message(name, reason, version)
         cat = stage.warning_category
         if cat is not None:
-          _warned = tt_warnings.warn(msg, category=cat, stacklevel=2)
+          _warned = tt_warnings.warn(
+              msg, category=cat, stacklevel=2 + frames_skipped
+          )
     return fn_to_wrap(*args, **kwargs)
 
   return wrapper
+
+
+def _wrap_class_getattribute_for_stages(target: type[Any]) -> None:
+  """Wraps target.__getattribute__ to emit one-time warnings for staged fields."""
+  stages_map = target.__dict__.get(TT_API_STAGES_MAP, {})
+  unwarned = {
+      name: info
+      for name, info in stages_map.items()
+      if info.stage.warning_category is not None
+  }
+  if not unwarned:
+    return
+
+  orig_getattribute = target.__dict__.get("__getattribute__")
+
+  def __getattribute__(self: Any, name: str) -> Any:
+    if orig_getattribute is not None:
+      value = orig_getattribute(self, name)
+    else:
+      value = super(target, self).__getattribute__(name)  # pyrefly: ignore[invalid-argument]
+    if (
+        (info := unwarned.get(name))
+        and (cat := info.stage.warning_category)
+        and not torch.compiler.is_compiling()
+        and not _is_framework_caller_frame(sys._getframe(1))
+    ):
+      msg = info.stage.format_warning_message(name, info.reason, info.version)
+      if tt_warnings.warn(msg, category=cat, stacklevel=2):
+        unwarned.pop(name, None)
+        if not unwarned:
+          if orig_getattribute is not None:
+            target.__getattribute__ = orig_getattribute  # type: ignore[method-assign]
+          else:
+            delattr(target, "__getattribute__")
+    return value
+
+  target.__getattribute__ = __getattribute__  # type: ignore[method-assign]
 
 
 def _annotate_target(
@@ -291,7 +336,10 @@ def _annotate_target(
   2. Non-Enum Classes: Wraps the class `__init__` method to emit a one-time
      warning per process on instantiation. Class members (methods/properties)
      are not automatically decorated, allowing individual members to be
-     explicitly annotated with their own stages if desired.
+     explicitly annotated with their own stages if desired. If the class
+     defines `__tt_api_stages__`, wraps the class `__getattribute__` method to
+     emit a one-time warning per process when an annotated attribute is accessed
+     on an instance.
   3. Enum Classes: Attaches stage metadata to the Enum class itself. Enum
      members automatically inherit stage metadata via standard Python class
      attribute lookup rules.
@@ -321,6 +369,7 @@ def _annotate_target(
       target.__init__ = _create_warning_wrapper(
           target.__init__, target, stage, reason, version, strict
       )  # pylint: disable=protected-access
+    _wrap_class_getattribute_for_stages(target)
     return target
 
   # 2. Handle Function / Callable
