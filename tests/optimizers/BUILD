@@ -18,6 +18,7 @@
 
 load(
     "//build_files:build_defs.bzl",
+    "internal_target",
     "torch_tpu_package_end",
     "torch_tpu_py_library",
     "torch_tpu_py_test",
@@ -118,6 +119,58 @@ torch_tpu_py_test(
         "//src/torch_tpu/_internal/utils:test_utils",
         "//tests:seed_test_utils",
     ],
+)
+
+_DISTRIBUTED_SINGLE_TRACE_TRAINER_TEST_DEPS = [
+    "//shims/absl_py/flags",
+    "//shims/absl_py/testing:absltest",
+    "//shims/absl_py/testing:parameterized",
+    "//shims/torch:pytorch",
+    "//src/torch_tpu",
+    "//src/torch_tpu/_internal/compile:compiler",
+    "//src/torch_tpu/_internal/optimizers:adamw",
+    "//src/torch_tpu/_internal/optimizers:muon",
+    "//src/torch_tpu/_internal/optimizers:sgd",
+    "//src/torch_tpu/_internal/optimizers:single_trace_trainer",
+    "//src/torch_tpu/_internal/utils:test_utils",
+    "//src/torch_tpu/_internal/distributed:multiprocessing",
+    "//tests:seed_test_utils",
+    "//tests/distributed:distributed_utils",
+    "//shims/torchtitan/experiments/graph_trainer:simple_fsdp",
+]
+
+# SingleTraceTrainer on SimpleFSDP (DTensor) models: 2 gloo ranks on CPU with
+# the traced step uncompiled. torchtitan (SimpleFSDP) is not available in OSS.
+internal_target(
+    torch_tpu_py_test,
+    name = "distributed_single_trace_trainer_test",
+    srcs = ["distributed_single_trace_trainer_test.py"],
+    main = "distributed_single_trace_trainer_test.py",
+    # Each case spawns its own 2-process gloo group (about a minute each).
+    shard_count = 5,
+    # Avoids TOO_MANY_INPUT_FILES from torchtitan's sources.
+    use_precompile = False,
+    deps = _DISTRIBUTED_SINGLE_TRACE_TRAINER_TEST_DEPS,
+)
+
+# The same tests on one TPU v7 chip (one rank per TensorCore), compiled with
+# StaticCompiler.
+internal_target(
+    torch_tpu_py_test,
+    name = "distributed_single_trace_trainer_tpu_test",
+    srcs = ["distributed_single_trace_trainer_test.py"],
+    args = ["--device=tpu"],
+    main = "distributed_single_trace_trainer_test.py",
+    shard_count = 5,
+    tags = [
+        "nosan",  # Spawns TPU processes.
+        "ok-to-wait-for-v7x-in-presubmit",
+        "requires-accel-hbm",
+        "requires-net:external",
+        "requires-tpu-v7x",
+    ],
+    use_precompile = False,
+    deps = _DISTRIBUTED_SINGLE_TRACE_TRAINER_TEST_DEPS,
 )
 
 torch_tpu_package_end()

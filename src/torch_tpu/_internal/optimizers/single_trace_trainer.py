@@ -25,6 +25,7 @@ import torch
 import torch.func as func
 from torch.fx.experimental.proxy_tensor import make_fx
 from torch.nn.utils import stateless
+from torch.utils import _python_dispatch
 from torch.utils import _pytree
 from torch_tpu._internal.optimizers import adamw
 from torch_tpu._internal.optimizers import muon
@@ -258,6 +259,79 @@ def _decomp_embedding_bag_backward(
   )
 
 
+@dataclasses.dataclass(frozen=True)
+class _SubclassMeta:
+  """Rebuilds a tensor subclass (e.g. DTensor) from its plain local tensor.
+
+  Supports traceable wrapper subclasses with exactly one plain inner tensor.
+  Other inner attributes, such as DTensor's `device_mesh`, are not tensors and
+  are kept as constants.
+  """
+
+  cls: type[torch.Tensor]
+  inner_attr: str
+  inner_constants: dict[str, Any]
+  ctx: Any
+  outer_size: torch.Size
+  outer_stride: tuple[int, ...]
+
+  def wrap(self, inner: torch.Tensor) -> torch.Tensor:
+    return self.cls.__tensor_unflatten__(  # pytype: disable=attribute-error
+        {self.inner_attr: inner, **self.inner_constants},
+        self.ctx,
+        self.outer_size,
+        self.outer_stride,
+    )
+
+  def is_sharded(self, inner: torch.Tensor) -> bool:
+    """Whether `inner` holds only part of the logical (outer) tensor."""
+    return tuple(inner.shape) != tuple(self.outer_size)
+
+
+def _unwrap_subclass(
+    name: str, t: torch.Tensor
+) -> tuple[torch.Tensor, _SubclassMeta | None]:
+  """Returns `t`'s plain inner tensor and how to rewrap it.
+
+  Plain tensors are returned unchanged with no metadata.
+
+  Args:
+    name: Parameter or buffer name, for error messages.
+    t: The tensor to unwrap.
+
+  Raises:
+    NotImplementedError: If `t` is a subclass that does not wrap exactly one
+      plain tensor.
+  """
+  if not _python_dispatch.is_traceable_wrapper_subclass(t):
+    return t, None
+  attrs, ctx = t.__tensor_flatten__()  # pytype: disable=attribute-error
+  inner = {attr: getattr(t, attr) for attr in attrs}
+  tensor_attrs = [a for a, v in inner.items() if isinstance(v, torch.Tensor)]
+  if len(tensor_attrs) != 1 or _python_dispatch.is_traceable_wrapper_subclass(
+      inner[tensor_attrs[0]]
+  ):
+    raise NotImplementedError(
+        "SingleTraceTrainer only supports tensor subclasses that wrap one plain"
+        f" tensor (such as DTensor); {name} is a {type(t).__name__} with inner"
+        f" tensors {tensor_attrs}."
+    )
+  inner_attr = tensor_attrs[0]
+  return inner[inner_attr], _SubclassMeta(
+      cls=type(t),
+      inner_attr=inner_attr,
+      inner_constants={a: v for a, v in inner.items() if a != inner_attr},
+      ctx=ctx,
+      outer_size=t.size(),
+      outer_stride=t.stride(),
+  )
+
+
+def _to_plain_tensor(name: str, t: torch.Tensor) -> torch.Tensor:
+  """Returns `t`'s local tensor if it is a subclass, else `t`."""
+  return _unwrap_subclass(name, t)[0]
+
+
 @_annotations.experimental(
     "SingleTraceTrainer is experimental and may change or be removed without"
     " notice."
@@ -306,25 +380,59 @@ class SingleTraceTrainer:
     raw_params = dict(model.named_parameters())
     raw_buffers = dict(model.named_buffers())
 
+    # Tensor subclass params and buffers (e.g. SimpleFSDP's DTensor shards) are
+    # stored and traced as their plain local tensors, so the optimizer only
+    # sees, and keeps state for, the local shard. They are rewrapped inside the
+    # traced step, where DTensor dispatch records the collectives.
+    self._subclass_metas: dict[str, _SubclassMeta] = {}
     self._key_map = {}
     initial_params = {}
     for name, param in raw_params.items():
       safe_name = name.replace(".", "_")
       self._key_map[safe_name] = name
-      initial_params[safe_name] = param.detach()
+      local, meta = _unwrap_subclass(name, param.detach())
+      initial_params[safe_name] = local
+      if meta is not None:
+        self._subclass_metas[safe_name] = meta
 
     self._buffers = {}
     for name, buf in raw_buffers.items():
       safe_name = name.replace(".", "_")
       self._key_map[safe_name] = name
-      self._buffers[safe_name] = buf.detach()
+      local, meta = _unwrap_subclass(name, buf)
+      self._buffers[safe_name] = local.detach()
+      if meta is not None:
+        self._subclass_metas[safe_name] = meta
 
     if self._optimizer is not None:
+      if not getattr(self._optimizer, "_SUPPORTS_SHARDED_PARAMS", True):
+        sharded = [
+            self._key_map[k]
+            for k, meta in self._subclass_metas.items()
+            if k in initial_params and meta.is_sharded(initial_params[k])
+        ]
+        if sharded:
+          raise NotImplementedError(
+              f"{type(self._optimizer).__name__} needs full parameter"
+              " matrices and does not support sharded parameters, but"
+              f" {len(sharded)} parameters are sharded (e.g. {sharded[0]})."
+          )
       self._param_group = self._optimizer.init_param_group(initial_params)
     else:
       # Without an optimizer, store raw parameter tensors directly in the
       # param_group container for pure forward + backward execution.
       self._param_group = initial_params
+
+  def _wrap_subclasses(
+      self, tensors: dict[str, torch.Tensor]
+  ) -> dict[str, torch.Tensor]:
+    """Rewraps plain local tensors of subclass params/buffers (by safe name)."""
+    if not self._subclass_metas:
+      return tensors
+    return {
+        k: self._subclass_metas[k].wrap(v) if k in self._subclass_metas else v
+        for k, v in tensors.items()
+    }
 
   # Update state in this container and in user model.
   # Not technically required for params; all of the optimizers internalize an
@@ -354,18 +462,112 @@ class SingleTraceTrainer:
       "params is experimental and may change or be removed without notice."
   )
   def params(self) -> dict[str, torch.Tensor]:
-    """Returns parameters with their original names."""
+    """Returns parameters with their original names.
+
+    Tensor subclass parameters (e.g. DTensor) are returned rewrapped around
+    the trainer's current local tensors.
+    """
     p = (
         self._param_group.params
         if hasattr(self._param_group, "params")
         else self._param_group
     )
-    return {self._key_map[k]: v for k, v in p.items()}
+    return {self._key_map[k]: v for k, v in self._wrap_subclasses(p).items()}
 
   @property
   def _bufs(self) -> dict[str, torch.Tensor]:
     """Returns buffers with their original names."""
-    return {self._key_map[k]: v for k, v in self._buffers.items()}
+    return {
+        self._key_map[k]: v
+        for k, v in self._wrap_subclasses(self._buffers).items()
+    }
+
+  def _subclass_grad_and_value(
+      self,
+      params: dict[str, torch.Tensor],
+      bufs: dict[str, torch.Tensor],
+      inputs: Any,
+      targets: Any,
+  ) -> tuple[dict[str, torch.Tensor], torch.Tensor, dict[str, torch.Tensor]]:
+    """Computes local grads, loss and buffers for models with subclass state.
+
+    Runs inside the traced step. `params` and `bufs` hold plain local tensors;
+    subclass ones (e.g. DTensor shards) are rewrapped first, so tensor
+    subclass dispatch records its local ops and collectives (for SimpleFSDP:
+    the all-gather in forward and the reduce-scatter in backward). Gradients
+    come from `torch.autograd.grad`, as in torchtitan's graph trainer, because
+    `torch.func` transforms do not compose with DTensor.
+
+    Args:
+      params: Plain local parameter tensors, by safe name.
+      bufs: Plain local buffer tensors, by safe name.
+      inputs: Train step inputs.
+      targets: Train step targets, or None.
+
+    Returns:
+      `(grads, loss, updated_bufs)`. Gradients are local tensors laid out like
+      the local parameter shards, and buffers are local tensors.
+    """
+    if not params:
+      raise NotImplementedError(
+          "SingleTraceTrainer does not support tensor subclass buffers on a"
+          " model without parameters."
+      )
+    wrapped_params = {}
+    for k, v in self._wrap_subclasses(params).items():
+      # Rewrapped subclasses are fresh leaves; plain proxies need grads too.
+      wrapped_params[k] = v if v.requires_grad else v.requires_grad_()
+    wrapped_bufs = self._wrap_subclasses(bufs)
+    # The traced tensors stay swapped into the model during backward too, so
+    # activation checkpointing recomputes the forward with them rather than
+    # with the model's real parameters. The autograd engine must run backward
+    # on this thread, where make_fx's tracing modes are active.
+    with (
+        stateless._reparametrize_module(  # pylint: disable=protected-access
+            self._model,
+            {
+                **{self._key_map[k]: v for k, v in wrapped_params.items()},
+                **{self._key_map[k]: v for k, v in wrapped_bufs.items()},
+            },
+            tie_weights=True,
+        ),
+        torch.enable_grad(),
+        torch.autograd.set_multithreading_enabled(False),
+    ):
+      loss, updated_bufs = _compute_loss(
+          self._model,
+          self._key_map,
+          params=wrapped_params,
+          buffers=wrapped_bufs,
+          inputs=inputs,
+          targets=targets,
+          compute_loss_fn=self._compute_loss_fn,
+      )
+      names = list(wrapped_params)
+      raw_grads = torch.autograd.grad(
+          loss, [wrapped_params[k] for k in names], allow_unused=True
+      )
+
+    grads = {}
+    for k, grad in zip(names, raw_grads):
+      if grad is None:
+        grads[k] = torch.zeros_like(params[k])
+        continue
+      param = wrapped_params[k]
+      placements = getattr(param, "placements", None)
+      if placements is not None and tuple(grad.placements) != tuple(placements):
+        # E.g. a Replicate param whose grad is still Partial.
+        grad = grad.redistribute(param.device_mesh, placements)
+      grads[k] = _to_plain_tensor(self._key_map[k], grad)
+
+    if hasattr(loss, "full_tensor"):  # A DTensor loss.
+      loss = loss.full_tensor()
+    loss = _to_plain_tensor("loss", loss)
+    updated_bufs = {
+        k: _to_plain_tensor(self._key_map[k], v)
+        for k, v in updated_bufs.items()
+    }
+    return grads, loss.detach(), updated_bufs
 
   @_annotations.experimental(
       "make_compiled_train_step() is experimental and may change or be removed"
@@ -418,9 +620,14 @@ class SingleTraceTrainer:
             compute_loss_fn=self._compute_loss_fn,
         )
 
-      grads, (loss, updated_bufs) = func.grad_and_value(
-          bound_loss, has_aux=True, argnums=0
-      )(diff_target, bufs)
+      if self._subclass_metas:
+        grads, loss, updated_bufs = self._subclass_grad_and_value(
+            params_to_diff, bufs, inps, tgts
+        )
+      else:
+        grads, (loss, updated_bufs) = func.grad_and_value(
+            bound_loss, has_aux=True, argnums=0
+        )(diff_target, bufs)
 
       if self._optimizer is not None:
         new_p_group = self._optimizer(p_group, grads)
@@ -551,6 +758,10 @@ class SingleTraceTrainer:
         # Populate param.grad so callers (e.g. benchmark synchronization harness)
         # can eagerly synchronize device execution on parameter gradients.
         if isinstance(grads, dict):
+          if self._subclass_metas:
+            grads = {
+                k: v.detach() for k, v in self._wrap_subclasses(grads).items()
+            }
           for name, param in self._model.named_parameters():
             safe_name = name.replace(".", "_")
             if safe_name in grads:

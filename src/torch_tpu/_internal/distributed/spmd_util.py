@@ -18,6 +18,7 @@ import functools
 from typing import Any, TypeVar
 
 import torch
+from torch.fx.experimental import proxy_tensor
 from torch.utils import _pytree
 from torch_tpu._internal.distributed import tpu_distributed
 from torch_tpu._internal.sync import sync
@@ -77,7 +78,12 @@ def spmd_safe(func: _F) -> _F:
 
   @functools.wraps(func)
   def wrapper(*args: Any, **kwargs: Any) -> Any:
-    is_compiling = torch.compiler.is_compiling()
+    # make_fx tracing (e.g. SingleTraceTrainer) runs on fake tensors, which
+    # cannot be synchronized, and records a graph like torch.compile does.
+    is_compiling = (
+        torch.compiler.is_compiling()
+        or proxy_tensor.get_proxy_mode() is not None
+    )
 
     if not is_compiling:
       _synchronize_tensors(args, kwargs)

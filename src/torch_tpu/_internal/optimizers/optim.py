@@ -44,6 +44,11 @@ class Optimizer(abc.ABC):
   # stored in the attribute of the same name with a leading underscore.
   _HYPERPARAMETER_NAMES: ClassVar[tuple[str, ...]] = ("lr", "weight_decay")
 
+  # Whether `step` is correct when each parameter is only a local shard of the
+  # logical parameter (e.g. under FSDP), i.e. whether the update is
+  # elementwise. SingleTraceTrainer rejects sharded parameters otherwise.
+  _SUPPORTS_SHARDED_PARAMS: ClassVar[bool] = True
+
   def __init__(self, lr: float = 1e-3, weight_decay: float = 0.0):
     self._lr = lr
     self._weight_decay = weight_decay
