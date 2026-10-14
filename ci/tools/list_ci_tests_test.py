@@ -774,8 +774,6 @@ jobs:
         "ci_cpu_nightly": ("CPU", "linux-x86-n4-16"),
         "ci_tpu_nightly": ("TPU v6e", "linux-x86-ct6e-180-8tpu"),
         "ci_tpu_v5_nightly": ("TPU v5e", "linux-x86-ct5lp-224-8tpu"),
-        "wheel_test_cpu": ("CPU", "linux-x86-n4-16"),
-        "wheel_test_tpu_v7": ("TPU v7x", "linux-x86-tpu7x-224-4tpu"),
     }
 
     for job, (expected_machine, expected_runner) in expected_machines.items():

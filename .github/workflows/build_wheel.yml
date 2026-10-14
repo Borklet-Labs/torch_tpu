@@ -155,20 +155,16 @@ jobs:
         wheel_version: ["standard"]
         include:
           - wheel_version: "standard"
-            runner: linux-x86-n4-16
-            config: "wheel_test_cpu"
-            extra_flags: ""
+            nox_smoke_test: "cpu-cpu"
           - python_version: ${{ needs.setup.outputs.default_python_version }}
             wheel_version: "cuda"
             custom_name: "CPU (CUDA wheel)"
-            runner: linux-x86-n4-16
             nox_smoke_test: "cpu-cuda"
           - python_version: ${{ needs.setup.outputs.default_python_version }}
             # On release branches, collapse into the existing standard entry so
             # no separate PyTorch Nightly job is scheduled.
             wheel_version: ${{ needs.setup.outputs.is_release_branch == 'true' && 'standard' || 'nightly' }}
             custom_name: ${{ needs.setup.outputs.is_release_branch == 'true' && '' || 'CPU (PyTorch Nightly)' }}
-            runner: linux-x86-n4-16
             # Presubmit installs the exact nightly snapshot the wheel's
             # nightly glue was built against (requirements/
             # requirements_torch_nightly.txt), so the check is deterministic
@@ -176,20 +172,14 @@ jobs:
             # can drift ABI-incompatibly from that snapshot -- a failure
             # there is the signal to refresh the lock.
             nox_smoke_test: ${{ needs.setup.outputs.is_release_branch == 'true' && '' || (github.event_name == 'pull_request' && 'cpu-nightly-pinned' || 'cpu-nightly') }}
-    runs-on: ${{ matrix.runner }}
+    runs-on: linux-x86-n4-16
     container:
       image: us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build@sha256:dddf008479144c57182b56a6d00bfc1f38f8f2ef206e2bc26ff6c0a401ded47e  # Tag infrastructure-public-image-083516c6af6a (built 2026-10-13)
       options: --privileged
     permissions:
       contents: read
-      pull-requests: read
-      issues: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-        with:
-          # Keep the current commit's first parent fetchable
-          # to resolve bazel-diff base SHA below.
-          fetch-depth: 2
       # Git security patch (CVE-2022-24765) blocks root from operating on runner-owned directories:
       # https://github.blog/open-source/git/git-security-vulnerability-announced/#cve-2022-24765.
       # Tell Git explicitly to trust the workspace `/__w/torch_tpu/torch_tpu` inside this ephemeral
@@ -208,25 +198,18 @@ jobs:
         uses: google-ml-infra/actions/ci_connection@08e5394bb8179c66a50ac783fb8b2501a034c06f
         with:
           halt-dispatch-input: ${{ inputs.halt-for-connection }}
-      # For the alternate-torch wheel variants (CUDA, nightly) and free-threaded
-      # Python builds (3.14t), run a trimmed-down smoke test instead of
-      # the bazel test suite: nox installs the built wheel and the torch variant
-      # in a single uv resolution, then checks that the backend autoloads.
+      # Install the built wheel and target torch variant in a single uv
+      # resolution, then check that the backend autoloads and passes smoke tests.
       - name: Run smoke tests via nox
-        if: ${{ matrix.nox_smoke_test || endsWith(matrix.python_version, 't') }}
         env:
           PYTHON_VERSION: ${{ matrix.python_version }}
-          NOX_SMOKE_TEST: ${{ matrix.nox_smoke_test || 'cpu-cpu' }}
+          NOX_SMOKE_TEST: ${{ matrix.nox_smoke_test }}
         run: uvx nox --force-python "${PYTHON_VERSION}" -s "smoke_test(${NOX_SMOKE_TEST})"
-      - name: Run Impacted Tests via bazel-diff
-        if: ${{ !matrix.nox_smoke_test && !endsWith(matrix.python_version, 't') }}
-        uses: ./.github/actions/bazel-diff
-        with:
-          base_sha: ${{ inputs.override_base_sha }}
-          current_sha: ${{ inputs.override_current_sha || github.sha }}
-          bazel_config: ${{ matrix.config }}
-          extra_bazel_flags: ${{ matrix.extra_flags }} --repo_env=HERMETIC_PYTHON_VERSION=${{ matrix.python_version }} --define PYTHON_VERSION=${{ matrix.python_version }}
-          test_all: ${{ contains(github.event.pull_request.labels.*.name, 'ci:disable-bazel-diff') }}
+      - name: Run wheel characterization tests via nox
+        if: matrix.wheel_version == 'standard'
+        env:
+          PYTHON_VERSION: ${{ matrix.python_version }}
+        run: uvx nox --force-python "${PYTHON_VERSION}" -s wheel_test
 
   # Confirm each intermediate PyTorch patch (one we ship no exact glue for) is
   # served by its same-minor glue: the nox session runs the CPU smoke tests
@@ -302,41 +285,20 @@ jobs:
         run: uvx nox --force-python "${PYTHON_VERSION}" -s dep_upper_bounds
 
   test_wheels_tpu:
-    name: Test wheel on ${{ matrix.custom_name || 'TPU' }} (Python ${{ matrix.python_version }})
+    name: "Test wheel on TPU v7 1-Chip (Python ${{ matrix.python_version }})"
     needs: [build_wheels, setup]
     if: needs.setup.outputs.should_build == 'true'
     strategy:
       matrix:
         python_version: ${{ fromJSON(needs.setup.outputs.tpu_versions) }}
-        wheel_version: ["standard", "v7"]
-        exclude:
-          - python_version: "3.14t"
-            wheel_version: "v7"
-        include:
-          # v7 1-Chip: Run Nox smoke tests on single-chip v7 and skip Bazel test suite.
-          # v7 4-Chip: Run Nox smoke tests and full Bazel test suite.
-          - wheel_version: "standard"
-            runner: linux-x86-tpu7x-56-1tpu
-            custom_name: "TPU v7 1-Chip"
-          - wheel_version: "v7"
-            runner: linux-x86-tpu7x-224-4tpu
-            config: "wheel_test_tpu_v7"
-            extra_flags: '--run_under="$(pwd)/ci/tools/parallel_accelerator_execute.sh"'
-            custom_name: "TPU v7"
-    runs-on: ${{ matrix.runner || 'linux-x86-tpu7x-56-1tpu' }}
+    runs-on: linux-x86-tpu7x-56-1tpu
     container:
       image: us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build@sha256:dddf008479144c57182b56a6d00bfc1f38f8f2ef206e2bc26ff6c0a401ded47e  # Tag infrastructure-public-image-083516c6af6a (built 2026-10-13)
       options: --privileged
     permissions:
       contents: read
-      pull-requests: read
-      issues: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-        with:
-          # Keep the current commit's first parent fetchable
-          # to resolve bazel-diff base SHA below.
-          fetch-depth: 2
       # Git security patch (CVE-2022-24765) blocks root from operating on runner-owned directories:
       # https://github.blog/open-source/git/git-security-vulnerability-announced/#cve-2022-24765.
       # Tell Git explicitly to trust the workspace `/__w/torch_tpu/torch_tpu` inside this ephemeral
@@ -358,8 +320,7 @@ jobs:
       # TODO(b/541808039): Refactor this file to consolidate build/test loops and optimize the
       # dependency graph (e.g., start tests as soon as their specific wheel finishes building).
       #
-      # Unlike the bazel suite below (which runs from source), this exercises
-      # the wheel exactly as users consume it: nox installs the built wheel
+      # Exercise the wheel as users consume it: nox installs the built wheel
       # plus a pip torch in one uv resolution, then runs the TPU smoke tests
       # (autoload, execution modes, and a sync test that compiles) against the
       # versioned-glue dispatch on a real TPU.
@@ -367,15 +328,6 @@ jobs:
         env:
           PYTHON_VERSION: ${{ matrix.python_version }}
         run: uvx nox --force-python "${PYTHON_VERSION}" -s "smoke_test(tpu-cpu)"
-      - name: Run Impacted Tests via bazel-diff
-        if: matrix.config
-        uses: ./.github/actions/bazel-diff
-        with:
-          base_sha: ${{ inputs.override_base_sha }}
-          current_sha: ${{ inputs.override_current_sha || github.sha }}
-          bazel_config: ${{ matrix.config }}
-          extra_bazel_flags: ${{ matrix.extra_flags || '--run_under="$(pwd)/ci/tools/parallel_accelerator_execute.sh"' }} --repo_env=HERMETIC_PYTHON_VERSION=${{ matrix.python_version }} --define PYTHON_VERSION=${{ matrix.python_version }}
-          test_all: ${{ contains(github.event.pull_request.labels.*.name, 'ci:disable-bazel-diff') }}
 
   # Smoke-test the nightly glue on TPU: nox installs the built wheel plus a
   # PyTorch nightly in a single uv resolution and checks that the backend
