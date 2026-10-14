@@ -6,7 +6,7 @@ TPUs.
 
 For the full side-by-side comparison between PyTorch FSDPv2 (`fully_shard`) and
 SimpleFSDP (`data_parallel`), see
-[fsdp_to_simple_fsdp.md](fsdp_to_simple_fsdp.md).
+[fsdp_to_simple_fsdp.md](fsdp_to_simple_fsdp/fsdp_to_simple_fsdp.md).
 
 ## Overview
 
@@ -120,7 +120,7 @@ def train_step(model, x, y, world_size):
 From this directory, run the 8-core TPU launcher script:
 
 ```bash
-bash ./run_fsdp_to_simple_fsdp.sh
+bash ./fsdp_to_simple_fsdp/run_fsdp_to_simple_fsdp.sh
 ```
 
 ### 2. Running on GKE
@@ -138,16 +138,18 @@ Then:
 
 1.  If you haven't set up your cluster yet, complete the **One-time setup**
     section in
-    [Get started with TorchTPU on GKE](../../../docs/markdown/1_basics_3_get_started_on_gke.md).
+    [Get started with TorchTPU on GKE](../../docs/markdown/1_basics_3_get_started_on_gke.md).
 2.  Submit the job by following the **Single-Host Workload Execution (4-chip /
     8-device slice)** section in
-    [Running distributed workloads on GKE](../../../docs/markdown/1_basics_5_distributed_on_gke.md).
+    [Running distributed workloads on GKE](../../docs/markdown/1_basics_5_distributed_on_gke.md).
 
-## Files in This Directory
+## Files in `fsdp_to_simple_fsdp/`
 
--   `fsdp_to_simple_fsdp.md`: Detailed walkthrough migrating from PyTorch FSDPv2
-    to SimpleFSDP.
--   `fsdp_to_simple_fsdp_worker.py`: Distributed worker script comparing
-    compiled FSDPv2 and compiled SimpleFSDP step times and numerical parity.
--   `model.py`: `FeedForwardBlock` toy model used by the worker.
--   `run_fsdp_to_simple_fsdp.sh`: CLI launcher script.
+-   `fsdp_to_simple_fsdp/fsdp_to_simple_fsdp.md`: Detailed walkthrough migrating
+    from PyTorch FSDPv2 to SimpleFSDP.
+-   `fsdp_to_simple_fsdp/fsdp_to_simple_fsdp_worker.py`: Distributed worker
+    script comparing compiled FSDPv2 and compiled SimpleFSDP step times and
+    numerical parity.
+-   `fsdp_to_simple_fsdp/model.py`: `FeedForwardBlock` toy model used by the
+    worker.
+-   `fsdp_to_simple_fsdp/run_fsdp_to_simple_fsdp.sh`: CLI launcher script.
