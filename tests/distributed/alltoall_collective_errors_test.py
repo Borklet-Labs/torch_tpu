@@ -23,7 +23,6 @@ from torch import distributed as dist
 import torch.multiprocessing as mp
 from torch_tpu._internal.distributed import multiprocessing
 from tests import error_testing as et
-from tests import seed_test_utils
 from tests.distributed import distributed_utils
 
 
@@ -190,7 +189,6 @@ def run_all_to_all_single_asymmetric_cross_rank_output_buffer_error() -> None:
 
 
 def run_all_to_all_single_errors() -> None:
-  dist.init_process_group(backend="tpu_dist")
   run_all_to_all_single_send_recv_mismatch_error()
   run_all_to_all_single_asymmetric_cross_rank_buffer_error()
   run_all_to_all_single_asymmetric_cross_rank_output_buffer_error()
@@ -201,19 +199,6 @@ def run_all_to_all_single_errors() -> None:
   run_all_to_all_single_invalid_split_sizes_sum_error()
   run_all_to_all_single_uneven_trailing_dims_mismatch_error()
   run_all_to_all_single_uneven_dim_count_mismatch_error()
-
-
-class AllToAllSingleCollectiveErrorsTest(
-    seed_test_utils.MultiProcessRepeatableTest
-):
-
-  _world_size = 8
-
-  def test_all_to_all_single_errors(self):
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=run_all_to_all_single_errors,
-    )
 
 
 def run_all_to_all_unequal_tensor_list_size_error() -> None:
@@ -328,24 +313,12 @@ def run_all_to_all_dtype_mismatch_error() -> None:
 
 
 def run_all_to_all_errors() -> None:
-  dist.init_process_group(backend="tpu_dist")
   run_all_to_all_unequal_tensor_list_size_error()
   run_all_to_all_wrong_num_input_tensors_error()
   run_all_to_all_unequal_input_tensor_trailing_dims_error()
   run_all_to_all_unequal_output_tensor_trailing_dims_error()
   run_all_to_all_dim_count_mismatch_error()
   run_all_to_all_dtype_mismatch_error()
-
-
-class AllToAllCollectiveErrorsTest(seed_test_utils.MultiProcessRepeatableTest):
-
-  _world_size = 8
-
-  def test_all_to_all_errors(self):
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=run_all_to_all_errors,
-    )
 
 
 def _make_ragged_all_to_all_metadata(
@@ -424,20 +397,26 @@ def run_ragged_all_to_all_dtype_mismatch_error() -> None:
 
 
 def run_ragged_all_to_all_errors() -> None:
-  dist.init_process_group(backend="tpu_dist")
   run_ragged_all_to_all_dim_count_mismatch_error()
   run_ragged_all_to_all_trailing_dims_mismatch_error()
   run_ragged_all_to_all_dtype_mismatch_error()
 
 
-class RaggedAllToAllErrorsTest(seed_test_utils.MultiProcessRepeatableTest):
+def run_all_to_all_collective_errors() -> None:
+  dist.init_process_group(backend="tpu_dist")
+  run_all_to_all_single_errors()
+  run_all_to_all_errors()
+  run_ragged_all_to_all_errors()
+
+
+class AllToAllCollectiveErrorsTest(et.TpuOnlyDistributedErrorTestBase):
 
   _world_size = 8
 
-  def test_ragged_all_to_all_errors(self):
+  def test_all_to_all_collective_errors(self):
     distributed_utils.dist_run(
         nproc_per_node=self._world_size,
-        fn=run_ragged_all_to_all_errors,
+        fn=run_all_to_all_collective_errors,
     )
 
 

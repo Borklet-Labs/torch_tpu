@@ -492,7 +492,6 @@ torch_tpu_py_test(
         "--test_mode=tpu",
     ],
     env = {"TORCH_SHOW_CPP_STACKTRACES": "0"},
-    shard_count = 3,
     tags = if_oss(
         ["exclusive"],
         [],
@@ -507,7 +506,6 @@ torch_tpu_py_test(
         "//src/torch_tpu",
         "//src/torch_tpu/_internal/distributed:multiprocessing",
         "//tests:error_testing",
-        "//tests:seed_test_utils",
     ],
 )
 
@@ -521,7 +519,6 @@ torch_tpu_py_test(
     env = TEST_COV_ENV,
     main = "alltoall_collective_errors_test.py",
     notap = "Run by error_coverage_test in the torch_tpu.error_coverage Guitar workflow.",
-    shard_count = 3,
     tags = if_oss(
         ["exclusive"],
         [],
@@ -536,7 +533,6 @@ torch_tpu_py_test(
         "//src/torch_tpu",
         "//src/torch_tpu/_internal/distributed:multiprocessing",
         "//tests:error_testing",
-        "//tests:seed_test_utils",
     ],
 )
 
