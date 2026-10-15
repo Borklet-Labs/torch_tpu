@@ -21,6 +21,7 @@
 
 #include "csrc/internal/mosaic/kiln/core/dtype.h"
 #include "csrc/internal/mosaic/kiln/core/ref.h"
+#include "csrc/internal/mosaic/kiln/core/semaphore.h"
 #include "csrc/internal/mosaic/kiln/core/specs.h"
 
 namespace torch_tpu::kiln {
@@ -28,12 +29,33 @@ namespace torch_tpu::kiln {
 // Allocates a scratch `Ref` in VMEM or SMEM inside the current region/function
 // (`memref.alloca`).
 Ref Alloca(const ScratchSpec& spec);
+
 inline Ref AllocaVmem(Shape shape, DType dtype) {
   return Alloca(ScratchSpec::Vmem(std::move(shape), dtype));
 }
+
 inline Ref AllocaSmem(Shape shape, DType dtype) {
   return Alloca(ScratchSpec::Smem(std::move(shape), dtype));
 }
+
+// Allocates a 0-D DMA semaphore inside the current region/function
+// (`tpu.sem_alloc` with `!tpu.dma_semaphore`).
+Semaphore AllocaDmaSemaphore();
+
+// Allocates a multi-dimensional array of DMA semaphores inside the current
+// region/function (`tpu.sem_alloc` with `!tpu.dma_semaphore`).
+SemaphoreArray AllocaDmaSemaphore(Shape shape);
+
+// Allocates a 0-D regular semaphore inside the current region/function
+// (`tpu.sem_alloc` with `!tpu.semaphore`).
+Semaphore AllocaSemaphore();
+
+// Allocates a multi-dimensional array of regular semaphores inside the current
+// region/function (`tpu.sem_alloc` with `!tpu.semaphore`).
+SemaphoreArray AllocaSemaphore(Shape shape);
+
+// Returns the barrier semaphore for collective kernels (`tpu.sem_barrier`).
+Semaphore GetBarrierSemaphore();
 
 }  // namespace torch_tpu::kiln
 

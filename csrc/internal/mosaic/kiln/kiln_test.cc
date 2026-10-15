@@ -29,7 +29,6 @@
 #include <string_view>
 #include <utility>
 
-#include "absl/log/absl_log.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "gmock/gmock.h"
@@ -51,7 +50,6 @@ class KilnTest : public testing::Test {
   // not `CHECK` directives (e.g. `//` comments) are ignored by FileCheck.
   void ExpectKernelMatches(Kernel&& kernel, std::string_view pattern) {
     std::string ir = ToString(kernel);
-    ABSL_LOG(INFO) << "\n" << ir;
     EXPECT_THAT(kernel.Verify(), IsOk());
     EXPECT_THAT(std::move(kernel).Serialize(), IsOk()) << ir;
     EXPECT_THAT(xla::RunFileCheck(ir, pattern), IsOkAndHolds(true));
@@ -1227,5 +1225,149 @@ TEST_F(KilnTest, DynamicShapeSliceAndAllocaValidationErrors) {
                "Kiln operations may only be called inside BuildKernel");
 }
 
+TEST_F(KilnTest, SemaphoreAndBarrierOperations) {
+  DType f32 = Float32Type();
+
+  absl::StatusOr<Kernel> kernel = CreateKernel(
+      GridSpec{.name = "semaphores", .grid = {1}}, InSpec::Hbm({8, 128}, f32),
+      OutSpec::Vmem({8, 128}, f32), [&](Ref, Ref) {
+        Scalar dst_dev = (ProgramId(0) + 1) % 2;
+
+        Semaphore dma_sem0 = AllocaDmaSemaphore();
+        SemaphoreArray dma_sems = AllocaDmaSemaphore({2});
+        Semaphore dma_sem = dma_sems(0);
+        Semaphore sync_sem = AllocaSemaphore();
+        EXPECT_TRUE(dma_sem0.is_dma());
+        EXPECT_EQ(dma_sems.rank(), 1);
+        EXPECT_EQ(dma_sems.shape()[0], 2);
+        EXPECT_TRUE(dma_sems.is_dma());
+        EXPECT_TRUE(dma_sem.is_dma());
+        EXPECT_FALSE(sync_sem.is_dma());
+
+        Semaphore barrier_sem = GetBarrierSemaphore();
+        EXPECT_FALSE(barrier_sem.is_dma());
+        barrier_sem.Signal(1, {.device_id = dst_dev, .core_id = 0});
+        barrier_sem.Wait(1);
+
+        sync_sem.Signal(2);
+        Scalar count = sync_sem.Read();
+        sync_sem.Wait(count);
+      });
+  ASSERT_THAT(kernel, IsOk());
+  ExpectKernelMatches(std::move(*kernel), R"(
+    CHECK-LABEL: func.func @semaphores(
+    CHECK-SAME:    %[[PID:arg0]]: i32, %[[HBM_IN:arg1]]: memref<8x128xf32, #tpu.memory_space<hbm>>, %[[VMEM_OUT:arg2]]: memref<8x128xf32, #tpu.memory_space<vmem>>)
+    CHECK-SAME:    window_params = [{}, {transform_indices = affine_map<(d0) -> (0, 0)>}]
+    CHECK:         %[[C1_PID:.*]] = arith.constant 1 : i32
+    CHECK:         %[[NEXT_DEV:.*]] = arith.addi %[[PID]], %[[C1_PID]] : i32
+    CHECK:         %[[C2_MOD:.*]] = arith.constant 2 : i32
+    CHECK:         %[[DST_DEV:.*]] = arith.remsi %[[NEXT_DEV]], %[[C2_MOD]] : i32
+    CHECK:         %[[DMA_SEM0:.*]] = tpu.sem_alloc : memref<!tpu.dma_semaphore, #tpu.memory_space<semaphore_mem>>
+    CHECK:         %[[DMA_SEMS:.*]] = tpu.sem_alloc : memref<2x!tpu.dma_semaphore, #tpu.memory_space<semaphore_mem>>
+    CHECK:         %[[C0_SLICE:.*]] = arith.constant 0 : i32
+    CHECK:         %[[DMA_SLICE:.*]] = tpu.memref_slice %[[DMA_SEMS]][%[[C0_SLICE]]] : memref<2x!tpu.dma_semaphore, #tpu.memory_space<semaphore_mem>> -> memref<1x!tpu.dma_semaphore, #tpu.memory_space<semaphore_mem>>
+    CHECK:         %[[DMA_SEM:.*]] = tpu.memref_squeeze %[[DMA_SLICE]] : memref<1x!tpu.dma_semaphore, #tpu.memory_space<semaphore_mem>> -> memref<!tpu.dma_semaphore, #tpu.memory_space<semaphore_mem>>
+    CHECK:         %[[SYNC_SEM:.*]] = tpu.sem_alloc : memref<!tpu.semaphore, #tpu.memory_space<semaphore_mem>>
+    CHECK:         %[[BARRIER_SEM:.*]] = tpu.sem_barrier : memref<!tpu.semaphore, #tpu.memory_space<semaphore_mem>>
+    CHECK:         %[[SIG1_AMT:.*]] = arith.constant 1 : i32
+    CHECK:         %[[CORE0:.*]] = arith.constant 0 : i32
+    CHECK:         tpu.sem_signal %[[BARRIER_SEM]], %[[SIG1_AMT]] device_id %[[DST_DEV]] core_id %[[CORE0]] : memref<!tpu.semaphore, #tpu.memory_space<semaphore_mem>>
+    CHECK:         %[[WAIT1_AMT:.*]] = arith.constant 1 : i32
+    CHECK:         tpu.sem_wait %[[BARRIER_SEM]], %[[WAIT1_AMT]] : memref<!tpu.semaphore, #tpu.memory_space<semaphore_mem>>
+    CHECK:         %[[SIG2_AMT:.*]] = arith.constant 2 : i32
+    CHECK:         tpu.sem_signal %[[SYNC_SEM]], %[[SIG2_AMT]] : memref<!tpu.semaphore, #tpu.memory_space<semaphore_mem>>
+    CHECK:         %[[COUNT:.*]] = tpu.sem_read %[[SYNC_SEM]] : memref<!tpu.semaphore, #tpu.memory_space<semaphore_mem>> -> i32
+    CHECK:         tpu.sem_wait %[[SYNC_SEM]], %[[COUNT]] : memref<!tpu.semaphore, #tpu.memory_space<semaphore_mem>>
+  )");
+}
+
+TEST_F(KilnTest, HbmAndSemaphoreValidationErrors) {
+  DType f32 = Float32Type();
+
+  // HBM input/output specs with index_map are rejected by BuildKernel.
+  absl::StatusOr<Kernel> bad_hbm_in_map =
+      CreateKernel(GridSpec{.name = "bad_hbm_in", .grid = {1}},
+                   InSpec{{8, 128},
+                          f32,
+                          IndexMap([] { return IndexIndices{0, 0}; }),
+                          MemorySpace::kHbm},
+                   OutSpec::Vmem({8, 128}, f32), [&](Ref, Ref) {});
+  EXPECT_FALSE(bad_hbm_in_map.ok());
+  EXPECT_THAT(bad_hbm_in_map.status().message(),
+              testing::HasSubstr("HBM operands do not support index_map"));
+
+  absl::StatusOr<Kernel> bad_hbm_out_map = CreateKernel(
+      GridSpec{.name = "bad_hbm_out", .grid = {1}}, InSpec::Vmem({8, 128}, f32),
+      OutSpec{{8, 128},
+              f32,
+              IndexMap([] { return IndexIndices{0, 0}; }),
+              MemorySpace::kHbm},
+      [&](Ref, Ref) {});
+  EXPECT_FALSE(bad_hbm_out_map.ok());
+  EXPECT_THAT(bad_hbm_out_map.status().message(),
+              testing::HasSubstr("HBM operands do not support index_map"));
+
+  absl::StatusOr<Kernel> bad_hbm_scratch = CreateKernel(
+      GridSpec{.name = "bad_hbm_scratch", .grid = {1}},
+      InSpec::Vmem({8, 128}, f32), OutSpec::Vmem({8, 128}, f32),
+      ScratchSpec{{8, 128}, f32, MemorySpace::kHbm}, [&](Ref, Ref, Ref) {});
+  EXPECT_FALSE(bad_hbm_scratch.ok());
+  EXPECT_THAT(bad_hbm_scratch.status().message(),
+              testing::HasSubstr("Scratch operands cannot use HBM"));
+
+  absl::StatusOr<Kernel> kernel = CreateKernel(
+      GridSpec{.name = "hbm_sem_errors"}, InSpec::Hbm({kDynamic, 128}, f32),
+      OutSpec::Vmem({8, 128}, f32), [&](Ref hbm_in, Ref vmem_out) {
+        SemaphoreArray dma_sems = AllocaDmaSemaphore({2});
+        SemaphoreArray reg_sems = AllocaSemaphore({2, 3});
+        Semaphore reg_sem = AllocaSemaphore();
+        EXPECT_EQ(reg_sems.rank(), 2);
+        EXPECT_FALSE(reg_sems.is_dma());
+        Ref hbm_tile = hbm_in(Slice(0, 8), all);
+        EXPECT_DEATH(static_cast<void>(
+                         Alloca(ScratchSpec{{8, 128}, f32, MemorySpace::kHbm})),
+                     "Cannot allocate HBM in a kernel");
+        EXPECT_DEATH(
+            static_cast<void>(Alloca(ScratchSpec{{0}, f32, MemorySpace::kHbm})),
+            "Cannot allocate HBM in a kernel");
+        EXPECT_DEATH(static_cast<void>(AllocaDmaSemaphore(Shape{})),
+                     "AllocaDmaSemaphore\\(shape\\) requires a non-empty "
+                     "shape");
+        EXPECT_DEATH(static_cast<void>(AllocaSemaphore(Shape{})),
+                     "AllocaSemaphore\\(shape\\) requires a non-empty shape");
+        EXPECT_DEATH(static_cast<void>(AllocaDmaSemaphore({0})),
+                     "AllocaDmaSemaphore\\(shape\\) requires static positive "
+                     "dimensions");
+        EXPECT_DEATH(static_cast<void>(AllocaSemaphore({-1})),
+                     "AllocaSemaphore\\(shape\\) requires static positive "
+                     "dimensions");
+        EXPECT_DEATH(static_cast<void>(reg_sems(0)),
+                     "SemaphoreArray indexing requires exactly 2 indices");
+        EXPECT_DEATH(static_cast<void>(dma_sems(0, 0)),
+                     "SemaphoreArray indexing requires exactly 1 indices");
+        EXPECT_DEATH(static_cast<void>(dma_sems(2)),
+                     "Slice offset \\+ size must not exceed dimension size");
+        EXPECT_DEATH(static_cast<void>(Tile(hbm_tile)),
+                     "Tile load requires a VMEM ref");
+        EXPECT_DEATH((hbm_tile = Tile(vmem_out)),
+                     "Tile store requires a VMEM ref");
+        EXPECT_DEATH(static_cast<void>(Tile(hbm_in)),
+                     "Tile load requires a Ref with a static shape");
+        EXPECT_DEATH(dma_sems(0).Signal(1),
+                     "Semaphore::Signal\\(\\) requires a regular semaphore");
+        EXPECT_DEATH(dma_sems(0).Wait(1),
+                     "Semaphore::Wait\\(\\) requires a regular semaphore");
+        EXPECT_DEATH(reg_sem.Signal(0),
+                     "Semaphore::Signal\\(\\) amount must be positive");
+        EXPECT_DEATH(reg_sem.Wait(0),
+                     "Semaphore::Wait\\(\\) amount must be positive");
+        EXPECT_DEATH(reg_sem.Signal(1, {.device_id = -1}),
+                     "SemaphoreSignalOptions::device_id must be non-negative");
+        EXPECT_DEATH(reg_sem.Signal(I32(1).AsType(Int64Type())),
+                     "Semaphore::Signal\\(\\) amount scalar bitwidth must be "
+                     "<= 32");
+      });
+  ASSERT_THAT(kernel, IsOk());
+}
 }  // namespace
 }  // namespace torch_tpu::kiln

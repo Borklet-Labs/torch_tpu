@@ -26,7 +26,11 @@
 
 namespace torch_tpu::kiln {
 
-enum class MemorySpace { kVmem, kSmem };
+enum class MemorySpace {
+  kVmem,
+  kSmem,
+  kHbm,
+};
 
 // Iteration order guarantees for a grid dimension (Pallas
 // `dimension_semantics`).
@@ -57,6 +61,9 @@ struct BasicBlockSpec {
   static BasicBlockSpec Smem(Shape shape, DType dtype,
                              IndexMap map = IndexMap()) {
     return {std::move(shape), dtype, std::move(map), MemorySpace::kSmem};
+  }
+  static BasicBlockSpec Hbm(Shape shape, DType dtype) {
+    return {std::move(shape), dtype, IndexMap(), MemorySpace::kHbm};
   }
 };
 

@@ -122,6 +122,21 @@ mlir::MemRefType GetSmemMemRefType(MLIRContext* context,
       tpu::MemorySpaceAttr::get(context, tpu::MemorySpace::kSmem));
 }
 
+mlir::MemRefType GetHbmMemRefType(MLIRContext* context, ArrayRef<int64_t> shape,
+                                  Type element_type) {
+  return MemRefType::get(
+      shape, element_type, nullptr,
+      tpu::MemorySpaceAttr::get(context, tpu::MemorySpace::kHbm));
+}
+
+mlir::MemRefType GetSemaphoreMemRefType(MLIRContext* context,
+                                        ArrayRef<int64_t> shape,
+                                        Type element_type) {
+  return MemRefType::get(
+      shape, element_type, nullptr,
+      tpu::MemorySpaceAttr::get(context, tpu::MemorySpace::kSemaphoreMem));
+}
+
 mlir::Attribute GetDimensionSemanticsAttr(MLIRContext* context,
                                           DimensionSemantics semantics) {
   switch (semantics) {

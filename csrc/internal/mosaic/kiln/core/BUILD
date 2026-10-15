@@ -188,6 +188,25 @@ torch_tpu_cc_library(
 )
 
 torch_tpu_cc_library(
+    name = "semaphore",
+    srcs = ["semaphore.cc"],
+    hdrs = ["semaphore.h"],
+    deps = [
+        ":context",
+        ":dtype",
+        ":index_arg",
+        ":ref",
+        ":scalar",
+        ":value_base",
+        "@com_google_absl//absl/log:absl_check",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:ArithDialect",
+        "@llvm-project//mlir:IR",
+        "@xla//xla/mosaic:tpu_dialect",
+    ],
+)
+
+torch_tpu_cc_library(
     name = "memory",
     srcs = ["memory.cc"],
     hdrs = ["memory.h"],
@@ -195,11 +214,14 @@ torch_tpu_cc_library(
         ":context",
         ":dtype",
         ":ref",
+        ":semaphore",
         ":specs",
         "//csrc/internal/mosaic:op_builders",
         "@com_google_absl//absl/log:absl_check",
+        "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:MemRefDialect",
+        "@xla//xla/mosaic:tpu_dialect",
     ],
 )
 

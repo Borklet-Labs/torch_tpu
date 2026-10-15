@@ -69,6 +69,16 @@ mlir::MemRefType GetVmemMemRefType(MLIRContext* context,
 mlir::MemRefType GetSmemMemRefType(MLIRContext* context,
                                    ArrayRef<int64_t> shape, Type element_type);
 
+// Helper to build a memref type with hbm tpu::MemorySpace::kHbm memory space.
+mlir::MemRefType GetHbmMemRefType(MLIRContext* context, ArrayRef<int64_t> shape,
+                                  Type element_type);
+
+// Helper to build a memref type with semaphore_mem
+// tpu::MemorySpace::kSemaphoreMem memory space.
+mlir::MemRefType GetSemaphoreMemRefType(MLIRContext* context,
+                                        ArrayRef<int64_t> shape,
+                                        Type element_type);
+
 // Helper to build a tpu:: dimension semantics attribute.
 mlir::Attribute GetDimensionSemanticsAttr(MLIRContext* context,
                                           DimensionSemantics semantics);

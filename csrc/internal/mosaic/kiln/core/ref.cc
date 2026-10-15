@@ -263,6 +263,8 @@ MemorySpace Ref::memory_space() const {
       return MemorySpace::kVmem;
     case tpu::MemorySpace::kSmem:
       return MemorySpace::kSmem;
+    case tpu::MemorySpace::kHbm:
+      return MemorySpace::kHbm;
     default:
       ABSL_CHECK(false)  // CRASH_OK
           << "Unsupported TPU memory space in Kiln Ref";

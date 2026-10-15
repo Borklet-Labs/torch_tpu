@@ -121,9 +121,14 @@ mlir::MemRefType BlockType(mlir::MLIRContext* ctx,
                            llvm::ArrayRef<int64_t> shape, DType dtype,
                            MemorySpace space) {
   mlir::Type elem_type = internal::ToMlirType(dtype, ctx);
-  return space == MemorySpace::kVmem
-             ? mlir::torch_tpu::GetVmemMemRefType(ctx, shape, elem_type)
-             : mlir::torch_tpu::GetSmemMemRefType(ctx, shape, elem_type);
+  switch (space) {
+    case MemorySpace::kVmem:
+      return mlir::torch_tpu::GetVmemMemRefType(ctx, shape, elem_type);
+    case MemorySpace::kSmem:
+      return mlir::torch_tpu::GetSmemMemRefType(ctx, shape, elem_type);
+    case MemorySpace::kHbm:
+      return mlir::torch_tpu::GetHbmMemRefType(ctx, shape, elem_type);
+  }
 }
 
 mlir::torch_tpu::DimensionSemantics ToMlirDimensionSemantics(
@@ -193,6 +198,14 @@ absl::Status SetGridAttributes(mlir::ImplicitLocOpBuilder& b,
   llvm::SmallVector<mlir::Attribute> window_params;
   for (const BlockSpec& s :
        llvm::concat<const BlockSpec>(spec.in_specs, spec.out_specs)) {
+    if (s.space == MemorySpace::kHbm) {
+      if (s.map.has_mapping()) {
+        return TT_ERROR(::torch_tpu::error::kInvalidArgument)
+               << "HBM operands do not support index_map windowing";
+      }
+      window_params.push_back(b.getDictionaryAttr({}));
+      continue;
+    }
     const int64_t block_rank = s.shape.size();
     if (s.map.has_mapping()) {
       TT_ASSIGN_OR_RETURN(
@@ -278,6 +291,12 @@ absl::StatusOr<Kernel> BuildKernel(const KernelSpec& spec,
       spec.grid.dimension_semantics.size() != grid_rank) {
     return TT_ERROR(::torch_tpu::error::kInvalidArgument)
            << "dimension_semantics must have one entry per grid axis";
+  }
+  for (const ScratchSpec& s : spec.scratch) {
+    if (s.space == MemorySpace::kHbm) {
+      return TT_ERROR(::torch_tpu::error::kInvalidArgument)
+             << "Scratch operands cannot use HBM memory space";
+    }
   }
 
   auto impl = std::make_unique<Kernel::Impl>();

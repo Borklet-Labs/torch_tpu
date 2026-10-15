@@ -48,6 +48,8 @@
 //   values
 //   * If / For / RunScoped                      <-> pl.when / lax.fori_loop /
 //   pl.run_scoped
+//   * Semaphore / SemaphoreArray                <-> pltpu.SemaphoreType /
+//   tpu.sem_alloc
 //   * kDynamic / ref.Dim(axis) / MultipleOf     <-> dynamic memref dimensions
 //   and divisibility assumptions (pl.multiple_of)
 //
@@ -62,6 +64,7 @@
 #include "csrc/internal/mosaic/kiln/core/memory.h"        // IWYU pragma: export
 #include "csrc/internal/mosaic/kiln/core/ref.h"           // IWYU pragma: export
 #include "csrc/internal/mosaic/kiln/core/scalar.h"        // IWYU pragma: export
+#include "csrc/internal/mosaic/kiln/core/semaphore.h"     // IWYU pragma: export
 #include "csrc/internal/mosaic/kiln/core/specs.h"         // IWYU pragma: export
 #include "csrc/internal/mosaic/kiln/core/tile.h"          // IWYU pragma: export
 #include "csrc/internal/mosaic/kiln/core/value_base.h"    // IWYU pragma: export

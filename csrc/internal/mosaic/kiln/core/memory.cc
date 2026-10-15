@@ -17,24 +17,49 @@
 #include "csrc/internal/mosaic/kiln/core/memory.h"
 
 #include <cstdint>
+#include <string_view>
 
 #include "absl/log/absl_check.h"
 #include "csrc/internal/mosaic/kiln/core/context.h"
+#include "csrc/internal/mosaic/kiln/core/dtype.h"
 #include "csrc/internal/mosaic/kiln/core/ref.h"
+#include "csrc/internal/mosaic/kiln/core/semaphore.h"
 #include "csrc/internal/mosaic/kiln/core/specs.h"
 #include "csrc/internal/mosaic/op_builders.h"
+#include "llvm/ADT/ArrayRef.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/Types.h"
 #include "mlir/IR/Value.h"
+#include "xla/mosaic/dialect/tpu/tpu_dialect.h"
 
 namespace torch_tpu::kiln {
+namespace {
+
+namespace tpu = mlir::tpu;
+
+mlir::Value AllocaSemaphoreValue(llvm::ArrayRef<int64_t> shape,
+                                 mlir::Type elem_type,
+                                 std::string_view fn_name) {
+  for (int64_t dim : shape) {
+    ABSL_CHECK_GT(dim, 0)  // CRASH_OK
+        << fn_name << " requires static positive dimensions";
+  }
+  mlir::ImplicitLocOpBuilder& b = internal::CurrentBuilder();
+  mlir::MemRefType type =
+      mlir::torch_tpu::GetSemaphoreMemRefType(b.getContext(), shape, elem_type);
+  return tpu::AllocaSemaphoreOp::create(b, type);
+}
+
+}  // namespace
 
 Ref Alloca(const ScratchSpec& spec) {
   mlir::ImplicitLocOpBuilder& b = internal::CurrentBuilder();
   mlir::MLIRContext* ctx = b.getContext();
+  ABSL_CHECK(spec.space != MemorySpace::kHbm)  // CRASH_OK
+      << "Cannot allocate HBM in a kernel";
   for (int64_t dim : spec.shape) {
     ABSL_CHECK_GT(dim, 0)  // CRASH_OK
         << "Alloca() requires static positive dimensions";
@@ -66,6 +91,42 @@ Ref Alloca(const ScratchSpec& spec) {
           << "Unsupported memory space for Alloca()";
       return internal::wrap<Ref>(mlir::Value(), spec.dtype);
   }
+}
+
+Semaphore AllocaDmaSemaphore() {
+  mlir::MLIRContext* ctx = internal::CurrentBuilder().getContext();
+  return internal::wrap<Semaphore>(AllocaSemaphoreValue(
+      {}, tpu::DMASemaphoreType::get(ctx), "AllocaDmaSemaphore()"));
+}
+
+SemaphoreArray AllocaDmaSemaphore(Shape shape) {
+  ABSL_CHECK(!shape.empty())  // CRASH_OK
+      << "AllocaDmaSemaphore(shape) requires a non-empty shape";
+  mlir::MLIRContext* ctx = internal::CurrentBuilder().getContext();
+  return internal::wrap<SemaphoreArray>(AllocaSemaphoreValue(
+      shape, tpu::DMASemaphoreType::get(ctx), "AllocaDmaSemaphore(shape)"));
+}
+
+Semaphore AllocaSemaphore() {
+  mlir::MLIRContext* ctx = internal::CurrentBuilder().getContext();
+  return internal::wrap<Semaphore>(AllocaSemaphoreValue(
+      {}, tpu::SemaphoreType::get(ctx), "AllocaSemaphore()"));
+}
+
+SemaphoreArray AllocaSemaphore(Shape shape) {
+  ABSL_CHECK(!shape.empty())  // CRASH_OK
+      << "AllocaSemaphore(shape) requires a non-empty shape";
+  mlir::MLIRContext* ctx = internal::CurrentBuilder().getContext();
+  return internal::wrap<SemaphoreArray>(AllocaSemaphoreValue(
+      shape, tpu::SemaphoreType::get(ctx), "AllocaSemaphore(shape)"));
+}
+
+Semaphore GetBarrierSemaphore() {
+  mlir::ImplicitLocOpBuilder& b = internal::CurrentBuilder();
+  mlir::MLIRContext* ctx = b.getContext();
+  mlir::MemRefType type = mlir::torch_tpu::GetSemaphoreMemRefType(
+      ctx, {}, tpu::SemaphoreType::get(ctx));
+  return internal::wrap<Semaphore>(tpu::GetBarrierSemaphoreOp::create(b, type));
 }
 
 }  // namespace torch_tpu::kiln
