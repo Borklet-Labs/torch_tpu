@@ -59,10 +59,9 @@ absl::StatusOr<DeviceBufferRef> CopyCpuToTpuBuffer(const at::Tensor& src,
   // and **not** Tensor::storage().data_ptr().get().
   // On CPU, Tensor::data_ptr() will account for the storage offset, while
   // Tensor::storage().data_ptr().get() will not.
-  return TpuMallocAndMemcpyHtoD(
-      contiguous_src_for_tpu.data_ptr(), tpu_layout.element_type,
-      tpu_layout.sizes,
-      non_blocking ? std::make_optional(contiguous_src_for_tpu) : std::nullopt);
+  return TpuMallocAndMemcpyHtoD(contiguous_src_for_tpu.data_ptr(),
+                                tpu_layout.element_type, tpu_layout.sizes,
+                                non_blocking);
 }
 }  // namespace
 

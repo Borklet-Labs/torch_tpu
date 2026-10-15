@@ -131,8 +131,7 @@ absl::StatusOr<DeviceBufferRef> MakeBuffer(
     TT_ASSIGN_OR_RETURN(
         DeviceBufferRef buf_ref,
         TpuMallocAndMemcpyHtoD(scalar_data, element_type, /*dimensions=*/{},
-                               /*backing_tensor=*/std::nullopt,
-                               std::move(scalar_bytes)));
+                               /*non_blocking=*/true, std::move(scalar_bytes)));
     scalar_map.insert({hashable_scalar, buf_ref});
     return buf_ref;
   }

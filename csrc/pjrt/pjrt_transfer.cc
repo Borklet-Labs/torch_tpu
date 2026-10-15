@@ -164,28 +164,15 @@ absl::Status TpuMemcpyDtoHFP4(xla::PjRtBuffer* absl_nonnull buffer,
 
 absl::StatusOr<DeviceBufferRef> TpuMallocAndMemcpyHtoD(
     const void* host_data, mlir::ElementType element_type,
-    absl::Span<const int64_t> dimensions,
-    std::optional<at::Tensor> backing_tensor,
+    absl::Span<const int64_t> dimensions, bool non_blocking,
     std::vector<uint8_t> backing_data) {
   tsl::profiler::TraceMe trace("TpuMallocAndMemcpyHtoD");
-  if (backing_tensor.has_value()) {
-    TT_RET_CHECK(  // ERROR_COV_INFEASIBLE=not visible to Python
-        backing_data.empty(), error::kInvalidArgument)
-        << "expected at most one of backing_tensor or backing_data to be set";
-    TT_RET_CHECK(  // ERROR_COV_INFEASIBLE=not visible to Python
-        backing_tensor->data_ptr() == host_data, error::kInvalidArgument)
-        << "expected backing tensor data pointer to be " << host_data
-        << ", got " << backing_tensor->data_ptr();
-  } else if (!backing_data.empty()) {
-    TT_RET_CHECK(  // ERROR_COV_INFEASIBLE=not visible to Python
-        !backing_tensor.has_value(), error::kInvalidArgument)
-        << "expected at most one of backing_tensor or backing_data to be set";
+  if (!backing_data.empty()) {
     TT_RET_CHECK(  // ERROR_COV_INFEASIBLE=not visible to Python
         backing_data.data() == host_data, error::kInvalidArgument)
         << "expected backing data pointer to be " << host_data << ", got "
         << backing_data.data();
   }
-  bool non_blocking = backing_tensor.has_value() || !backing_data.empty();
 
   if (element_type == mlir::ElementType::F4E2M1FN) {
     ValidateFp4Dimensions(dimensions);
@@ -224,7 +211,6 @@ absl::StatusOr<DeviceBufferRef> TpuMallocAndMemcpyHtoD(
     // effective_host_data.
     backing_data =
         UnpackFp4(static_cast<const uint8_t*>(host_data), num_elements);
-    backing_tensor.reset();
     effective_host_data = backing_data.data();
   } else if (host_data == nullptr && num_elements > 0) {
     size_t buffer_size_bytes =
@@ -234,7 +220,6 @@ absl::StatusOr<DeviceBufferRef> TpuMallocAndMemcpyHtoD(
                       "num_elements > 0. Creating temporary zeroed host buffer "
                       "of size "
                    << buffer_size_bytes << " bytes.";
-      backing_tensor.reset();
       backing_data.clear();
       backing_data.resize(buffer_size_bytes, 0);
       effective_host_data = backing_data.data();
@@ -262,13 +247,10 @@ absl::StatusOr<DeviceBufferRef> TpuMallocAndMemcpyHtoD(
       AdaptXlaError(
           client->BufferFromHostBuffer(
               effective_host_data, type, dimensions, std::nullopt, semantics,
-              [backing_tensor = std::move(backing_tensor),
-               backing_data = std::move(backing_data)]() mutable {
-                // This lambda ensures that the backing tensor or bytes vector
-                // are kept alive until the transfer completes.
-                backing_tensor.reset();
+              [backing_data = std::move(backing_data)]() mutable {
+                // This lambda ensures that the backing bytes vector is kept
+                // alive until the transfer completes.
                 backing_data = std::vector<uint8_t>();
-                ;
               },
               memory_space, layout_ptr),
           /* context= */ "failed to start copy of buffer from host to device"));

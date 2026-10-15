@@ -19,7 +19,6 @@
 
 #include <cstdint>
 #include <memory>
-#include <optional>
 #include <vector>
 
 #include "ATen/core/TensorBody.h"
@@ -27,17 +26,23 @@
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "csrc/eager/device_buffer.h"
+#include "stablehlo/integrations/cpp/builder/AttrTypeBuilderUtil.h"
 #include "xla/future.h"
 #include "xla/xla_data.pb.h"
 
 namespace torch_tpu {
 
-// If backing tensor is present we keep it alive until the transfer completes,
-// otherwise we block on the transfer to complete.
+// Allocates a TPU buffer of the given dimensions and element type, and copies
+// the data from the host buffer into it.
+// If non_blocking is true, the copy is done asynchronously and the function
+// returns immediately.
+// If backing_data is provided, it is used to keep the host data alive until the
+// transfer completes.
+// If non_blocking is true and backing_data is not provided, the caller is
+// responsible for ensuring the host data is alive until the copy completes.
 absl::StatusOr<DeviceBufferRef> TpuMallocAndMemcpyHtoD(
     const void* host_data, mlir::ElementType element_type,
-    absl::Span<const int64_t> dimensions,
-    std::optional<at::Tensor> backing_tensor = std::nullopt,
+    absl::Span<const int64_t> dimensions, bool non_blocking,
     std::vector<uint8_t> backing_data = {});
 
 absl::StatusOr<at::Tensor> TpuMemcpyDtoH(const DeviceBufferRef& buffer_ref,
