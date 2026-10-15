@@ -18,15 +18,15 @@
 # pganssle-google
 
 load("@rules_python//python:py_binary.bzl", "py_binary")
-load("@rules_python//python:py_library.bzl", "py_library")
 load("@rules_python//python:py_test.bzl", "py_test")
+load("//build_files:build_defs.bzl", "torch_tpu_py_library")
 
 exports_files(
     ["run_cc_tpu_test.sh"],
     visibility = ["//visibility:public"],
 )
 
-py_library(
+torch_tpu_py_library(
     name = "torch_test_module_utils",
     testonly = True,
     srcs = ["torch_test_module_utils.py"],
