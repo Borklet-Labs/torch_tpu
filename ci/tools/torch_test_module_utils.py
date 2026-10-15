@@ -21,23 +21,67 @@ from typing import Final
 DISABLED_TEST_MODULES: Final[frozenset[str]] = frozenset({
     # go/keep-sorted start
     "complex_tensor/test_complex_tensor",
+    "distributed/_composable/fsdp/test_fully_shard_comm",
+    "distributed/fsdp/test_fsdp_apply",
+    "distributed/fsdp/test_fsdp_checkpoint",
+    "distributed/fsdp/test_fsdp_clip_grad_norm",
+    "distributed/fsdp/test_fsdp_comm",
+    "distributed/fsdp/test_fsdp_core",
+    "distributed/fsdp/test_fsdp_dtensor_state_dict",
+    "distributed/fsdp/test_fsdp_exec_order",
+    "distributed/fsdp/test_fsdp_fine_tune",
+    "distributed/fsdp/test_fsdp_input",
+    "distributed/fsdp/test_fsdp_multiple_forward",
+    "distributed/fsdp/test_fsdp_multiple_wrapping",
+    "distributed/fsdp/test_fsdp_overlap",
+    "distributed/fsdp/test_fsdp_pure_fp16",
+    "distributed/fsdp/test_fsdp_traversal",
+    "distributed/fsdp/test_fsdp_uneven",
+    "distributed/fsdp/test_hsdp_dtensor_state_dict",
+    "distributed/fsdp/test_utils",
     "distributed/pipelining/test_microbatch",
+    "distributed/tensor/test_dtensor_ops",
+    "distributed/test_backends",
+    "distributed/test_c10d_torchcomms",
+    "distributed/test_dynamo_distributed",
+    "distributed/test_functional_api",
+    "distributed/test_functional_differentials",
     "distributions/test_distributions",
     "dynamo/test_aot_autograd",
     "dynamo/test_dynamo_decompositions",
     "dynamo/test_dynamo_ops",
+    "dynamo/test_fx_annotate",
+    "dynamo/test_higher_order_ops",
+    "dynamo/test_repros",
     "dynamo/test_streams",
     "export/test_hop",
     "export/test_opinfo_schema",
     "export/test_torchbind",
+    "functorch/test_ac",
+    "functorch/test_aot_joint_with_descriptors",
+    "functorch/test_compile_to_python",
+    "functorch/test_control_flow",
+    "functorch/test_eager_transforms",
+    "functorch/test_memory_efficient_fusion",
+    "functorch/test_ops",
+    "functorch/test_vmap",
+    "higher_order_ops/test_invoke_subgraph",
     "higher_order_ops/test_print",
+    "higher_order_ops/test_with_effects",
     "inductor/test_compiled_autograd",
     "inductor/test_compiled_optimizers",
+    "inductor/test_flex_attention",
+    "inductor/test_flex_decoding",
     "inductor/test_fp8",
     "inductor/test_inductor_scheduler",
+    "inductor/test_mix_order_reduction",
+    "inductor/test_mmdecomp",
+    "inductor/test_op_dtype_prop",
+    "inductor/test_slice_scatter_chunking",
     "inductor/test_torchinductor_codegen_dynamic_shapes",
     "inductor/test_torchinductor_opinfo",
     "inductor/test_unbacked_symints",
+    "lazy/test_ts_opinfo",
     "nn/test_convolution",
     "nn/test_dropout",
     "nn/test_embedding",
@@ -55,10 +99,14 @@ DISABLED_TEST_MODULES: Final[frozenset[str]] = frozenset({
     "test_autograd",
     "test_binary_ufuncs",
     "test_bmm_outer_product",
+    "test_comparison_utils",
     "test_complex",
+    "test_custom_ops",
     "test_decomp",
     "test_dlpack",
+    "test_dynamic_shapes",
     "test_expanded_weights",
+    "test_fake_tensor",
     "test_foreach",
     "test_fx",
     "test_indexing",
@@ -79,7 +127,9 @@ DISABLED_TEST_MODULES: Final[frozenset[str]] = frozenset({
     "test_ops_fwd_gradients",
     "test_ops_gradients",
     "test_ops_jit",
+    "test_ops_unbacked",
     "test_optim",
+    "test_out_dtype_op",
     "test_overrides",
     "test_precompile",
     "test_prims",
@@ -94,13 +144,16 @@ DISABLED_TEST_MODULES: Final[frozenset[str]] = frozenset({
     "test_sparse",
     "test_sparse_csr",
     "test_spectral_ops",
+    "test_stateless_rng",
     "test_tensor_creation_ops",
     "test_testing",
     "test_torch",
+    "test_transformers",
     "test_type_promotion",
     "test_unary_ufuncs",
     "test_utils",
     "test_view_ops",
+    "torch_np/test_basic",
     # go/keep-sorted end
 })
 
@@ -145,10 +198,14 @@ TEST_MODULE_SHARDS: Final[Mapping[str, int]] = {
     # go/keep-sorted end
 }
 
-# Test modules specific to non-TPU accelerators, e.g. NCCL for Nvidia GPU.
+# Test modules with no device-generic tests for TPU, including
+#   1. Test modules specific to non-TPU accelerators, e.g. NCCL for Nvidia GPU.
+#   2. Test modules where every test class is labelled for other hardware or
+#      as GENERIC, so no TPU variant is instantiated.
 _ACCELERATOR_SPECIFIC_TEST_MODULES: Final[frozenset[str]] = frozenset({
     # go/keep-sorted start
     "distributed/algorithms/ddp_comm_hooks/test_ddp_hooks",
+    "distributed/launcher/test_run",
     "distributed/test_c10d_nccl2",
     "distributed/test_c10d_nccl_single_rank",
     "distributed/test_cupy_as_tensor",
@@ -157,6 +214,8 @@ _ACCELERATOR_SPECIFIC_TEST_MODULES: Final[frozenset[str]] = frozenset({
     "distributed/test_overlap_bucketing_unit",
     "distributed/test_symmetric_memory",
     "dynamo/test_compiler_bisector",
+    "export/test_export_opinfo",
+    "functorch/test_aotdispatch",
     "higher_order_ops/test_inline_asm_elementwise",
     "inductor/test_aoti_torchbind_constants",
     "inductor/test_cpu_select_algorithm",
@@ -173,10 +232,13 @@ _ACCELERATOR_SPECIFIC_TEST_MODULES: Final[frozenset[str]] = frozenset({
     "inductor/test_symm_mem_registry",
     "inductor/test_symmetric_mm",
     "inductor/test_triton_helpers",
+    "lazy/test_reuse_ir",
     "nn/attention/test_fa3",
     "nn/attention/test_fa4",
     "profiler/test_kineto",
     "test_cuda",
+    "test_flop_counter",
+    "test_functionalization_of_rng_ops",
     "test_jit_fuser_te",
     "test_jit_llga_fuser",
     "test_jiterator",
@@ -192,74 +254,6 @@ _ACCELERATOR_SPECIFIC_TEST_MODULES: Final[frozenset[str]] = frozenset({
     # go/keep-sorted end
 })
 
-# Test modules where device-generic tests are instantiated with `only_for` or
-# `except_for` that exclude TPU.
-# TODO(b/565072200): investigate how to always instantiate tests for TPU.
-_OTHER_DEVICES_ONLY_TEST_MODULES: Final[frozenset[str]] = frozenset({
-    # go/keep-sorted start
-    "distributed/_composable/fsdp/test_fully_shard_comm",
-    "distributed/fsdp/test_fsdp_apply",
-    "distributed/fsdp/test_fsdp_checkpoint",
-    "distributed/fsdp/test_fsdp_clip_grad_norm",
-    "distributed/fsdp/test_fsdp_comm",
-    "distributed/fsdp/test_fsdp_core",
-    "distributed/fsdp/test_fsdp_dtensor_state_dict",
-    "distributed/fsdp/test_fsdp_exec_order",
-    "distributed/fsdp/test_fsdp_fine_tune",
-    "distributed/fsdp/test_fsdp_input",
-    "distributed/fsdp/test_fsdp_multiple_forward",
-    "distributed/fsdp/test_fsdp_multiple_wrapping",
-    "distributed/fsdp/test_fsdp_overlap",
-    "distributed/fsdp/test_fsdp_pure_fp16",
-    "distributed/fsdp/test_fsdp_traversal",
-    "distributed/fsdp/test_fsdp_uneven",
-    "distributed/fsdp/test_hsdp_dtensor_state_dict",
-    "distributed/fsdp/test_utils",
-    "distributed/launcher/test_run",
-    "distributed/tensor/test_dtensor_ops",
-    "distributed/test_backends",
-    "distributed/test_c10d_torchcomms",
-    "distributed/test_dynamo_distributed",
-    "distributed/test_functional_api",
-    "distributed/test_functional_differentials",
-    "dynamo/test_fx_annotate",
-    "dynamo/test_higher_order_ops",
-    "dynamo/test_repros",
-    "export/test_export_opinfo",
-    "functorch/test_ac",
-    "functorch/test_aot_joint_with_descriptors",
-    "functorch/test_aotdispatch",
-    "functorch/test_compile_to_python",
-    "functorch/test_control_flow",
-    "functorch/test_eager_transforms",
-    "functorch/test_memory_efficient_fusion",
-    "functorch/test_ops",
-    "functorch/test_vmap",
-    "higher_order_ops/test_invoke_subgraph",
-    "higher_order_ops/test_with_effects",
-    "inductor/test_flex_attention",
-    "inductor/test_flex_decoding",
-    "inductor/test_mix_order_reduction",
-    "inductor/test_mmdecomp",
-    "inductor/test_op_dtype_prop",
-    "inductor/test_slice_scatter_chunking",
-    "jit/test_dtype_analysis",
-    "lazy/test_reuse_ir",
-    "lazy/test_ts_opinfo",
-    "test_comparison_utils",
-    "test_custom_ops",
-    "test_dynamic_shapes",
-    "test_fake_tensor",
-    "test_flop_counter",
-    "test_functionalization_of_rng_ops",
-    "test_ops_unbacked",
-    "test_out_dtype_op",
-    "test_stateless_rng",
-    "test_transformers",
-    "torch_np/test_basic",
-    # go/keep-sorted end
-})
-
 # Test modules that cannot run in TorchTPU test environment.
 _UNRUNNABLE_TEST_MODULES: Final[frozenset[str]] = frozenset({
     # go/keep-sorted start
@@ -270,6 +264,8 @@ _UNRUNNABLE_TEST_MODULES: Final[frozenset[str]] = frozenset({
     "cpp_extensions/python_agnostic_extension/test/test_python_agnostic",
     # Compiles and loads a C++ extension at import time.
     "cpp_extensions/test_libtorch_agnostic",
+    # Only runnable via test_jit.py.
+    "jit/test_dtype_analysis",
     # Requires onnxruntime to validate ONNX export operator.
     "onnx/test_op_consistency",
     # Requires onnxruntime and onnxscript reference runtimes.
@@ -280,7 +276,5 @@ _UNRUNNABLE_TEST_MODULES: Final[frozenset[str]] = frozenset({
 })
 
 EXCLUDED_TEST_MODULES: Final[frozenset[str]] = (
-    _ACCELERATOR_SPECIFIC_TEST_MODULES
-    | _OTHER_DEVICES_ONLY_TEST_MODULES
-    | _UNRUNNABLE_TEST_MODULES
+    _ACCELERATOR_SPECIFIC_TEST_MODULES | _UNRUNNABLE_TEST_MODULES
 )
