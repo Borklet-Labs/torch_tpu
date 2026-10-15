@@ -70,17 +70,6 @@ class KnownFailure:
 KNOWN_FAILURES: tuple[KnownFailure, ...] = (
     # TorchTPU.
     #
-    # TODO(b/571252258): Remove once eager_optimized fits in HBM.
-    KnownFailure(
-        benchmark="qwen3_coder_30b_moe_forward",
-        framework=mode_lib.Framework.TORCH,
-        device_kind=target_lib.DeviceKind.TPU,
-        run_modes=frozenset({common.RunMode.EAGER_OPTIMIZED}),
-        reason=(
-            "HBM OOM on v7_1x1x1 when local_scalar_dense() materializes the"
-            " deferred graph"
-        ),
-    ),
     # TODO(b/571695076): Remove once the 4096 parameter training step fits.
     KnownFailure(
         benchmark="synthetic_4096_params_training",
