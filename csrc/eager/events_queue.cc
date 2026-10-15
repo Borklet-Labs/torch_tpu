@@ -337,7 +337,8 @@ class StreamState {
       EagerMode eager_mode) {
     absl::MutexLock lock(mu_);
     return RequestEventSnapshotLocked(std::move(must_materialize), reason, mode,
-                                      eager_mode);
+                                      eager_mode,
+                                      /*execution_task=*/std::nullopt);
   }
 
   std::vector<absl_nonnull std::unique_ptr<EventSnapshotRequest>>
@@ -380,8 +381,8 @@ class StreamState {
     absl::MutexLock lock(mu_);
     RequestEventSnapshotLocked(
         /*must_materialize=*/{}, MaterializationReason::kCompileModeExecution,
-        MaterializationMode::kSplitGraph, eager_mode);
-    snapshot_requests_.back()->execution_task = std::move(execution_task);
+        MaterializationMode::kSplitGraph, eager_mode,
+        std::move(execution_task));
   }
 
   xla::Future<void> JoinFutures() {
@@ -434,24 +435,8 @@ class StreamState {
   xla::Future<std::shared_ptr<EventSnapshot>> RequestEventSnapshotLocked(
       std::vector<SharedDeviceBufferList> must_materialize,
       MaterializationReason reason, MaterializationMode mode,
-      EagerMode eager_mode) ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
-    auto [snapshot_promise, snapshot_future] =
-        xla::MakePromise<std::shared_ptr<EventSnapshot>>();
-    // Explanation: synchronizing the last EventSnapshot should also await all
-    // prior EventSnapshots. We achieve this by chaining a promise/future;
-    // each event snapshot will have a future that will be set by the prior
-    // event snapshot.
-    auto [chaining_promise, chaining_future] = xla::MakePromise<void>();
-    snapshot_future.OnReady([chaining_promise = std::move(chaining_promise)](
-                                absl::StatusOr<std::shared_ptr<EventSnapshot>>
-                                    snapshot_or) mutable {
-      if (!snapshot_or.ok()) {
-        ReleaseNextSnapshot(std::move(chaining_promise));
-      } else {
-        (*snapshot_or)->OkCallback(std::move(chaining_promise));
-      }
-    });
-
+      EagerMode eager_mode, std::optional<ExecutionTask> execution_task)
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
     // Freeze the graph state at the time of the snapshot request.
     // All (non-constant) deferred ops created since the last snapshot must be
     // executed; any which have a current live Tensor reference must be
@@ -466,21 +451,79 @@ class StreamState {
       must_execute.push_back(std::move(maybe_node));
     }
     deferred_ops_.clear();
+    // The queue is now empty; reset the repetition index to start scanning for
+    // an existing or new pattern.
+    repetition_i_ = 0;
+
+    // Check if this event snapshot is a no-op.
+    // An event snapshot is meaningful only if it has futures to wait on,
+    // must-execute deferred ops, must_materialize deferred constants (which
+    // bypass insertion into deferred_ops_), or a compiled execution task.
+    PruneCompletedFutures(futures_);
+    if (!must_materialize.empty()) {
+      // This may potentially miss nodes that are "must materialize" but already
+      // being handled by a previous snapshot.
+      // Ex: foo(); record_event(); bar(); record_event(must_materialize=[foo])
+      // foo will be materialized by the first event, but may still have
+      // is_materializing()==false when the second snapshot is created.
+      // If there is a placeholder here (which should never happen) it is
+      // retained for downstream error propagation.
+      std::erase_if(must_materialize, [](const SharedDeviceBufferList& node) {
+        return node->is_materializing();
+      });
+    }
+
+    const bool is_no_op = !execution_task.has_value() && futures_.empty() &&
+                          must_execute.empty() && must_materialize.empty();
+    if (is_no_op) {
+      // We don't need to create a new fulfillable promise.
+      if (!snapshot_requests_.empty()) {
+        // When the most-recent real snapshot is created, the caller of this
+        // function will receive a shared_ptr copy of it.
+        return snapshot_requests_.back()->snapshot_promise.future<>();
+      }
+
+      // The previous snapshot has been pulled by the materialization worker
+      // and is in-progress. We need to allocate a new EventSnapshot but don't
+      // need to add to the chain.
+      return xla::Future<std::shared_ptr<EventSnapshot>>(
+          std::make_shared<EventSnapshot>(
+              last_snapshot_future_));  // intentional copy
+    }
+
+    // Explanation: synchronizing the last EventSnapshot should also await all
+    // prior EventSnapshots. We achieve this by chaining a promise/future;
+    // each event snapshot will have a future that will be set by the prior
+    // event snapshot.
+    auto [snapshot_promise, snapshot_future] =
+        xla::MakePromise<std::shared_ptr<EventSnapshot>>();
+    auto [chaining_promise, chaining_future] = xla::MakePromise<void>();
+    snapshot_future.OnReady([chaining_promise = std::move(chaining_promise)](
+                                absl::StatusOr<std::shared_ptr<EventSnapshot>>
+                                    snapshot_or) mutable {
+      if (!snapshot_or.ok()) {
+        ReleaseNextSnapshot(std::move(chaining_promise));
+      } else {
+        (*snapshot_or)->OkCallback(std::move(chaining_promise));
+      }
+    });
+    if (!last_snapshot_future_.IsKnownReady()) {
+      futures_.push_back(std::move(last_snapshot_future_));
+    }
+    last_snapshot_future_ = std::move(chaining_future);
 
     snapshot_requests_.push_back(std::make_unique<EventSnapshotRequest>(
         std::move(futures_), std::move(must_execute),
         std::move(must_materialize),
-        MaterializationSettings(reason, mode, eager_mode), std::nullopt,
-        std::move(snapshot_promise)));
-    futures_.push_back(std::move(chaining_future));
+        MaterializationSettings(reason, mode, eager_mode),
+        std::move(execution_task), std::move(snapshot_promise)));
 
-    // After pushing the request the queue is now effectively empty; reset the
-    // repetition index to start scanning for an existing or new pattern.
-    repetition_i_ = 0;
     return snapshot_future;
   }
 
   absl::Mutex mu_;
+  xla::Future<void> last_snapshot_future_ ABSL_GUARDED_BY(mu_) =
+      xla::Future<void>(absl::OkStatus());
   std::vector<xla::Future<void>> futures_ ABSL_GUARDED_BY(mu_);
 
   std::deque<DeferredOpEvent> deferred_ops_ ABSL_GUARDED_BY(mu_);
@@ -831,9 +874,7 @@ xla::Future<std::shared_ptr<EventSnapshot>> EventSnapshot::Record(
 
 EventSnapshot::EventSnapshot(xla::Future<void> future)
     : future_(std::move(future)), completion_(std::make_shared<Completion>()) {
-  // The completion time is recorded before the next snapshot is released, so
-  // the next snapshot cannot complete before this one has a time.
-  future_.OnReady([completion = completion_](absl::Status status) {
+  auto callback = [completion = completion_](absl::Status status) {
     std::optional<xla::Promise<void>> chain_promise;
     {
       absl::MutexLock lock(completion->mu);
@@ -844,7 +885,16 @@ EventSnapshot::EventSnapshot(xla::Future<void> future)
     if (chain_promise.has_value()) {
       ReleaseNextSnapshot(*std::move(chain_promise));
     }
-  });
+  };
+  if (future_.IsReady()) {
+    // All prior work is already complete, so this new event is immediately
+    // complete.
+    callback(future_.Await());
+  } else {
+    // The completion time is recorded before the next snapshot is released, so
+    // the next snapshot cannot complete before this one has a time.
+    future_.OnReady(std::move(callback));
+  }
 }
 
 absl::Status EventSnapshot::Synchronize() const {

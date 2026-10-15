@@ -119,9 +119,7 @@ TEST_F(EventsQueueTest, IgnoresPlaceholderBuffers) {
   EventSnapshot::Record(device_index, stream_id, {});
   auto pending_snapshots =
       PrepareSnapshotMaterializations(device_index, stream_id);
-
-  ASSERT_EQ(pending_snapshots.size(), 1);
-  EXPECT_THAT(pending_snapshots[0].must_execute, testing::IsEmpty());
+  EXPECT_TRUE(pending_snapshots.empty());
 }
 
 TEST_F(EventsQueueTest, SyncIgnoresEmptyBuffers) {
@@ -140,8 +138,7 @@ TEST_F(EventsQueueTest, SyncIgnoresEmptyBuffers) {
   auto pending_snapshots =
       PrepareSnapshotMaterializations(device_index, stream_id);
 
-  ASSERT_EQ(pending_snapshots.size(), 1);
-  EXPECT_THAT(pending_snapshots[0].must_execute, testing::IsEmpty());
+  EXPECT_TRUE(pending_snapshots.empty());
 }
 
 TEST_F(EventsQueueTest, IgnoresAlreadyMaterializedBuffers) {
@@ -162,8 +159,7 @@ TEST_F(EventsQueueTest, IgnoresAlreadyMaterializedBuffers) {
   auto pending_snapshots =
       PrepareSnapshotMaterializations(device_index, stream_id);
 
-  ASSERT_EQ(pending_snapshots.size(), 1);
-  EXPECT_THAT(pending_snapshots[0].must_execute, testing::IsEmpty());
+  EXPECT_TRUE(pending_snapshots.empty());
 }
 
 TEST_F(EventsQueueTest, ClearsBuffersAfterMaterialization) {
@@ -208,8 +204,7 @@ TEST_F(EventsQueueTest, ClearsBuffersAfterMaterialization) {
   auto pending_snapshots =
       PrepareSnapshotMaterializations(device_index, stream_id);
 
-  ASSERT_EQ(pending_snapshots.size(), 1);
-  EXPECT_THAT(pending_snapshots[0].must_execute, testing::IsEmpty());
+  EXPECT_TRUE(pending_snapshots.empty());
 }
 
 TEST_F(EventsQueueTest, StopsTrackingAfterClearEventsQueue) {
@@ -233,19 +228,17 @@ TEST_F(EventsQueueTest, StopsTrackingAfterClearEventsQueue) {
   auto pending_snapshots1 =
       PrepareSnapshotMaterializations(device_index, stream_id);
 
-  ASSERT_EQ(pending_snapshots1.size(), 1);
-  EXPECT_THAT(pending_snapshots1[0].must_execute, testing::IsEmpty());
+  EXPECT_TRUE(pending_snapshots1.empty());
 
   // Create a second data pointer to the same buffer.
   ref.device_buffer_list()->IncrementLiveDataPtrs(ref.index());
 
   EventSnapshot::Record(device_index, stream_id, {});
-  auto pending_snapshots2 =
-      PrepareSnapshotMaterializations(device_index, stream_id);
-
   // The buffer is live, but the DeferredOp was cleared and so does not need
   // to be materialized.
-  EXPECT_THAT(pending_snapshots2[0].must_execute, testing::IsEmpty());
+  auto pending_snapshots2 =
+      PrepareSnapshotMaterializations(device_index, stream_id);
+  EXPECT_TRUE(pending_snapshots2.empty());
 }
 
 TEST_F(EventsQueueTest, DeadCodeEliminated) {
@@ -574,9 +567,7 @@ TEST_F(EventsQueueTest, PrunesSuccessfulCompletedFutures) {
   EventSnapshot::Record(device_index, stream_id);
   auto pending_snapshots =
       PrepareSnapshotMaterializations(device_index, stream_id);
-  ASSERT_EQ(pending_snapshots.size(), 1);
-
-  EXPECT_EQ(pending_snapshots[0].futures.size(), 0);
+  EXPECT_TRUE(pending_snapshots.empty());
 }
 
 TEST_F(EventsQueueTest, StreamMustMaterializeEmptyTensors) {
@@ -601,9 +592,7 @@ TEST_F(EventsQueueTest, StreamMustMaterializeEmptyTensors) {
   auto pending_snapshots =
       PrepareSnapshotMaterializations(device_index, stream_id);
 
-  ASSERT_EQ(pending_snapshots.size(), 1);
-  EXPECT_EQ(pending_snapshots[0].must_execute.size(), 0);
-  EXPECT_EQ(pending_snapshots[0].must_materialize.size(), 0);
+  EXPECT_TRUE(pending_snapshots.empty());
 
   // A stream materialization that must materialize the empty tensor does so.
   EventSnapshot::Record(device_index, stream_id, {empty_list});
@@ -636,9 +625,7 @@ TEST_F(EventsQueueTest, DeviceMustMaterializeEmptyTensors) {
   RecordDeviceSnapshots(device_index);
   auto pending_snapshots =
       PrepareSnapshotMaterializations(device_index, stream_id);
-  ASSERT_EQ(pending_snapshots.size(), 1);
-  EXPECT_EQ(pending_snapshots[0].must_execute.size(), 0);
-  EXPECT_EQ(pending_snapshots[0].must_materialize.size(), 0);
+  EXPECT_TRUE(pending_snapshots.empty());
 
   // A device materialization that must materialize the empty tensor does so.
   RecordDeviceSnapshots(device_index, {empty_list});
@@ -890,31 +877,73 @@ TEST(EventSnapshotTest, ElapsedTimeReturnsEventError) {
             error::kInvalidArgument);
 }
 
-TEST_F(EventsQueueTest, CompletesLongSnapshotChainOnSmallStack) {
+TEST_F(EventsQueueTest, HandleNoOpSnapshotsEfficiently) {
   ClearAllStreams();
-  // Snapshots recorded while a transfer is pending wait for it, and each one
-  // also waits for the snapshot before it, as while model weights load.
+  const auto [device_index, stream_id] = GetCurrentDeviceStreamId();
+
+  // Create a small amount of "work" which will complete when we choose.
   auto [transfer_promise, transfer_future] = xla::MakePromise<void>();
   RecordAsyncDeviceToHost(std::move(transfer_future));
-  std::vector<xla::Future<std::shared_ptr<EventSnapshot>>> snapshot_futures;
-  for (int i = 0; i < 20000; ++i) {
-    snapshot_futures.push_back(
-        MaterializeCurrentStream(MaterializationReason::kExplicitSync));
-  }
-  std::shared_ptr<EventSnapshot> last_snapshot;
-  for (const auto& snapshot_future : snapshot_futures) {
-    TT_ASSERT_OK_AND_ASSIGN(last_snapshot, snapshot_future.Await());
-  }
-  TT_ASSERT_OK_AND_ASSIGN(bool completed, last_snapshot->Query());
-  ASSERT_FALSE(completed);
 
-  // The runtime completes device work on threads with 1 MiB stacks.
-  xla::Promise<void> promise = std::move(transfer_promise);
+  // Record 9999 snapshots without starting their materialization.
+  // On the 10000th snapshot, start the materialization for these 10,000.
+  std::vector<xla::Future<std::shared_ptr<EventSnapshot>>> snapshot_futures;
+  snapshot_futures.reserve(30000);
+  for (int i = 0; i < 9999; ++i) {
+    snapshot_futures.push_back(EventSnapshot::Record(device_index, stream_id));
+  }
+  snapshot_futures.push_back(MaterializeStream(
+      device_index, stream_id, MaterializationReason::kUnknown));
+  ASSERT_TRUE(snapshot_futures.back().Await().ok());
+
+  // Push another 20,000 snapshot requests.
+  for (int i = 10000; i < 30000; ++i) {
+    snapshot_futures.push_back(MaterializeStream(
+        device_index, stream_id, MaterializationReason::kUnknown));
+  }
+  ASSERT_TRUE(snapshot_futures.back().Await().ok());
+
+  // Snapshots [0, 9999] are all the same EventSnapshot; snapshot 0 is created
+  // to hold the transfer future, and then snapshots [1, 9999] are copies of it.
+  TT_ASSERT_OK_AND_ASSIGN(std::shared_ptr<EventSnapshot> snapshot_0,
+                          snapshot_futures[0].Await());
+  TT_ASSERT_OK_AND_ASSIGN(bool completed, snapshot_0->Query());
+  EXPECT_FALSE(completed);
+  for (int i = 1; i < 9999; ++i) {
+    TT_ASSERT_OK_AND_ASSIGN(std::shared_ptr<EventSnapshot> snapshot_i,
+                            snapshot_futures[i].Await());
+    EXPECT_EQ(snapshot_0, snapshot_i);
+  }
+
+  // Snapshots [10000, 29999] are all shared_ptrs to different EventSnapshot
+  // objects, but all these EventSnapshot objects have the same backing XLA
+  // future.
+  for (int i = 10000; i < 30000; ++i) {
+    TT_ASSERT_OK_AND_ASSIGN(std::shared_ptr<EventSnapshot> snapshot_i,
+                            snapshot_futures[i].Await());
+    EXPECT_NE(snapshot_0, snapshot_i);
+  }
+
+  // At this point we have at 30k futures to EventSnapshot, of which there are
+  // 20,001 distinct EventSnapshots, with only 2 distinct XLA futures (chained).
+
+  // Complete the transfer and synchronize the first snapshot, which should
+  // complete all snapshots.
   std::unique_ptr<tsl::Thread> thread(tsl::Env::Default()->StartThread(
       tsl::ThreadOptions{.stack_size = 1 << 20}, "complete_transfer",
-      [&promise] { promise.Set(); }));
+      [promise = std::move(transfer_promise)]() mutable { promise.Set(); }));
   thread.reset();
-  EXPECT_TRUE(last_snapshot->Synchronize().ok());
+  ASSERT_TRUE(snapshot_0->Synchronize().ok());
+  TT_ASSERT_OK_AND_ASSIGN(completed, snapshot_0->Query());
+  EXPECT_TRUE(completed);
+
+  // All other snapshots must now also be complete.
+  for (int i = 1; i < 30000; ++i) {
+    TT_ASSERT_OK_AND_ASSIGN(std::shared_ptr<EventSnapshot> snapshot_i,
+                            snapshot_futures[i].Await());
+    TT_ASSERT_OK_AND_ASSIGN(completed, snapshot_i->Query());
+    EXPECT_TRUE(completed);
+  }
 }
 
 TEST(CompilationModeTest, GetCompilationMode) {
