@@ -17,18 +17,17 @@
 #include "csrc/internal/mosaic/kiln/core/ref.h"
 
 #include <cstdint>
-#include <limits>
 #include <optional>
 
 #include "absl/log/absl_check.h"
 #include "csrc/internal/mosaic/kiln/core/context.h"
 #include "csrc/internal/mosaic/kiln/core/dtype.h"
 #include "csrc/internal/mosaic/kiln/core/index_arg.h"
+#include "csrc/internal/mosaic/kiln/core/mlir_utils.h"
 #include "csrc/internal/mosaic/kiln/core/scalar.h"
 #include "csrc/internal/mosaic/kiln/core/specs.h"
 #include "csrc/internal/mosaic/kiln/core/tile.h"
 #include "csrc/internal/mosaic/kiln/core/value_base.h"
-#include "llvm/ADT/APInt.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Casting.h"
@@ -36,7 +35,6 @@
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/Builders.h"
-#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Value.h"
 #include "mlir/IR/ValueRange.h"
@@ -56,13 +54,9 @@ llvm::SmallVector<mlir::Value> ZeroIndices(mlir::ImplicitLocOpBuilder& b,
   return llvm::SmallVector<mlir::Value>(rank, zero);
 }
 
-mlir::MemRefType MemRefTypeOf(const Ref& r) {
-  return llvm::cast<mlir::MemRefType>(internal::unwrap(r).getType());
-}
-
 bool HasMemorySpace(const Ref& r, tpu::MemorySpace expected_space) {
   auto space = llvm::dyn_cast_or_null<tpu::MemorySpaceAttr>(
-      MemRefTypeOf(r).getMemorySpace());
+      internal::MemRefTypeOf(r).getMemorySpace());
   return space && space.getValue() == expected_space;
 }
 
@@ -74,50 +68,21 @@ bool IsVmemRef(const Ref& r) {
   return HasMemorySpace(r, tpu::MemorySpace::kVmem);
 }
 
-void ValidateScalarSliceBound(const Scalar& s, bool is_size) {
-  ABSL_CHECK_LE(s.dtype().GetIntOrFloatBitWidth(), 32u)  // CRASH_OK
-      << "Slice " << (is_size ? "size" : "offset")
-      << " scalar bitwidth must be <= 32";
-  auto const_op = internal::unwrap(s).getDefiningOp<arith::ConstantOp>();
-  if (!const_op) {
-    return;
-  }
-  auto attr = llvm::dyn_cast<mlir::IntegerAttr>(const_op.getValue());
-  if (!attr) {
-    return;
-  }
-  const llvm::APInt val = attr.getValue();
-  const bool is_unsigned = s.dtype().IsUnsigned();
-  if (is_size) {
-    const bool is_positive =
-        is_unsigned ? !val.isZero() : val.isStrictlyPositive();
-    ABSL_CHECK(is_positive) << "Slice size must be positive";  // CRASH_OK
-  } else {
-    const bool is_non_negative = is_unsigned || !val.isNegative();
-    ABSL_CHECK(is_non_negative)  // CRASH_OK
-        << "Slice offset must be non-negative";
-  }
-  const bool fits_i32 = is_unsigned
-                            ? val.ule(std::numeric_limits<int32_t>::max())
-                            : val.sle(std::numeric_limits<int32_t>::max());
-  ABSL_CHECK(fits_i32)  // CRASH_OK
-      << "Slice " << (is_size ? "size" : "offset") << " exceeds int32_t max";
-}
-
 int64_t ResolveSliceDimSize(const internal::DimDesc& spec, int64_t source_dim) {
   if (spec.is_all) {
     return source_dim;
   }
+  if (spec.size.IsInt()) {
+    ABSL_CHECK_NE(spec.size.AsInt(), kDynamic)  // CRASH_OK
+        << "Slice size cannot be kDynamic; pass a runtime Scalar size or use "
+           "all";
+  }
+  internal::ValidateI32IndexArg(spec.size, /*require_positive=*/true,
+                                "Slice size");
   if (!spec.size.IsInt()) {
-    ValidateScalarSliceBound(spec.size.ToScalar(), /*is_size=*/true);
     return kDynamic;
   }
   const int64_t sz = spec.size.AsInt();
-  ABSL_CHECK_NE(sz, kDynamic)  // CRASH_OK
-      << "Slice size cannot be kDynamic; pass a runtime Scalar size or use all";
-  ABSL_CHECK_GT(sz, 0) << "Slice size must be positive";  // CRASH_OK
-  ABSL_CHECK_LE(sz, std::numeric_limits<int32_t>::max())  // CRASH_OK
-      << "Slice size exceeds int32_t max";
   if (source_dim != kDynamic) {
     ABSL_CHECK_LE(sz, source_dim)  // CRASH_OK
         << "Slice size must be less than or equal to the dimension size";
@@ -127,17 +92,13 @@ int64_t ResolveSliceDimSize(const internal::DimDesc& spec, int64_t source_dim) {
 
 void ValidateSliceDimOffset(const internal::DimDesc& spec, int64_t source_dim,
                             int64_t slice_size) {
+  internal::ValidateI32IndexArg(spec.offset, /*require_positive=*/false,
+                                "Slice offset");
   if (!spec.offset.IsInt()) {
-    ValidateScalarSliceBound(spec.offset.ToScalar(), /*is_size=*/false);
     return;
   }
-  const int64_t offset = spec.offset.AsInt();
-  ABSL_CHECK_GE(offset, 0)  // CRASH_OK
-      << "Slice offset must be non-negative";
-  ABSL_CHECK_LE(offset, std::numeric_limits<int32_t>::max())  // CRASH_OK
-      << "Slice offset exceeds int32_t max";
   if (source_dim != kDynamic && slice_size != kDynamic) {
-    ABSL_CHECK_LE(offset, source_dim - slice_size)  // CRASH_OK
+    ABSL_CHECK_LE(spec.offset.AsInt(), source_dim - slice_size)  // CRASH_OK
         << "Slice offset + size must not exceed dimension size";
   }
 }
@@ -250,12 +211,12 @@ void Ref::Store(Tile value, std::optional<Tile> mask) {
 }
 
 llvm::ArrayRef<int64_t> Ref::shape() const {
-  return MemRefTypeOf(*this).getShape();
+  return internal::MemRefTypeOf(*this).getShape();
 }
 
 MemorySpace Ref::memory_space() const {
   auto space = llvm::dyn_cast_or_null<tpu::MemorySpaceAttr>(
-      MemRefTypeOf(*this).getMemorySpace());
+      internal::MemRefTypeOf(*this).getMemorySpace());
   ABSL_CHECK(space != nullptr)  // CRASH_OK
       << "Ref is missing a TPU memory space attribute";
   switch (space.getValue()) {
@@ -272,17 +233,17 @@ MemorySpace Ref::memory_space() const {
   }
 }
 
-int64_t Ref::rank() const { return MemRefTypeOf(*this).getRank(); }
+int64_t Ref::rank() const { return internal::MemRefTypeOf(*this).getRank(); }
 
 bool Ref::HasStaticShape() const {
-  return MemRefTypeOf(*this).hasStaticShape();
+  return internal::MemRefTypeOf(*this).hasStaticShape();
 }
 
 bool Ref::IsDynamicDim(int64_t axis) const {
   ABSL_CHECK_GE(axis, 0) << "Dimension axis must be non-negative";  // CRASH_OK
   ABSL_CHECK_LT(axis, rank())                                       // CRASH_OK
       << "Dimension axis " << axis << " out of bounds for rank " << rank();
-  return MemRefTypeOf(*this).isDynamicDim(axis);
+  return internal::MemRefTypeOf(*this).isDynamicDim(axis);
 }
 
 Scalar Ref::Dim(int64_t axis) const {

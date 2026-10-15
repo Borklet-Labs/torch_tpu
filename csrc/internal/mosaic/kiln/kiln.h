@@ -48,6 +48,11 @@
 //   values
 //   * If / For / RunScoped                      <-> pl.when / lax.fori_loop /
 //   pl.run_scoped
+//   * AsyncCopy / MakeAsyncCopy                 <-> pltpu.async_copy /
+//   pltpu.make_async_copy
+//   * AsyncRemoteCopy / MakeAsyncRemoteCopy     <-> pltpu.async_remote_copy /
+//   pltpu.make_async_remote_copy
+//   * DeviceId                                  <-> tpu.device_id
 //   * Semaphore / SemaphoreArray                <-> pltpu.SemaphoreType /
 //   tpu.sem_alloc
 //   * kDynamic / ref.Dim(axis) / MultipleOf     <-> dynamic memref dimensions
@@ -55,6 +60,7 @@
 //
 #include "csrc/internal/mosaic/kiln/core/cond.h"          // IWYU pragma: export
 #include "csrc/internal/mosaic/kiln/core/control_flow.h"  // IWYU pragma: export
+#include "csrc/internal/mosaic/kiln/core/dma.h"           // IWYU pragma: export
 #include "csrc/internal/mosaic/kiln/core/dtype.h"         // IWYU pragma: export
 #include "csrc/internal/mosaic/kiln/core/elementwise.h"   // IWYU pragma: export
 #include "csrc/internal/mosaic/kiln/core/index_arg.h"     // IWYU pragma: export

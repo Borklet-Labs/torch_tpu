@@ -123,6 +123,22 @@ torch_tpu_cc_library(
 )
 
 torch_tpu_cc_library(
+    name = "mlir_utils",
+    srcs = ["mlir_utils.cc"],
+    hdrs = ["mlir_utils.h"],
+    visibility = ["//visibility:private"],
+    deps = [
+        ":context",
+        ":index_arg",
+        ":scalar",
+        "@com_google_absl//absl/log:absl_check",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:ArithDialect",
+        "@llvm-project//mlir:IR",
+    ],
+)
+
+torch_tpu_cc_library(
     name = "control_flow",
     srcs = ["control_flow.cc"],
     hdrs = ["control_flow.h"],
@@ -173,6 +189,7 @@ torch_tpu_cc_library(
         ":context",
         ":dtype",
         ":index_arg",
+        ":mlir_utils",
         ":scalar",
         ":specs",
         ":tile",
@@ -195,12 +212,12 @@ torch_tpu_cc_library(
         ":context",
         ":dtype",
         ":index_arg",
+        ":mlir_utils",
         ":ref",
         ":scalar",
         ":value_base",
         "@com_google_absl//absl/log:absl_check",
         "@llvm-project//llvm:Support",
-        "@llvm-project//mlir:ArithDialect",
         "@llvm-project//mlir:IR",
         "@xla//xla/mosaic:tpu_dialect",
     ],
@@ -266,6 +283,25 @@ torch_tpu_cc_library(
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
+    ],
+)
+
+torch_tpu_cc_library(
+    name = "dma",
+    srcs = ["dma.cc"],
+    hdrs = ["dma.h"],
+    deps = [
+        ":context",
+        ":dtype",
+        ":index_arg",
+        ":mlir_utils",
+        ":ref",
+        ":scalar",
+        ":semaphore",
+        ":specs",
+        "@com_google_absl//absl/log:absl_check",
+        "@llvm-project//mlir:IR",
+        "@xla//xla/mosaic:tpu_dialect",
     ],
 )
 

@@ -1369,5 +1369,225 @@ TEST_F(KilnTest, HbmAndSemaphoreValidationErrors) {
       });
   ASSERT_THAT(kernel, IsOk());
 }
+
+TEST_F(KilnTest, DmaOperations) {
+  DType f32 = Float32Type();
+
+  absl::StatusOr<Kernel> kernel = CreateKernel(
+      GridSpec{.name = "dma_ops"}, InSpec::Hbm({8, 128}, f32),
+      OutSpec::Vmem({8, 128}, f32), [&](Ref hbm_in, Ref vmem_out) {
+        Scalar dev_id = DeviceId();
+        Semaphore sem = AllocaDmaSemaphore();
+        Semaphore send_sem = AllocaDmaSemaphore();
+        Semaphore recv_sem = AllocaDmaSemaphore();
+
+        // Local AsyncCopy (immediate start + Wait).
+        AsyncCopy(hbm_in, vmem_out, sem).Wait();
+
+        // Local MakeAsyncCopy with non-default priority.
+        AsyncCopyDescriptor local =
+            MakeAsyncCopy(vmem_out, hbm_in, sem, {.priority = 1});
+        EXPECT_EQ(local.src_ref().memory_space(), MemorySpace::kVmem);
+        EXPECT_EQ(local.dst_ref().memory_space(), MemorySpace::kHbm);
+        EXPECT_TRUE(local.sem().is_dma());
+        EXPECT_EQ(local.options().priority, 1);
+        local.Start();
+        local.Wait();
+
+        // Remote AsyncRemoteCopy with explicit WaitSend + WaitRecv.
+        AsyncRemoteCopyDescriptor remote = AsyncRemoteCopy(
+            hbm_in, vmem_out, send_sem, recv_sem, {.device_id = dev_id});
+        EXPECT_EQ(remote.src_ref().memory_space(), MemorySpace::kHbm);
+        EXPECT_EQ(remote.dst_ref().memory_space(), MemorySpace::kVmem);
+        EXPECT_TRUE(remote.send_sem().is_dma());
+        EXPECT_TRUE(remote.recv_sem().is_dma());
+        EXPECT_TRUE(remote.device_id().has_value());
+        EXPECT_FALSE(remote.core_id().has_value());
+        remote.WaitSend();
+        remote.WaitRecv();
+
+        // Remote MakeAsyncRemoteCopy with both device_id and core_id + Wait.
+        AsyncRemoteCopyDescriptor remote2 =
+            MakeAsyncRemoteCopy(hbm_in, vmem_out, send_sem, recv_sem,
+                                {.device_id = dev_id, .core_id = 0});
+        EXPECT_TRUE(remote2.device_id().has_value());
+        EXPECT_TRUE(remote2.core_id().has_value());
+        remote2.Start();
+        remote2.Wait();
+
+        // Local MakeAsyncCopy with a regular semaphore + Semaphore::Wait.
+        Semaphore reg_sem = AllocaSemaphore();
+        MakeAsyncCopy(hbm_in, vmem_out, reg_sem).Start();
+        reg_sem.Wait(1);
+
+        // Remote MakeAsyncRemoteCopy with only core_id and regular semaphores.
+        Semaphore reg_send_sem = AllocaSemaphore();
+        Semaphore reg_recv_sem = AllocaSemaphore();
+        AsyncRemoteCopyDescriptor remote_core_only = MakeAsyncRemoteCopy(
+            hbm_in, vmem_out, reg_send_sem, reg_recv_sem, {.core_id = 1});
+        EXPECT_FALSE(remote_core_only.device_id().has_value());
+        EXPECT_TRUE(remote_core_only.core_id().has_value());
+        EXPECT_FALSE(remote_core_only.send_sem().is_dma());
+        EXPECT_FALSE(remote_core_only.recv_sem().is_dma());
+        remote_core_only.Start();
+        reg_send_sem.Wait(1);
+        reg_recv_sem.Wait(1);
+      });
+  ASSERT_THAT(kernel, IsOk());
+  ExpectKernelMatches(std::move(*kernel), R"(
+    CHECK-LABEL: func.func @dma_ops(
+    CHECK-SAME:    %[[HBM:arg0]]: memref<8x128xf32, #tpu.memory_space<hbm>>, %[[VMEM:arg1]]: memref<8x128xf32, #tpu.memory_space<vmem>>)
+    CHECK:         %[[DEV:.*]] = tpu.device_id : i32
+    CHECK:         %[[SEM:.*]] = tpu.sem_alloc : memref<!tpu.dma_semaphore, #tpu.memory_space<semaphore_mem>>
+    CHECK:         %[[SEND_SEM:.*]] = tpu.sem_alloc : memref<!tpu.dma_semaphore, #tpu.memory_space<semaphore_mem>>
+    CHECK:         %[[RECV_SEM:.*]] = tpu.sem_alloc : memref<!tpu.dma_semaphore, #tpu.memory_space<semaphore_mem>>
+    CHECK:         tpu.enqueue_dma source(%[[HBM]] : {{.*}}) target(%[[VMEM]] : {{.*}}) target_semaphore(%[[SEM]] : {{.*}})
+    CHECK:         tpu.wait_dma source(%[[HBM]] : {{.*}}) target(%[[VMEM]] : {{.*}}) target_semaphore(%[[SEM]] : {{.*}}) {wait_target = true}
+    CHECK:         tpu.enqueue_dma source(%[[VMEM]] : {{.*}}) target(%[[HBM]] : {{.*}}) target_semaphore(%[[SEM]] : {{.*}}) {priority = 1 : i32}
+    CHECK:         tpu.wait_dma source(%[[VMEM]] : {{.*}}) target(%[[HBM]] : {{.*}}) target_semaphore(%[[SEM]] : {{.*}}) {priority = 1 : i32, wait_target = true}
+    CHECK:         tpu.enqueue_dma source(%[[HBM]] : {{.*}}) target(%[[VMEM]] : {{.*}}) source_semaphore(%[[SEND_SEM]] : {{.*}}) target_semaphore(%[[RECV_SEM]] : {{.*}}) device_id(%[[DEV]])
+    CHECK:         tpu.wait_dma source(%[[HBM]] : {{.*}}) target(%[[VMEM]] : {{.*}}) source_semaphore(%[[SEND_SEM]] : {{.*}}) target_semaphore(%[[RECV_SEM]] : {{.*}}) device_id(%[[DEV]]) {wait_target = false}
+    CHECK:         tpu.wait_dma source(%[[HBM]] : {{.*}}) target(%[[VMEM]] : {{.*}}) source_semaphore(%[[SEND_SEM]] : {{.*}}) target_semaphore(%[[RECV_SEM]] : {{.*}}) device_id(%[[DEV]]) {wait_target = true}
+    CHECK:         %[[CORE0:.*]] = arith.constant 0 : i32
+    CHECK:         tpu.enqueue_dma source(%[[HBM]] : {{.*}}) target(%[[VMEM]] : {{.*}}) source_semaphore(%[[SEND_SEM]] : {{.*}}) target_semaphore(%[[RECV_SEM]] : {{.*}}) device_id(%[[DEV]]) core_id(%[[CORE0]])
+    CHECK:         tpu.wait_dma source(%[[HBM]] : {{.*}}) target(%[[VMEM]] : {{.*}}) source_semaphore(%[[SEND_SEM]] : {{.*}}) target_semaphore(%[[RECV_SEM]] : {{.*}}) device_id(%[[DEV]]) core_id(%[[CORE0]]) {wait_target = false}
+    CHECK:         tpu.wait_dma source(%[[HBM]] : {{.*}}) target(%[[VMEM]] : {{.*}}) source_semaphore(%[[SEND_SEM]] : {{.*}}) target_semaphore(%[[RECV_SEM]] : {{.*}}) device_id(%[[DEV]]) core_id(%[[CORE0]]) {wait_target = true}
+    CHECK:         %[[REG_SEM:.*]] = tpu.sem_alloc : memref<!tpu.semaphore, #tpu.memory_space<semaphore_mem>>
+    CHECK:         tpu.enqueue_dma source(%[[HBM]] : {{.*}}) target(%[[VMEM]] : {{.*}}) target_semaphore(%[[REG_SEM]] : {{.*}})
+    CHECK:         %[[WAIT_AMT:.*]] = arith.constant 1 : i32
+    CHECK:         tpu.sem_wait %[[REG_SEM]], %[[WAIT_AMT]] : memref<!tpu.semaphore, #tpu.memory_space<semaphore_mem>>
+    CHECK:         %[[REG_SEND_SEM:.*]] = tpu.sem_alloc : memref<!tpu.semaphore, #tpu.memory_space<semaphore_mem>>
+    CHECK:         %[[REG_RECV_SEM:.*]] = tpu.sem_alloc : memref<!tpu.semaphore, #tpu.memory_space<semaphore_mem>>
+    CHECK:         %[[CORE1:.*]] = arith.constant 1 : i32
+    CHECK:         tpu.enqueue_dma source(%[[HBM]] : {{.*}}) target(%[[VMEM]] : {{.*}}) source_semaphore(%[[REG_SEND_SEM]] : {{.*}}) target_semaphore(%[[REG_RECV_SEM]] : {{.*}}) core_id(%[[CORE1]])
+    CHECK:         %[[SEND_WAIT_AMT:.*]] = arith.constant 1 : i32
+    CHECK:         tpu.sem_wait %[[REG_SEND_SEM]], %[[SEND_WAIT_AMT]] : memref<!tpu.semaphore, #tpu.memory_space<semaphore_mem>>
+    CHECK:         %[[RECV_WAIT_AMT:.*]] = arith.constant 1 : i32
+    CHECK:         tpu.sem_wait %[[REG_RECV_SEM]], %[[RECV_WAIT_AMT]] : memref<!tpu.semaphore, #tpu.memory_space<semaphore_mem>>
+  )");
+}
+
+TEST_F(KilnTest, UnboundedDynamicDma) {
+  DType f32 = Float32Type();
+
+  // Unbounded-dynamic HBM <-> VMEM tiled copy loop.
+  absl::StatusOr<Kernel> dyn_kernel = CreateKernel(
+      GridSpec{.name = "unbounded_dynamic_dma"},
+      InSpec::Hbm({kDynamic, 128}, f32), OutSpec::Hbm({kDynamic, 128}, f32),
+      ScratchSpec::Vmem({8, 128}, f32),
+      [&](Ref hbm_in, Ref hbm_out, Ref vmem_buf) {
+        Semaphore in_sem = AllocaDmaSemaphore();
+        Semaphore out_sem = AllocaDmaSemaphore();
+        Scalar rows = hbm_in.Dim(0);
+        For(0, rows, 8, [&](Scalar r) {
+          Scalar aligned_r = MultipleOf(r, 8);
+          Ref in_tile = hbm_in(Slice(aligned_r, 8), all);
+          Ref out_tile = hbm_out(Slice(aligned_r, 8), all);
+          AsyncCopy(in_tile, vmem_buf, in_sem).Wait();
+          vmem_buf = Tile(vmem_buf) + 1.0f;
+          AsyncCopy(vmem_buf, out_tile, out_sem).Wait();
+        });
+      });
+  ASSERT_THAT(dyn_kernel, IsOk());
+  ExpectKernelMatches(std::move(*dyn_kernel), R"(
+    CHECK-LABEL: func.func @unbounded_dynamic_dma(
+    CHECK-SAME:    %[[HBM_IN:arg0]]: memref<?x128xf32, #tpu.memory_space<hbm>>, %[[HBM_OUT:arg1]]: memref<?x128xf32, #tpu.memory_space<hbm>>, %[[VMEM_BUF:arg2]]: memref<8x128xf32, #tpu.memory_space<vmem>>)
+    CHECK:         %[[IN_SEM:.*]] = tpu.sem_alloc : memref<!tpu.dma_semaphore, #tpu.memory_space<semaphore_mem>>
+    CHECK:         %[[OUT_SEM:.*]] = tpu.sem_alloc : memref<!tpu.dma_semaphore, #tpu.memory_space<semaphore_mem>>
+    CHECK:         %[[DIM0:.*]] = memref.dim %[[HBM_IN]], %{{.*}} : memref<?x128xf32, #tpu.memory_space<hbm>>
+    CHECK:         %[[ROWS:.*]] = arith.index_cast %[[DIM0]] : index to i32
+    CHECK:         scf.for %[[IV:.*]] = %{{.*}} to %{{.*}} step %{{.*}} {
+    CHECK:           %[[R:.*]] = arith.index_cast %[[IV]] : index to i32
+    CHECK:           %[[ALIGNED_R:.*]] = tpu.assume_multiple %[[R]], 8 : i32
+    CHECK:           %[[IN_TILE:.*]] = tpu.memref_slice %[[HBM_IN]][%[[ALIGNED_R]], %{{.*}}] : memref<?x128xf32, #tpu.memory_space<hbm>> -> memref<8x128xf32, #tpu.memory_space<hbm>>
+    CHECK:           %[[OUT_TILE:.*]] = tpu.memref_slice %[[HBM_OUT]][%[[ALIGNED_R]], %{{.*}}] : memref<?x128xf32, #tpu.memory_space<hbm>> -> memref<8x128xf32, #tpu.memory_space<hbm>>
+    CHECK:           tpu.enqueue_dma source(%[[IN_TILE]] : {{.*}}) target(%[[VMEM_BUF]] : {{.*}}) target_semaphore(%[[IN_SEM]] : {{.*}})
+    CHECK:           tpu.wait_dma source(%[[IN_TILE]] : {{.*}}) target(%[[VMEM_BUF]] : {{.*}}) target_semaphore(%[[IN_SEM]] : {{.*}}) {wait_target = true}
+    CHECK:           %[[V:.*]] = vector.load %[[VMEM_BUF]]
+    CHECK:           %[[V_PLUS_1:.*]] = arith.addf %[[V]], %{{.*}} : vector<8x128xf32>
+    CHECK:           tpu.vector_store %[[VMEM_BUF]][%{{.*}}, %{{.*}}], %[[V_PLUS_1]]
+    CHECK:           tpu.enqueue_dma source(%[[VMEM_BUF]] : {{.*}}) target(%[[OUT_TILE]] : {{.*}}) target_semaphore(%[[OUT_SEM]] : {{.*}})
+    CHECK:           tpu.wait_dma source(%[[VMEM_BUF]] : {{.*}}) target(%[[OUT_TILE]] : {{.*}}) target_semaphore(%[[OUT_SEM]] : {{.*}}) {wait_target = true}
+    CHECK:         }
+  )");
+}
+
+TEST_F(KilnTest, DmaValidationErrors) {
+  DType f32 = Float32Type();
+  DType i32 = Int32Type();
+
+  absl::StatusOr<Kernel> kernel = CreateKernel(
+      GridSpec{.name = "dma_errors"}, InSpec::Hbm({kDynamic, 128}, f32),
+      OutSpec::Vmem({8, 128}, f32), [&](Ref hbm_in, Ref vmem_out) {
+        SemaphoreArray dma_sems = AllocaDmaSemaphore({2});
+        Semaphore reg_sem = AllocaSemaphore();
+        Ref hbm_tile = hbm_in(Slice(0, 8), all);
+        Ref vmem_i32 = AllocaVmem({8, 128}, i32);
+        Ref smem_f32 = AllocaSmem({8, 128}, f32);
+
+        EXPECT_DEATH(AsyncCopy(hbm_tile, vmem_i32, dma_sems(0)),
+                     "DMA source and destination Refs must have the same "
+                     "dtype");
+        EXPECT_DEATH(AsyncCopy(hbm_in, vmem_out, dma_sems(0)),
+                     "DMA source and destination Refs must have matching "
+                     "shapes");
+        EXPECT_DEATH(
+            AsyncCopy(hbm_tile, vmem_out, dma_sems(0), {.priority = -1}),
+            "DMA priority must be 0 or 1");
+        EXPECT_DEATH(
+            AsyncCopy(hbm_tile, vmem_out, dma_sems(0), {.priority = 2}),
+            "DMA priority must be 0 or 1");
+        EXPECT_DEATH(MakeAsyncCopy(hbm_tile, smem_f32, reg_sem),
+                     "Non-DMA semaphores are not supported for DMAs involving "
+                     "SMEM");
+        EXPECT_DEATH(MakeAsyncCopy(smem_f32, vmem_out, reg_sem),
+                     "Non-DMA semaphores are not supported for DMAs involving "
+                     "SMEM");
+        EXPECT_DEATH(MakeAsyncRemoteCopy(smem_f32, vmem_out, reg_sem, reg_sem,
+                                         {.device_id = 0}),
+                     "Non-DMA semaphores are not supported for DMAs involving "
+                     "SMEM");
+        EXPECT_DEATH(MakeAsyncRemoteCopy(vmem_out, smem_f32, reg_sem, reg_sem,
+                                         {.device_id = 0}),
+                     "Non-DMA semaphores are not supported for DMAs involving "
+                     "SMEM");
+        EXPECT_DEATH(MakeAsyncRemoteCopy(vmem_out, vmem_out, dma_sems(0),
+                                         dma_sems(1), {}),
+                     "Remote DMA requires device_id or core_id");
+        EXPECT_DEATH(MakeAsyncRemoteCopy(vmem_out, vmem_out, dma_sems(0),
+                                         dma_sems(1), {.device_id = -1}),
+                     "AsyncRemoteCopyOptions::device_id must be non-negative");
+        EXPECT_DEATH(MakeAsyncRemoteCopy(vmem_out, vmem_out, dma_sems(0),
+                                         dma_sems(1), {.core_id = -1}),
+                     "AsyncRemoteCopyOptions::core_id must be non-negative");
+        EXPECT_DEATH(MakeAsyncRemoteCopy(vmem_out, vmem_out, dma_sems(0),
+                                         dma_sems(1), {.device_id = I32(-1)}),
+                     "AsyncRemoteCopyOptions::device_id must be non-negative");
+        EXPECT_DEATH(MakeAsyncRemoteCopy(vmem_out, vmem_out, dma_sems(0),
+                                         dma_sems(1), {.core_id = I32(-1)}),
+                     "AsyncRemoteCopyOptions::core_id must be non-negative");
+        EXPECT_DEATH(MakeAsyncRemoteCopy(vmem_out, vmem_out, dma_sems(0),
+                                         dma_sems(1), {.device_id = 1LL << 40}),
+                     "AsyncRemoteCopyOptions::device_id exceeds int32_t max");
+        EXPECT_DEATH(MakeAsyncRemoteCopy(vmem_out, vmem_out, dma_sems(0),
+                                         dma_sems(1), {.core_id = 1LL << 40}),
+                     "AsyncRemoteCopyOptions::core_id exceeds int32_t max");
+        EXPECT_DEATH(MakeAsyncRemoteCopy(vmem_out, vmem_out, dma_sems(0),
+                                         reg_sem, {.device_id = 0}),
+                     "DMA source and target semaphores must have the same "
+                     "kind");
+        EXPECT_DEATH(MakeAsyncCopy(hbm_tile, vmem_out, reg_sem).Wait(),
+                     "Wait\\(\\) requires a DMA semaphore");
+        EXPECT_DEATH(MakeAsyncRemoteCopy(vmem_out, vmem_out, reg_sem, reg_sem,
+                                         {.device_id = 0})
+                         .WaitSend(),
+                     "WaitSend\\(\\) requires a DMA semaphore");
+        EXPECT_DEATH(MakeAsyncRemoteCopy(vmem_out, vmem_out, reg_sem, reg_sem,
+                                         {.device_id = 0})
+                         .WaitRecv(),
+                     "WaitRecv\\(\\) requires a DMA semaphore");
+      });
+  ASSERT_THAT(kernel, IsOk());
+}
 }  // namespace
 }  // namespace torch_tpu::kiln

@@ -27,6 +27,7 @@ torch_tpu_cc_library(
     deps = [
         "//csrc/internal/mosaic/kiln/core:cond",
         "//csrc/internal/mosaic/kiln/core:control_flow",
+        "//csrc/internal/mosaic/kiln/core:dma",
         "//csrc/internal/mosaic/kiln/core:dtype",
         "//csrc/internal/mosaic/kiln/core:elementwise",
         "//csrc/internal/mosaic/kiln/core:index_arg",
