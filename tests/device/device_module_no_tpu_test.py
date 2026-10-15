@@ -14,6 +14,7 @@
 
 """Tests for the device module on hosts without a TPU."""
 
+import os
 from unittest import mock
 
 from absl.testing import absltest
@@ -35,6 +36,9 @@ class NoTpuDeviceModuleTest(
     # and fixed instead of silently losing coverage.
     if torch.accelerator.is_available():
       raise AssertionError("expected a host without TPU devices")
+
+  def test_import_does_not_set_premapped_buffer_size_env_var(self):
+    self.assertNotIn("TPU_PREMAPPED_BUFFER_SIZE", os.environ)
 
   def test_manual_seed_is_noop(self):
     # Like `torch.cuda`, seeding is a no-op when no device is present, so that

@@ -59,6 +59,7 @@ torch_tpu_cc_library(
         ":pjrt",
         "//csrc/common:contain",
         "//csrc/common:device_type",
+        "//csrc/common:discovery",
         "//csrc/common:env_vars",
         "//csrc/common:environment",
         "//csrc/common:error_utils",

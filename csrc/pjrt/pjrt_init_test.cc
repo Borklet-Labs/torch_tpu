@@ -55,6 +55,7 @@ TEST_F(PjRtInitTest, InitializePjRtIsLazy) {
                           PjrtBackend::GetInstance().GetClient());
   EXPECT_NE(client, nullptr);
   EXPECT_TRUE(PjrtBackend::GetInstance().IsInitialized());
+  EXPECT_STREQ(std::getenv(kTpuPremappedBufferSizeEnvVar), "0");
 }
 
 TEST_F(PjRtInitTest, GetClientAndGetDeviceSucceedAfterInit) {

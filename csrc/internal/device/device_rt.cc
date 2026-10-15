@@ -34,7 +34,6 @@
 #include "csrc/common/cache_key.h"
 #include "csrc/common/compilation_cache.h"
 #include "csrc/common/device_type.h"
-#include "csrc/common/discovery.h"
 #include "csrc/common/error_utils.h"
 #include "csrc/common/excess_precision.h"
 #include "csrc/common/pybind_error_utils.h"
@@ -159,8 +158,6 @@ void InitRuntimeOptions(const std::string& device_type) {
   }
   PjrtBackend::GetInstance().SetPjRtInitializationOptions(
       {.device_type = device_type,
-       .premapped_buffer_size_bytes =
-           GetPremappedBufferSizeFromEnvOnce().value_or(0),
        .bad_fork_checker = &CheckIsInBadFork,
        .on_initialized_hook = &RegisterForkHandler});
   ABSL_LOG(INFO) << "PjRt runtime initialization deferred for " << device_type;

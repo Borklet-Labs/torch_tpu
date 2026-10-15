@@ -41,10 +41,9 @@ namespace torch_tpu {
 using BadForkChecker = bool (*)();
 using OnInitializedHook = void (*)();
 
-// PjRt initialization options. Defaults to TPU, no pre-mapped buffer.
+// PjRt initialization options. Defaults to TPU.
 struct PjRtInitializationOptions {
   std::string device_type = "tpu";
-  int64_t premapped_buffer_size_bytes = 0;
   BadForkChecker bad_fork_checker = nullptr;
   OnInitializedHook on_initialized_hook = nullptr;
 };

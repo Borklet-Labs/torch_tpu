@@ -39,6 +39,7 @@
 #include "absl/synchronization/mutex.h"
 #include "csrc/common/contain.h"
 #include "csrc/common/device_type.h"
+#include "csrc/common/discovery.h"
 #include "csrc/common/env_vars.h"
 #include "csrc/common/environment.h"
 #include "csrc/common/error_utils.h"
@@ -262,6 +263,12 @@ absl::Status PjrtBackend::InitializeInternal() {
   // enabled.
   torch_tpu::ScopedMemMeasuringContainer container;
 
+  // Read and default TPU_PREMAPPED_BUFFER_SIZE before initializing the PJRT
+  // plugin so that libtpu does not overwrite an unset env var with its 4 GiB
+  // default during InitializePjrtPlugin.
+  const int64_t premapped_buffer_size_bytes =
+      GetPremappedBufferSizeFromEnvOnce().value_or(0);
+
   TT_ASSIGN_OR_RETURN(bool is_initialized,
                       pjrt::IsPjrtPluginInitialized(plugin_name));
   if (!is_initialized) {
@@ -270,11 +277,10 @@ absl::Status PjrtBackend::InitializeInternal() {
   }
 
   // Mem tracking note: Background threads in XLA spun up during GetPjRtClient.
-  TT_ASSIGN_OR_RETURN(
-      client_,
-      torch_tpu::GetPjRtClient(options_.device_type,
-                               options_.premapped_buffer_size_bytes),
-      _.SetPrepend() << "failed to retrieve the PjRt client: ");
+  TT_ASSIGN_OR_RETURN(client_,
+                      torch_tpu::GetPjRtClient(options_.device_type,
+                                               premapped_buffer_size_bytes),
+                      _.SetPrepend() << "failed to retrieve the PjRt client: ");
 
   ABSL_CHECK_NE(client_, nullptr)  // CRASH_OK
       << "PjRtClient should not be null after initialization.";

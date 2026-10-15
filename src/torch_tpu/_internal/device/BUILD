@@ -77,7 +77,6 @@ pybind_extension(
         "//csrc/common:compilation",
         "//csrc/common:compilation_cache",
         "//csrc/common:device_type",
-        "//csrc/common:discovery",
         "//csrc/common:env_vars",
         "//csrc/common:error_utils",
         "//csrc/common:excess_precision",
