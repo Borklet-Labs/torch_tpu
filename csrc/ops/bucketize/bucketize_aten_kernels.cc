@@ -24,6 +24,7 @@
 #include "ATen/ops/result_type.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "c10/core/ScalarType.h"
 #include "csrc/common/aten_utils.h"
 #include "csrc/common/cache_key.h"
 #include "csrc/common/dtype.h"
@@ -96,10 +97,9 @@ absl::StatusOr<mlir::MlirOp> BuildCompareAllShlo(mlir::MlirOp self_op,
                                                  mlir::ElementType out_dtype,
                                                  bool right) {
   // Broadcast the input and boundaries for element-wise comparison.
-  TT_ASSIGN_OR_RETURN(const BroadcastResult broadcast_result,
+  TT_ASSIGN_OR_RETURN(const auto broadcast_result,
                       BroadcastArgs(self_op, boundaries_op));
-  mlir::MlirOp self_bcast_op = broadcast_result.self_bcast_op;
-  mlir::MlirOp boundaries_bcast_op = broadcast_result.boundaries_bcast_op;
+  auto [self_bcast_op, boundaries_bcast_op] = broadcast_result;
 
   // PyTorch bucketize logic:
   // right=true  -> count boundaries b such that b <= input.

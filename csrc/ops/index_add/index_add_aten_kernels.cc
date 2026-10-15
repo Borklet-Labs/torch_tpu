@@ -17,14 +17,12 @@
 #include "csrc/ops/index_add/index_add_aten_kernels.h"
 
 #include <cstdint>
-#include <optional>
 #include <utility>
 
 #include "ATen/core/ATen_fwd.h"
 #include "ATen/core/TensorBody.h"
 #include "absl/status/status.h"
 #include "absl/types/span.h"
-#include "c10/core/ScalarType.h"
 #include "csrc/common/aten_utils.h"
 #include "csrc/common/cache_key.h"
 #include "csrc/common/dtype.h"
@@ -63,7 +61,7 @@ absl::Status IndexAdd(const at::Tensor& self, int64_t dim,
 
   auto index_add_op_builder =
       [dim, computation_dtype](FixedSizeSpan<mlir::MlirOp, 4> inputs) {
-        auto& [self, index, source, alpha_op] = inputs;
+        auto [self, index, source, alpha_op] = inputs;
         return BuildIndexAddShlo(self, dim, index, source, alpha_op,
                                  computation_dtype);
       };

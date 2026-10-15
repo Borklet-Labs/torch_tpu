@@ -22,7 +22,6 @@
 #include "ATen/core/ATen_fwd.h"
 #include "ATen/core/Scalar.h"
 #include "ATen/core/TensorBody.h"
-#include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
@@ -111,38 +110,44 @@ absl::Status ValidateIndexFillInputs(const at::Tensor& self, int64_t dim,
       << ToString(index.scalar_type());
   return absl::OkStatus();
 }
+
+absl::Status DispatchIndexFill(at::Tensor& self, int64_t dim,
+                               const at::Tensor& index, const at::Tensor& value,
+                               OpParamCacheKeys param_keys) {
+  TT_ASSIGN_OR_RETURN(const int64_t wrapped_dim, SafeWrapDim(dim, self.dim()));
+
+  auto op_builder = [wrapped_dim](FixedSizeSpan<mlir::MlirOp, 3> inputs)
+      -> absl::StatusOr<mlir::MlirOp> {
+    auto [self_op, index_op, value_op] = inputs;
+    return BuildIndexFillShlo(self_op, wrapped_dim, index_op, value_op);
+  };
+
+  TT_ASSIGN_OR_RETURN(const auto output_dtype,
+                      ConvertTo<mlir::ElementType>(self.scalar_type()));
+
+  return DispatchOpOut<3>(std::move(op_builder), {self, index, value}, self,
+                          {.out_dtype = output_dtype,
+                           .out_dims = self.sizes(),
+                           .op_param_cache_keys = std::move(param_keys)});
+}
+
 }  // namespace
 
 at::Tensor& AtenIndexFillIntScalar_(at::Tensor& self, int64_t dim,
                                     const at::Tensor& index,
                                     const at::Scalar& value) {
   auto promoted_value = PromoteScalar(value);
-  TT_KERNEL(
-      OpName::kIndexFillIntScalar, param_keys,
-      (self, dim, index, promoted_value), {
-        TT_THROW_IF_ERROR(ValidateIndexFillInputs(self, dim, index));
+  TT_KERNEL(OpName::kIndexFillIntScalar, param_keys,
+            (self, dim, index, promoted_value), {
+              TT_THROW_IF_ERROR(ValidateIndexFillInputs(self, dim, index));
 
-        TT_ASSIGN_OR_THROW(const int64_t wrapped_dim,
-                           SafeWrapDim(dim, self.dim()));
-        TT_ASSIGN_OR_THROW(const at::Tensor value_tensor,
-                           promoted_value.GetTensor(self.scalar_type()));
+              TT_ASSIGN_OR_THROW(const at::Tensor value_tensor,
+                                 promoted_value.GetTensor(self.scalar_type()));
 
-        auto op_builder = [wrapped_dim](FixedSizeSpan<mlir::MlirOp, 3> inputs)
-            -> absl::StatusOr<mlir::MlirOp> {
-          auto& [self, index, value] = inputs;
-          return BuildIndexFillShlo(self, wrapped_dim, index, value);
-        };
-
-        TT_ASSIGN_OR_THROW(const auto output_dtype,
-                           ConvertTo<mlir::ElementType>(self.scalar_type()));
-
-        TT_THROW_IF_ERROR(DispatchOpOut<3>(
-            std::move(op_builder), {self, index, value_tensor}, self,
-            {.out_dtype = output_dtype,
-             .out_dims = self.sizes(),
-             .op_param_cache_keys = std::move(param_keys)}));
-        return self;
-      });
+              TT_THROW_IF_ERROR(DispatchIndexFill(
+                  self, dim, index, value_tensor, std::move(param_keys)));
+              return self;
+            });
 }
 
 at::Tensor& AtenIndexFillIntTensor_(at::Tensor& self, int64_t dim,
@@ -155,23 +160,8 @@ at::Tensor& AtenIndexFillIntTensor_(at::Tensor& self, int64_t dim,
             << "expected value to be a 0-D tensor, got " << value.dim()
             << "-D tensor";
 
-        TT_ASSIGN_OR_THROW(const int64_t wrapped_dim,
-                           SafeWrapDim(dim, self.dim()));
-
-        auto op_builder = [wrapped_dim](FixedSizeSpan<mlir::MlirOp, 3> inputs)
-            -> absl::StatusOr<mlir::MlirOp> {
-          auto& [self, index, value] = inputs;
-          return BuildIndexFillShlo(self, wrapped_dim, index, value);
-        };
-
-        TT_ASSIGN_OR_THROW(const auto output_dtype,
-                           ConvertTo<mlir::ElementType>(self.scalar_type()));
-
         TT_THROW_IF_ERROR(
-            DispatchOpOut<3>(std::move(op_builder), {self, index, value}, self,
-                             {.out_dtype = output_dtype,
-                              .out_dims = self.sizes(),
-                              .op_param_cache_keys = std::move(param_keys)}));
+            DispatchIndexFill(self, dim, index, value, std::move(param_keys)));
         return self;
       });
 }

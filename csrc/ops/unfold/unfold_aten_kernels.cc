@@ -267,7 +267,7 @@ at::Tensor AtenUnfoldBackward(const at::Tensor& grad_in,
             DeviceBufferRef result,
             DispatchOp<1>(std::move(op_builder), {grad_in},
                           {.out_dtype = elem_type,
-                           .out_dims = out_dims,
+                           .out_dims = std::move(out_dims),
                            .op_param_cache_keys = std::move(param_keys)}));
 
         return MakeTensor(std::move(result));

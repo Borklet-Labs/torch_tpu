@@ -23,12 +23,12 @@
 #include "ATen/core/TensorBody.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
-#include "csrc/common/aten_utils.h"
 #include "csrc/common/cache_key.h"
 #include "csrc/common/dimension_types.h"
 #include "csrc/common/dtype.h"
 #include "csrc/common/error_utils.h"
 #include "csrc/common/fixed_size_span.h"
+#include "csrc/common/utils.h"
 #include "csrc/eager/device_buffer.h"
 #include "csrc/eager/op_dispatcher.h"
 #include "csrc/eager/tensor_to_buffer.h"
@@ -70,7 +70,7 @@ absl::StatusOr<DeviceBufferRef> IndexSelect(const at::Tensor& self, int64_t dim,
       ConvertTo<mlir::ElementType>(self.scalar_type()));
   auto index_select_op_builder = [dim](FixedSizeSpan<mlir::MlirOp, 2> inputs)
       -> absl::StatusOr<mlir::MlirOp> {
-    auto& [self, index] = inputs;
+    auto [self, index] = inputs;
     return BuildIndexSelectShlo(self, dim, index);
   };
 
