@@ -1647,6 +1647,26 @@ class ModuleRegistryTest(seed_test_utils.RepeatableTest):
         module_registry._safe_int(mock.MagicMock(), default=10), 10
     )
 
+  def test_parse_image_size(self):
+    cfg_depth_pro = {
+        "model_type": "depth_pro",
+        "patch_size": 384,
+        "scaled_images_ratios": [0, -1, 0.5],
+    }
+    self.assertEqual(
+        module_registry._parse_image_size(cfg_depth_pro),
+        max(int(384 / 0.5), 1536),
+    )
+    cfg_zero_ratios = {
+        "model_type": "depth_pro",
+        "patch_size": 384,
+        "scaled_images_ratios": [0],
+    }
+    self.assertEqual(
+        module_registry._parse_image_size(cfg_zero_ratios),
+        max(int(384 / 0.25), 1536),
+    )
+
   def test_extract_diffusers_subfolder_candidates(self):
     idx_dict = {
         "_class_name": "StableDiffusionPipeline",

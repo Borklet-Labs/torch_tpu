@@ -43,7 +43,6 @@ from importlib import resources
 from importlib import util as importlib_util
 from importlib.resources import abc as resources_abc
 import inspect
-import itertools
 import json
 import os
 import pathlib
@@ -191,147 +190,6 @@ if "torchaudio" not in sys.modules and (
         ]
         for k in keys_to_pop:
           mod._object_missing_backend.pop(k, None)
-
-if not torch._C._dispatch_has_kernel_for_dispatch_key("aten::bincount", "Meta"):
-
-  @torch.library.register_fake("aten::bincount")
-  def _fake_bincount(self, weights=None, minlength=0):
-    if isinstance(minlength, int):
-      numel = self.numel()
-      is_empty = isinstance(numel, int) and numel == 0
-      if is_empty and minlength == 0:
-        size = 0
-      else:
-        size = max(minlength, 0 if is_empty else 1)
-    else:
-      size = minlength
-    dtype = torch.int64 if weights is None else weights.dtype
-    return torch.empty((size,), dtype=dtype, device=self.device)
-
-
-if not torch._C._dispatch_has_kernel_for_dispatch_key(
-    "aten::unique_consecutive", "Meta"
-):
-
-  @torch.library.register_fake("aten::unique_consecutive")
-  def _fake_unique_consecutive(
-      self, return_inverse=False, return_counts=False, dim=None
-  ):
-    del return_inverse, return_counts
-    if dim is None:
-      output = torch.empty(
-          (max(1, self.numel()),), dtype=self.dtype, device=self.device
-      )
-      inv = torch.empty_like(self, dtype=torch.int64)
-      counts = torch.empty(
-          (output.shape[0],), dtype=torch.int64, device=self.device
-      )
-    else:
-      output = torch.empty_like(self)
-      inv = torch.empty(
-          (self.shape[dim],), dtype=torch.int64, device=self.device
-      )
-      counts = torch.empty(
-          (output.shape[dim],), dtype=torch.int64, device=self.device
-      )
-    return output, inv, counts
-
-
-if _HAS_TRANSFORMERS:
-  from transformers.models.sew_d import modeling_sew_d as _sew_d_mod
-  from transformers.models.siglip2 import modeling_siglip2 as _siglip2_mod
-  from transformers.models.zamba2 import modeling_zamba2 as _zamba2_mod
-  import transformers.utils as _tf_utils
-  from transformers.utils import import_utils as _tf_import_utils
-
-  def _patched_zamba2_get_layers(self):
-    layers = []
-    self._tied_weights_keys = {}
-    self.first_transformer_layer_id = 0
-    unique_hybrid_blocks = []
-
-    for layer_id, layer_type in enumerate(self.layers_block_type):
-      mamba_layer = _zamba2_mod.Zamba2MambaDecoderLayer(
-          self.config, layer_idx=layer_id
-      )
-      if layer_type == "hybrid":
-        prefix_pattern = f"layers.{layer_id}.shared_transformer"
-
-        if (
-            not isinstance(unique_hybrid_blocks, list)
-            or len(unique_hybrid_blocks) >= self.config.num_mem_blocks
-        ):
-          if isinstance(unique_hybrid_blocks, list):
-            unique_hybrid_blocks = itertools.cycle(unique_hybrid_blocks)
-          target_pattern = next(unique_hybrid_blocks)
-          self._tied_weights_keys.update({prefix_pattern: target_pattern})
-        else:
-          unique_hybrid_blocks.append(prefix_pattern)
-
-        hybrid_idx = self.config.hybrid_layer_ids.index(layer_id)
-        block_id = hybrid_idx % self.config.num_mem_blocks
-        attn_block = _zamba2_mod.Zamba2AttentionDecoderLayer(
-            self.config, block_id=block_id
-        )
-        linear_layer = torch.nn.Linear(
-            self.config.hidden_size, self.config.hidden_size, bias=False
-        )
-        layers.append(
-            _zamba2_mod.Zamba2HybridLayer(attn_block, linear_layer, mamba_layer)
-        )
-      else:
-        layers.append(mamba_layer)
-    return torch.nn.ModuleList(layers)
-
-  _zamba2_mod.Zamba2Model.get_layers = _patched_zamba2_get_layers
-
-  @staticmethod
-  # pylint: disable=redefined-builtin
-  def _safe_xsoftmax_forward(ctx, input, mask, dim):
-    ctx.dim = dim
-    rmask = ~(mask.to(device=input.device, dtype=torch.bool))
-    output = input.masked_fill(rmask, torch.finfo(input.dtype).min)
-    output = torch.softmax(output, dim=dim)
-    ctx.save_for_backward(output)
-    return output
-
-  _sew_d_mod.XSoftmax.forward = _safe_xsoftmax_forward
-
-  _orig_siglip2_resize_pos = (
-      _siglip2_mod.Siglip2VisionEmbeddings.resize_positional_embeddings
-  )
-
-  @staticmethod
-  def _safe_siglip2_resize_pos(
-      positional_embeddings: torch.Tensor,
-      spatial_shapes: torch.LongTensor,
-      max_length: int,
-  ) -> torch.Tensor:
-    if positional_embeddings.device.type == "meta":
-      batch_size = spatial_shapes.shape[0]
-      embed_dim = positional_embeddings.shape[-1]
-      return torch.empty(
-          (batch_size, max_length, embed_dim),
-          device=positional_embeddings.device,
-          dtype=positional_embeddings.dtype,
-      )
-    return _orig_siglip2_resize_pos(
-        positional_embeddings, spatial_shapes, max_length
-    )
-
-  _siglip2_mod.Siglip2VisionEmbeddings.resize_positional_embeddings = (
-      _safe_siglip2_resize_pos
-  )
-
-  _orig_torch_compilable_check = _tf_import_utils.torch_compilable_check
-
-  def _safe_torch_compilable_check(cond, msg, error_type=ValueError):
-    if hasattr(cond, "is_meta") and cond.is_meta:
-      return
-    return _orig_torch_compilable_check(cond, msg, error_type)
-
-  _tf_import_utils.torch_compilable_check = _safe_torch_compilable_check
-  _tf_utils.torch_compilable_check = _safe_torch_compilable_check
 
 _AUDIO_MODEL_TYPES = (
     # go/keep-sorted start
@@ -2422,6 +2280,11 @@ def _sanitize_model_specific_config_dict(
   if not load_weights:
     if model_type == "vits":
       config_dict["use_stochastic_duration_prediction"] = False
+    elif model_type == "zamba2":
+      # Upstream Zamba2Model.get_layers computes `layer_id % num_mem_blocks`
+      # instead of `hybrid_idx % num_mem_blocks`, leaving odd-parity hybrid
+      # layers with nn.Identity() adapters when num_mem_blocks > 1.
+      config_dict["num_mem_blocks"] = 1
 
     bb_cfg = config_dict.get("backbone_config")
     if isinstance(bb_cfg, dict) and bb_cfg.get("model_type") == "timm_backbone":
@@ -3090,45 +2953,6 @@ def _apply_model_patches(
 
     model.forward = types.MethodType(_safe_deformable_detr_forward, model)
 
-  if (
-      "Gemma4Unified" in model.__class__.__name__
-      or "gemma4_unified" in cfg.get("model_type", "").lower()
-  ):
-    target = getattr(model, "model", model)
-    if hasattr(target, "get_image_features"):
-      orig_get_image_features = getattr(
-          target.__class__, "get_image_features", None
-      )
-
-      def _safe_gemma4_get_image_features(
-          self, pixel_values, image_position_ids=None, **kwargs
-      ):
-        if getattr(pixel_values, "is_meta", False):
-          vision_outputs = self.embed_vision(
-              pixel_values, image_position_ids, **kwargs
-          )
-          batch_size = pixel_values.shape[0]
-          hidden = vision_outputs.pooler_output
-          num_features = (
-              image_position_ids.shape[-1]
-              if image_position_ids is not None
-              else hidden.shape[1]
-          )
-          num_features = min(num_features, hidden.shape[1])
-          vision_outputs.pooler_output = tuple(
-              hidden[i, :num_features, :] for i in range(batch_size)
-          )
-          return vision_outputs
-        if orig_get_image_features is not None:
-          return orig_get_image_features(
-              self, pixel_values, image_position_ids, **kwargs
-          )
-        return None
-
-      target.get_image_features = types.MethodType(
-          _safe_gemma4_get_image_features, target
-      )
-
   _delegate_missing_forward(model)
   return model
 
@@ -3527,41 +3351,6 @@ def _resolve_diffusers_model_class(
   return class_name, model_cls
 
 
-def _patch_ernie_rope_if_needed() -> None:
-  """Patches ErnieImageTransformer2DModel.rope for meta and non-autocast devices."""
-  if (
-      importlib_util.find_spec(
-          "diffusers.models.transformers.transformer_ernie_image"
-      )
-      is None
-  ):
-    return
-  # pylint: disable=g-import-not-at-top
-  import diffusers.models.transformers.transformer_ernie_image as ernie_module
-
-  if hasattr(ernie_module, "rope") and not getattr(
-      ernie_module, "_torch_tpu_patched", False
-  ):
-    _orig_rope = ernie_module.rope
-
-    def _safe_rope(pos: torch.Tensor, dim: int, theta: int) -> torch.Tensor:
-      if pos.device.type == "meta" or not getattr(
-          torch.amp, "is_autocast_available", lambda dt: False
-      )(pos.device.type):
-        assert dim % 2 == 0
-        scale = (
-            torch.arange(0, dim, 2, dtype=torch.float32, device=pos.device)
-            / dim
-        )
-        omega = 1.0 / (theta**scale)
-        out = torch.einsum("...n,d->...nd", pos, omega)
-        return out.float()
-      return _orig_rope(pos, dim, theta)
-
-    setattr(ernie_module, "rope", _safe_rope)
-    setattr(ernie_module, "_torch_tpu_patched", True)
-
-
 class DiffusersProvider(BaseProvider):
   """Provider for Hugging Face Diffusers models.
 
@@ -3783,8 +3572,6 @@ class DiffusersProvider(BaseProvider):
             head_val = config_dict.pop("num_attention_heads")
             if "attention_head_dim" not in config_dict:
               config_dict["attention_head_dim"] = head_val
-        if class_name == "ErnieImageTransformer2DModel":
-          _patch_ernie_rope_if_needed()
         model = model_cls.from_config(config_dict)
         if isinstance(model, tuple):
           model = model[0]
