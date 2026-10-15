@@ -16,19 +16,24 @@
 
 #include "csrc/common/to_string.h"
 
-#include <cstdint>
 #include <optional>
 #include <string>
-#include <utility>
 #include <vector>
 
+#include "ATen/SparseTensorImpl.h"
 #include "ATen/core/ATen_fwd.h"
+#include "ATen/core/TensorBody.h"
+#include "ATen/ops/_nested_tensor_from_tensor_list.h"
+#include "ATen/ops/arange.h"
 #include "ATen/ops/empty.h"
+#include "ATen/ops/ones.h"
+#include "ATen/ops/sparse_coo_tensor.h"
+#include "ATen/ops/sparse_csr_tensor.h"
+#include "ATen/ops/zeros.h"
 #include "absl/strings/str_cat.h"
-#include "c10/core/ConstantSymNodeImpl.h"
+#include "c10/core/ScalarType.h"
 #include "c10/core/SymInt.h"
-#include "c10/core/SymNodeImpl.h"
-#include "c10/util/intrusive_ptr.h"
+#include "csrc/common/fake_symbol.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 
@@ -36,54 +41,6 @@ namespace torch_tpu {
 namespace {
 
 using testing::HasSubstr;
-using testing::Not;
-
-// A SymInt node that behaves like a Dynamo size symbol: it reports no constant
-// value, so TensorImpl treats sizes built from it as symbolic, it prints as its
-// symbol name, and it counts the guard_int() calls that would specialize it.
-class FakeSymbol final : public c10::ConstantSymNodeImpl<int64_t> {
- public:
-  FakeSymbol(int64_t hint, std::string name, int* num_specializations)
-      : ConstantSymNodeImpl<int64_t>(hint),
-        name_(std::move(name)),
-        num_specializations_(num_specializations) {}
-
-  std::optional<int64_t> constant_int() override { return std::nullopt; }
-  std::optional<int64_t> maybe_as_int() override { return std::nullopt; }
-  bool is_constant() override { return false; }
-  bool is_symbolic() override { return true; }
-  std::string str() override { return name_; }
-
-  int64_t guard_int(const char* /*file*/, int64_t /*line*/) override {
-    ++*num_specializations_;
-    return int_();
-  }
-
-  c10::SymNode clone() override {
-    return c10::make_intrusive<FakeSymbol>(int_(), name_, num_specializations_);
-  }
-
-  c10::SymNode wrap_int(int64_t num) override {
-    return c10::make_intrusive<FakeSymbol>(num, absl::StrCat(num),
-                                           num_specializations_);
-  }
-
-  c10::SymNode mul(const c10::SymNode& other) override {
-    return c10::make_intrusive<FakeSymbol>(
-        int_() * other->int_(), absl::StrCat(name_, "*", other->str()),
-        num_specializations_);
-  }
-
- private:
-  std::string name_;
-  int* num_specializations_;
-};
-
-c10::SymInt MakeSymbol(int64_t hint, std::string name,
-                       int* num_specializations) {
-  return c10::SymInt(c10::SymNode(c10::make_intrusive<FakeSymbol>(
-      hint, std::move(name), num_specializations)));
-}
 
 TEST(ToStringTensorTest, UndefinedTensor) {
   EXPECT_EQ(ToString(at::Tensor()), "undefined");
@@ -93,9 +50,10 @@ TEST(ToStringTensorTest, UndefinedTensor) {
 TEST(ToStringTensorTest, StaticShape) {
   const std::string result = ToString(at::empty({2, 3}), "x");
 
-  EXPECT_THAT(result, HasSubstr("x: shape=[2, 3], strides=[3, 1], numel=6, "));
-  EXPECT_THAT(result, HasSubstr("device=cpu, is_contiguous=1, is_cpu=1, "));
-  EXPECT_THAT(result, HasSubstr("storage_offset=0, storage_use_count=1, "));
+  EXPECT_EQ(result,
+            "x: shape=[2, 3], strides=[3, 1], numel=6, dtype=float32, "
+            "device=cpu, is_contiguous=1, is_cpu=1, is_cuda=0, is_meta=0, "
+            "has_storage=1, storage_offset=0");
 }
 
 TEST(ToStringTensorTest, SymbolicShapeIsPrintedWithoutSpecializing) {
@@ -103,23 +61,85 @@ TEST(ToStringTensorTest, SymbolicShapeIsPrintedWithoutSpecializing) {
   GTEST_SKIP() << "c10::SymInt pointer packing is incompatible with HWASAN.";
 #endif
   int num_specializations = 0;
-  const c10::SymInt s0 = MakeSymbol(3, "s0", &num_specializations);
-  at::Tensor tensor = at::empty({2, 3});
-  // Mirrors what torch.compile does for a FakeTensor with a dynamic dim 1.
-  tensor.unsafeGetTensorImpl()->set_sizes_and_strides(
-      std::vector<c10::SymInt>{c10::SymInt(2), s0},
-      std::vector<c10::SymInt>{s0, c10::SymInt(1)});
+  const at::Tensor tensor = MakeSymbolicTensor(&num_specializations);
   ASSERT_TRUE(tensor.unsafeGetTensorImpl()->has_symbolic_sizes_strides());
 
   const std::string result = ToString(tensor);
 
-  EXPECT_THAT(result,
-              HasSubstr("shape=[2, s0], strides=[s0, 1], numel=2*s0, "));
-  EXPECT_THAT(result, HasSubstr("is_cpu=1, is_cuda=0, is_meta=0, "
-                                "storage_offset=0, storage_use_count=1, "));
   // Contiguity of a symbolic tensor would be a guarded expression.
-  EXPECT_THAT(result, Not(HasSubstr("is_contiguous")));
+  EXPECT_EQ(result,
+            "shape=[2, s0], strides=[s0, 1], numel=2*s0, dtype=float32, "
+            "device=cpu, is_cpu=1, is_cuda=0, is_meta=0, has_storage=1, "
+            "storage_offset=0");
   EXPECT_EQ(num_specializations, 0);
+}
+
+TEST(ToStringTensorTest, SparseCooTensor) {
+  // Three uncoalesced entries at (0, 0) of a 2x2 matrix with 4-element values.
+  const at::Tensor tensor = at::sparse_coo_tensor(at::zeros({2, 3}, at::kLong),
+                                                  at::ones({3, 4}), {2, 2, 4});
+
+  EXPECT_EQ(ToString(tensor),
+            "shape=[2, 2, 4], layout=Sparse, numel=16, dtype=float32, "
+            "device=cpu, sparse_dim=2, dense_dim=1, nnz=3, is_cpu=1, "
+            "is_cuda=0, is_meta=0, has_storage=0");
+}
+
+TEST(ToStringTensorTest, SparseCooTensorWithSymbolicNnzDoesNotSpecialize) {
+#if defined(__has_feature) && __has_feature(hwaddress_sanitizer)
+  GTEST_SKIP() << "c10::SymInt pointer packing is incompatible with HWASAN.";
+#endif
+  int num_specializations = 0;
+  const at::Tensor tensor = at::sparse_coo_tensor(at::zeros({2, 3}, at::kLong),
+                                                  at::ones({3}), {2, 2});
+  // Mirrors a FakeTensor whose number of specified elements is dynamic.
+  // at::Tensor::_values() returns an alias, so modify the impl's own values.
+  const auto* sparse_impl =
+      dynamic_cast<const at::SparseTensorImpl*>(tensor.unsafeGetTensorImpl());
+  ASSERT_NE(sparse_impl, nullptr);
+  sparse_impl->values().unsafeGetTensorImpl()->set_sizes_and_strides(
+      std::vector<c10::SymInt>{MakeSymbol(3, "u0", &num_specializations)},
+      std::vector<c10::SymInt>{c10::SymInt(1)});
+
+  EXPECT_THAT(ToString(tensor), HasSubstr(", nnz=u0, "));
+  EXPECT_EQ(num_specializations, 0);
+}
+
+TEST(ToStringTensorTest, SparseCsrTensor) {
+  // A 2x2 matrix with one specified element per row, both in column 0.
+  const at::Tensor tensor =
+      at::sparse_csr_tensor(at::arange(3, at::kLong), at::zeros({2}, at::kLong),
+                            at::ones({2}), {2, 2}, at::TensorOptions());
+
+  // Sparse compressed tensors have no strides.
+  EXPECT_EQ(ToString(tensor),
+            "shape=[2, 2], layout=SparseCsr, numel=4, dtype=float32, "
+            "device=cpu, sparse_dim=2, dense_dim=0, nnz=2, is_cpu=1, "
+            "is_cuda=0, is_meta=0, has_storage=0");
+}
+
+TEST(ToStringTensorTest, NestedTensor) {
+  const at::Tensor tensor =
+      at::_nested_tensor_from_tensor_list({at::ones({2, 3}), at::ones({4, 3})});
+
+  // Nested tensors have neither sizes nor strides.
+  EXPECT_EQ(ToString(tensor),
+            "is_nested=1, numel=18, dtype=float32, device=cpu, "
+            "is_cpu=1, is_cuda=0, is_meta=0, has_storage=1, storage_offset=0");
+}
+
+TEST(ToStringTensorTest, ContainersOfTensorsUseTheTensorOverload) {
+  const at::Tensor tensor = at::empty({2});
+  const std::string expected = ToString(tensor);
+
+  EXPECT_EQ(ToString(std::optional<at::Tensor>(tensor)),
+            absl::StrCat("<", expected, ">"));
+  EXPECT_EQ(ToString(std::vector<at::Tensor>{tensor, at::Tensor()}),
+            absl::StrCat("[", expected, ", undefined]"));
+  EXPECT_EQ(ToString(at::TensorList({tensor})),
+            absl::StrCat("[", expected, "]"));
+  EXPECT_EQ(ToString(at::ITensorListRef({tensor})),
+            absl::StrCat("[", expected, "]"));
 }
 
 }  // namespace

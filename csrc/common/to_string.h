@@ -39,6 +39,7 @@
 #include "absl/types/span.h"
 #include "c10/util/ArrayRef.h"
 #include "c10/util/OptionalArrayRef.h"
+#include "csrc/common/const_tensor.h"
 #include "csrc/common/utils.h"
 #include "mlir/IR/Types.h"
 #include "mlir/Support/LLVM.h"
@@ -94,8 +95,16 @@ template <typename Iterator>
 // ToString() for PyTorch types.
 
 [[nodiscard]] std::string ToString(c10d::ReduceOp::RedOpType reduce_op_type);
-[[nodiscard]] std::string ToString(const at::Tensor& tensor,
+// Prints the tensor's metadata without guarding on (and thereby specializing)
+// symbolic shapes, throwing or mutating the tensor.
+[[nodiscard]] std::string ToString(const ConstTensor& tensor,
                                    std::string_view name = "");
+// Without this overload, at::Tensor arguments would resolve to the primary
+// template, which prints the tensor's data.
+[[nodiscard]] inline std::string ToString(const at::Tensor& tensor,
+                                          std::string_view name = "") {
+  return ToString(ConstTensor(tensor), name);
+}
 [[nodiscard]] std::string ToString(const at::Scalar& scalar,
                                    std::string_view name = "");
 

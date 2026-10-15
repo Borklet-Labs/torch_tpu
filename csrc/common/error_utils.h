@@ -46,7 +46,6 @@
 #include "csrc/common/env_vars.h"
 #include "csrc/common/macro_utils.h"  // IWYU pragma: keep
 #include "csrc/common/status_builder.h"
-#include "csrc/common/to_string.h"
 #include "csrc/common/utils.h"
 #include "csrc/ops/python_context.h"  // IWYU pragma: keep
 #include "xla/xla_data.pb.h"
@@ -314,11 +313,13 @@ template <typename Value, typename ValueToString>
   }
 }
 
+// Requires `Value` to support absl::StrCat(). ToString() can't be used here
+// because to_string depends on error_utils.
 template <typename Value>
 [[nodiscard]] std::string SequenceToReadableStr(
     absl::Span<const Value> values) {
   return SequenceToReadableStr(
-      values, [](const Value& value) { return ToString(value); });
+      values, [](const Value& value) { return absl::StrCat(value); });
 }
 
 // Retrieves the status from a Status or StatusOr. Useful for contexts where we

@@ -21,7 +21,6 @@
 #include <sstream>
 #include <string>
 #include <type_traits>
-#include <utility>
 #include <vector>
 
 #include "ATen/SparseTensorImpl.h"
@@ -36,15 +35,12 @@
 #include "ATen/ops/zeros.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
-#include "absl/strings/str_cat.h"
-#include "c10/core/ConstantSymNodeImpl.h"
 #include "c10/core/Device.h"
 #include "c10/core/ScalarType.h"
 #include "c10/core/SymInt.h"
-#include "c10/core/SymNodeImpl.h"
-#include "c10/util/intrusive_ptr.h"
 #include "c10/util/typeid.h"
 #include "csrc/common/error_utils.h"
+#include "csrc/common/fake_symbol.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "torch/headeronly/core/DeviceType.h"
@@ -60,53 +56,6 @@ using absl_testing::IsOkAndHolds;
 using absl_testing::StatusIs;
 using testing::HasSubstr;
 
-// A SymInt node that behaves like a Dynamo size symbol: it reports no constant
-// value, so TensorImpl treats sizes built from it as symbolic, it prints as its
-// symbol name, and it counts the guard_int() calls that would specialize it.
-class FakeSymbol final : public c10::ConstantSymNodeImpl<int64_t> {
- public:
-  FakeSymbol(int64_t hint, std::string name, int* num_specializations)
-      : ConstantSymNodeImpl<int64_t>(hint),
-        name_(std::move(name)),
-        num_specializations_(num_specializations) {}
-
-  std::optional<int64_t> constant_int() override { return std::nullopt; }
-  std::optional<int64_t> maybe_as_int() override { return std::nullopt; }
-  bool is_constant() override { return false; }
-  bool is_symbolic() override { return true; }
-  std::string str() override { return name_; }
-
-  int64_t guard_int(const char* /*file*/, int64_t /*line*/) override {
-    ++*num_specializations_;
-    return int_();
-  }
-
-  c10::SymNode clone() override {
-    return c10::make_intrusive<FakeSymbol>(int_(), name_, num_specializations_);
-  }
-
-  c10::SymNode wrap_int(int64_t num) override {
-    return c10::make_intrusive<FakeSymbol>(num, absl::StrCat(num),
-                                           num_specializations_);
-  }
-
-  c10::SymNode mul(const c10::SymNode& other) override {
-    return c10::make_intrusive<FakeSymbol>(
-        int_() * other->int_(), absl::StrCat(name_, "*", other->str()),
-        num_specializations_);
-  }
-
- private:
-  std::string name_;
-  int* num_specializations_;
-};
-
-c10::SymInt MakeSymbol(int64_t hint, std::string name,
-                       int* num_specializations) {
-  return c10::SymInt(c10::SymNode(c10::make_intrusive<FakeSymbol>(
-      hint, std::move(name), num_specializations)));
-}
-
 // Prints a SymInt the way at::Tensor's operator<< does, without guarding.
 std::string SymIntToString(const c10::SymInt& value) {
   std::ostringstream stream;
@@ -118,17 +67,6 @@ std::string SymIntToString(const c10::SymInt& value) {
 std::string SymIntToString(const absl::StatusOr<c10::SymInt>& value) {
   if (!value.ok()) return std::string(value.status().ToString());
   return SymIntToString(*value);
-}
-
-// Returns a CPU tensor whose sizes/strides are {2, s0}/{s0, 1}, the way
-// torch.compile sees a FakeTensor with a dynamic dim 1.
-at::Tensor MakeSymbolicTensor(int* num_specializations) {
-  const c10::SymInt s0 = MakeSymbol(3, "s0", num_specializations);
-  at::Tensor tensor = at::empty({2, 3});
-  tensor.unsafeGetTensorImpl()->set_sizes_and_strides(
-      std::vector<c10::SymInt>{c10::SymInt(2), s0},
-      std::vector<c10::SymInt>{s0, c10::SymInt(1)});
-  return tensor;
 }
 
 // Concepts used to check at compile time which at::Tensor methods ConstTensor

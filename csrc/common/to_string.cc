@@ -17,21 +17,36 @@
 #include "csrc/common/to_string.h"
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "ATen/core/ATen_fwd.h"
-#include "ATen/core/TensorBody.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
+#include "c10/core/Device.h"
+#include "csrc/common/const_tensor.h"
 #include "csrc/common/macro_utils.h"
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/IR/Types.h"
 #include "torch/csrc/distributed/c10d/Types.hpp"
+#include "torch/headeronly/core/Layout.h"
 #include "torch/headeronly/core/ScalarType.h"
 
 namespace torch_tpu {
+
+// Appends "<key>=<value>" to `fields` unless `value` is an error.
+template <typename T>
+static void AppendFieldIfOk(std::vector<std::string>& fields,
+                            const std::string_view key,
+                            const absl::StatusOr<T>& value) {
+  if (value.ok()) {
+    fields.push_back(absl::StrCat(key, "=", ToString(*value)));
+  }
+}
 
 std::string ToString(const c10d::AllgatherOptions& options) {
   return absl::StrCat("{asyncOp=", options.asyncOp, "}");
@@ -96,74 +111,46 @@ std::string ToString(c10d::ReduceOp::RedOpType reduce_op_type) {
   return absl::StrFormat("enum%d", reduce_op_type);
 }
 
-std::string ToString(const at::Tensor& tensor, const std::string_view name) {
-  std::string result;
-  if (!name.empty()) {
-    absl::StrAppend(&result, name, ": ");
-  }
+std::string ToString(const ConstTensor& tensor, const std::string_view name) {
+  const std::string prefix = name.empty() ? "" : absl::StrCat(name, ": ");
   if (!tensor.defined()) {
-    absl::StrAppend(&result, "undefined");
-    return result;
+    return absl::StrCat(prefix, "undefined");
   }
-  // Only the sym_*() accessors are safe on tensors with symbolic sizes/strides
-  // (the FakeTensors Dynamo traces with under torch.compile dynamic shapes):
-  // sizes()/strides() materialize the symbols through guard_int(), which
-  // silently specializes the dynamic dimensions, and numel()/storage_offset()
-  // throw. They print the same concrete integers for static tensors.
-  if (tensor.is_sparse()) {
-    absl::StrAppend(                                   //
-        &result,                                       //
-        "shape=", ToString(tensor.sym_sizes()), ", ",  //
-        "layout=Sparse, ",                             //
-        "numel=", ToString(tensor.sym_numel()), ", ",  //
-        "dtype=", tensor.scalar_type(), ", ",          //
-        "device=", ToString(tensor.device()), ", ",    //
-        "sparse_dim=", tensor.sparse_dim(), ", ",      //
-        "dense_dim=", tensor.dense_dim(), ", ",        //
-        "nnz=", tensor._nnz());
-    return result;
+  // Fields that the tensor doesn't have, e.g. the sizes of a nested tensor, are
+  // omitted.
+  std::vector<std::string> fields;
+  if (tensor.is_nested()) {
+    fields.push_back("is_nested=1");
   }
-  absl::StrAppend(                                       //
-      &result,                                           //
-      "shape=", ToString(tensor.sym_sizes()), ", ",      //
-      "strides=", ToString(tensor.sym_strides()), ", ",  //
-      "numel=", ToString(tensor.sym_numel()), ", ",      //
-      "dtype=", tensor.scalar_type(), ", ",              //
-      "device=", ToString(tensor.device()), ", ");
-  if (!tensor.unsafeGetTensorImpl()->has_symbolic_sizes_strides()) {
-    // Contiguity of a symbolic tensor is itself a symbolic expression whose
-    // evaluation installs guards, so it is only reported for static shapes.
-    absl::StrAppend(&result, "is_contiguous=", tensor.is_contiguous(), ", ");
-  }
-  absl::StrAppend(                         //
-      &result,                             //
-      "is_cpu=", tensor.is_cpu(), ", ",    //
-      "is_cuda=", tensor.is_cuda(), ", ",  //
-      "is_meta=", tensor.is_meta(), ", ",  //
-      "storage_offset=", ToString(tensor.sym_storage_offset()), ", ");
-
-  if (tensor.defined() && tensor.storage().unsafeGetStorageImpl() != nullptr) {
-    absl::StrAppend(&result, "storage_use_count=", tensor.storage().use_count(),
-                    ", ");
-    if (tensor.storage().data_ptr().get_context() != nullptr) {
-      // FIXME: The following code is commented out because it causes ASAN
-      // violations on ops_test.py.
-      //
-      // DeviceBufferRef* buffer_ref = static_cast<DeviceBufferRef*>(
-      //     tensor.storage().data_ptr().get_context());
-      // if (buffer_ref != nullptr && !buffer_ref->dimensions.empty()) {
-      //   ss << "buffer_ref_dims= not null [" << buffer_ref->dimensions.size()
-      //      << "],\n";
-      // } else {
-      //   ss << "buffer_ref_dims=null";
-      // }
-    } else {
-      absl::StrAppend(&result, "context=null (but storage is defined)");
-    }
+  AppendFieldIfOk(fields, "shape", tensor.sym_sizes());
+  const c10::Layout layout = tensor.layout();
+  if (layout == c10::kStrided) {
+    AppendFieldIfOk(fields, "strides", tensor.sym_strides());
   } else {
-    absl::StrAppend(&result, "storage_is_null(undefined)");
+    fields.push_back(absl::StrCat("layout=", ToString(layout)));
   }
-  return result;
+  fields.push_back(absl::StrCat("numel=", ToString(tensor.sym_numel())));
+  fields.push_back(absl::StrCat("dtype=", ToString(tensor.scalar_type())));
+  if (const std::optional<c10::Device> device = tensor.device()) {
+    fields.push_back(absl::StrCat("device=", ToString(*device)));
+  }
+  if (tensor.is_sparse() || tensor.is_sparse_compressed()) {
+    AppendFieldIfOk(fields, "sparse_dim", tensor.sparse_dim());
+    AppendFieldIfOk(fields, "dense_dim", tensor.dense_dim());
+    AppendFieldIfOk(fields, "nnz", tensor.sym_nnz());
+  }
+  if (const std::optional<bool> is_contiguous = tensor.maybe_is_contiguous()) {
+    fields.push_back(absl::StrCat("is_contiguous=", *is_contiguous));
+  }
+  fields.push_back(absl::StrCat("is_cpu=", tensor.is_cpu()));
+  fields.push_back(absl::StrCat("is_cuda=", tensor.is_cuda()));
+  fields.push_back(absl::StrCat("is_meta=", tensor.is_meta()));
+  fields.push_back(absl::StrCat("has_storage=", tensor.has_storage()));
+  if (tensor.has_storage()) {
+    fields.push_back(
+        absl::StrCat("storage_offset=", ToString(tensor.sym_storage_offset())));
+  }
+  return absl::StrCat(prefix, absl::StrJoin(fields, ", "));
 }
 
 std::string ToString(const at::Scalar& scalar, const std::string_view name) {

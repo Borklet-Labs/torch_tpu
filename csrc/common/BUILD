@@ -237,7 +237,6 @@ torch_tpu_cc_library(
         ":env_vars",
         ":macro_utils",
         ":status_builder",
-        ":to_string",
         ":utils",
         "//csrc/eager:eager_mode",
         "//csrc/ops:python_context",
@@ -793,6 +792,7 @@ torch_tpu_cc_test(
     deps = [
         ":const_tensor",
         ":error_utils",
+        ":fake_symbol",
         "//csrc/common:oss_test_main",
         "//shims/torch",
         "//shims/torch:aten",
@@ -802,6 +802,21 @@ torch_tpu_cc_test(
         "//shims/torch/torch/headeronly:torch_headeronly",
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+    ],
+)
+
+torch_tpu_cc_library(
+    name = "fake_symbol",
+    testonly = True,
+    srcs = ["fake_symbol.cc"],
+    hdrs = ["fake_symbol.h"],
+    deps = [
+        "//shims/torch",
+        "//shims/torch:aten",
+        "//shims/torch:aten_headers",
+        "//shims/torch/c10/core:base_headers",
+        "//shims/torch/c10/util:base_headers",
         "@com_google_absl//absl/strings",
     ],
 )
@@ -841,13 +856,16 @@ torch_tpu_cc_library(
     srcs = ["to_string.cc"],
     hdrs = ["to_string.h"],
     deps = [
+        ":const_tensor",
         ":macro_utils",
         ":utils",
         "//shims/torch:aten_headers",
         "//shims/torch:torch_headers",
+        "//shims/torch/c10/core:base_headers",
         "//shims/torch/c10/util:base_headers",
         "//shims/torch/torch/headeronly:torch_headeronly",
         "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
@@ -862,6 +880,7 @@ torch_tpu_cc_test(
     name = "to_string_test",
     srcs = ["to_string_test.cc"],
     deps = [
+        ":fake_symbol",
         ":to_string",
         "//csrc/common:oss_test_main",
         "//shims/torch",
