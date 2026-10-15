@@ -138,6 +138,8 @@ torch_tpu_py_library(
         "//shims/torch:pytorch",
         "//src/torch_tpu/_internal/benchmarks:xprof_adapter",
         "//src/torch_tpu/_internal/compile/dynamic:dynamic_compiler",
+        "//src/torch_tpu/_internal/distributed:device_mesh",
+        "//src/torch_tpu/_internal/distributed:process_group_utils",
         "//src/torch_tpu/_internal/execution_mode",
         "//src/torch_tpu/_internal/utils",
     ],
