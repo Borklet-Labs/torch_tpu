@@ -24,41 +24,63 @@
 #include "absl/status/statusor.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/str_split.h"
+#include "absl/types/span.h"
 #include "csrc/common/env_vars.h"
 #include "csrc/common/error_utils.h"
 
 namespace torch_tpu {
 
 static absl::Status ValidateRequiredDistributedEnvVars() {
-  std::vector<std::string> missing_vars;
+  std::vector<std::string> missing_torchrun_vars;
   if (!GetEnvOnce<kRankEnvVar>().has_value()) {
-    missing_vars.push_back(kRankEnvVar);
+    missing_torchrun_vars.push_back(kRankEnvVar);
   }
   if (!GetEnvOnce<kLocalRankEnvVar>().has_value()) {
-    missing_vars.push_back(kLocalRankEnvVar);
+    missing_torchrun_vars.push_back(kLocalRankEnvVar);
   }
   if (!GetEnvOnce<kWorldSizeEnvVar>().has_value()) {
-    missing_vars.push_back(kWorldSizeEnvVar);
+    missing_torchrun_vars.push_back(kWorldSizeEnvVar);
   }
   if (!GetEnvOnce<kMasterAddrEnvVar>().has_value()) {
-    missing_vars.push_back(kMasterAddrEnvVar);
+    missing_torchrun_vars.push_back(kMasterAddrEnvVar);
   }
   if (!GetEnvOnce<kMasterPortEnvVar>().has_value()) {
-    missing_vars.push_back(kMasterPortEnvVar);
-  }
-  if (!GetEnvOnce<kTorchTpuSlicebuilderAddressesEnvVar>().has_value()) {
-    missing_vars.push_back(kTorchTpuSlicebuilderAddressesEnvVar);
-  }
-  if (!GetEnvOnce<kTorchTpuTopologyEnvVar>().has_value()) {
-    missing_vars.push_back(kTorchTpuTopologyEnvVar);
+    missing_torchrun_vars.push_back(kMasterPortEnvVar);
   }
 
-  TT_RET_CHECK(missing_vars.empty(), error::kFailedPrecondition)
-      << "missing required environment variables for distributed training: "
-      << absl::StrJoin(missing_vars, ", ") << "; "
-      << "please run the program via torchrun or similar tools so that "
-         "the environment is set up properly";
-  return absl::OkStatus();
+  std::vector<std::string> missing_tpu_vars;
+  if (!GetEnvOnce<kTorchTpuSlicebuilderAddressesEnvVar>().has_value()) {
+    missing_tpu_vars.push_back(kTorchTpuSlicebuilderAddressesEnvVar);
+  }
+  if (!GetEnvOnce<kTorchTpuTopologyEnvVar>().has_value()) {
+    missing_tpu_vars.push_back(kTorchTpuTopologyEnvVar);
+  }
+
+  if (missing_torchrun_vars.empty() && missing_tpu_vars.empty()) {
+    return absl::OkStatus();
+  }
+
+  std::vector<std::string> all_missing_vars = missing_torchrun_vars;
+  all_missing_vars.insert(all_missing_vars.end(), missing_tpu_vars.begin(),
+                          missing_tpu_vars.end());
+
+  std::vector<std::string> hints;
+  if (!missing_torchrun_vars.empty()) {
+    hints.push_back(
+        "run the program via torchrun or similar tools so that the "
+        "distributed environment is set up properly");
+  }
+  if (!missing_tpu_vars.empty()) {
+    hints.push_back(
+        "call torch.tpu.distributed.set_tpu_launch_env() before spawning "
+        "workers or export eval \"$(python3 -m torch.tpu.distributed)\" "
+        "before launching");
+  }
+
+  return TT_ERROR(error::kFailedPrecondition)
+         << "missing required environment variables for distributed training: "
+         << absl::StrJoin(all_missing_vars, ", ") << "; please "
+         << SequenceToReadableStr(absl::MakeConstSpan(hints));
 }
 
 absl::StatusOr<DistributedWorkerConfiguration>
