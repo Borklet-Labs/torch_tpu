@@ -1580,6 +1580,89 @@ class SparseDenseMatmulTest(op_testing.TorchTpuTestBase):
       self.assertIsNotNone(layout_tuple)
       self.assertEqual(tpu_annotations.TpuLayout(*layout_tuple), t8_layout)
 
+  def _compile_sgd(
+      self, device: torch.device, debugs: list[Any]
+  ) -> tuple[Any, torch.Tensor]:
+    """Returns a compiled SGD step on a table, and the table's initial value."""
+    row_pointers, embedding_ids, sample_ids, gains, embedding_table = (
+        self._get_inputs(device)
+    )
+    batch_size = 16
+    activations_grad = (
+        torch.ones(
+            batch_size,
+            embedding_table.shape[1],
+            dtype=torch.float32,
+            device=device,
+        )
+        * 0.01
+    )
+    lr = torch.tensor(0.01, dtype=torch.float32, device=device)
+
+    @torch.compile(
+        backend="tpu",
+        fullgraph=True,
+        options={"debug_callback": debugs.append},
+    )
+    def sgd(table):
+      return torch.tpu.ops.sparse_dense_matmul_grad_with_sgd(
+          row_pointers,
+          embedding_ids,
+          sample_ids,
+          gains,
+          table,
+          activations_grad,
+          lr,
+          device_batch_size=batch_size,
+          max_ids_per_partition=16,
+          max_unique_ids_per_partition=16,
+          computation_name="sgd_table",
+      )
+
+    return sgd, embedding_table.cpu()
+
+  def test_compiled_op_recompiles_when_table_loses_t8_layout(self):
+    device = torch.device("tpu")
+    t8_layout = tpu_annotations.TpuLayout(minor_to_major=[1, 0], tiles=[[8]])
+    debugs = []
+    sgd, initial_table = self._compile_sgd(device, debugs)
+
+    def t8_table():
+      with tpu_annotations.LayoutContext(t8_layout):
+        return initial_table.to(device)
+
+    # The first call compiles the program for the SparseCore layout.
+    expected = sgd(t8_table()).cpu()
+    self.assertLen(debugs, 1)
+
+    # Like load_state_dict, copy_ gives a table the default layout, so the next
+    # call compiles a program for it.
+    table = t8_table()
+    table.copy_(initial_table)
+    self.assert_close(golden_result=expected, torch_tpu_result=sgd(table).cpu())
+    self.assertLen(debugs, 2)
+
+    # A table in the SparseCore layout reuses the first program.
+    self.assert_close(
+        golden_result=expected, torch_tpu_result=sgd(t8_table()).cpu()
+    )
+    self.assertLen(debugs, 2)
+
+  def test_compiled_op_rejects_t8_table_after_default_layout(self):
+    device = torch.device("tpu")
+    t8_layout = tpu_annotations.TpuLayout(minor_to_major=[1, 0], tiles=[[8]])
+    sgd, initial_table = self._compile_sgd(device, [])
+    # The first call compiles the program for the default layout.
+    sgd(initial_table.to(device)).cpu()
+
+    # Programs are only compiled again for inputs that had non-default layouts.
+    with tpu_annotations.LayoutContext(t8_layout):
+      table = initial_table.to(device)
+    with self.assertRaisesRegex(  # ASSERT_RAISES_OK=Tests when not to recompile.
+        RuntimeError, "compiled for"
+    ):
+      sgd(table).cpu()
+
 
 if __name__ == "__main__":
   absltest.main()

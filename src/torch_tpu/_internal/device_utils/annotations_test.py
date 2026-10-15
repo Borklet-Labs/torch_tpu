@@ -121,43 +121,28 @@ class AnnotationsTest(
     # The first call compiles the program for the default layout.
     test_utils.assert_close(add_one(expected.to(device)).cpu(), expected + 1.0)
 
+    # Programs are only compiled again for inputs that had non-default layouts.
     with tpu_annotations.LayoutContext(layout):
       x = expected.to(device)
     with self.assertRaisesRegex(RuntimeError, "compiled for"):
       add_one(x).cpu()
 
-  def test_compiled_program_rejects_default_layout_after_another_layout(self):
+  def test_compiled_program_recompiles_for_default_layout_after_another_layout(
+      self,
+  ):
     device = torch.device("tpu")
     # Column-major, which takes as many bytes as the default row-major layout.
     layout = tpu_annotations.TpuLayout(
         minor_to_major=[0, 1],
         tiles=[[8, 128]],
     )
+    debugs = []
 
-    @torch.compile(backend="tpu", fullgraph=True)
-    def add_one(x):
-      return x + 1.0
-
-    expected = torch.arange(128 * 128, dtype=torch.float32).reshape(128, 128)
-    with tpu_annotations.LayoutContext(layout):
-      x = expected.to(device)
-    # The first call compiles the program for `layout`, and later calls in
-    # `layout` reuse it.
-    test_utils.assert_close(add_one(x).cpu(), expected + 1.0)
-    test_utils.assert_close(add_one(x).cpu(), expected + 1.0)
-
-    with self.assertRaisesRegex(RuntimeError, "compiled for"):
-      add_one(expected.to(device)).cpu()
-
-  def test_compiled_program_rejects_input_after_copy_resets_layout(self):
-    device = torch.device("tpu")
-    # Column-major, which takes as many bytes as the default row-major layout.
-    layout = tpu_annotations.TpuLayout(
-        minor_to_major=[0, 1],
-        tiles=[[8, 128]],
+    @torch.compile(
+        backend="tpu",
+        fullgraph=True,
+        options={"debug_callback": debugs.append},
     )
-
-    @torch.compile(backend="tpu", fullgraph=True)
     def add_one(x):
       return x + 1.0
 
@@ -166,11 +151,45 @@ class AnnotationsTest(
       x = expected.to(device)
     # The first call compiles the program for `layout`.
     test_utils.assert_close(add_one(x).cpu(), expected + 1.0)
+    self.assertLen(debugs, 1)
 
-    # Like load_state_dict, copy_ gives `x` the default layout.
+    # An input in the default layout gets a program compiled for it.
+    test_utils.assert_close(add_one(expected.to(device)).cpu(), expected + 1.0)
+    self.assertLen(debugs, 2)
+
+    # An input in `layout` reuses the first program.
+    test_utils.assert_close(add_one(x).cpu(), expected + 1.0)
+    self.assertLen(debugs, 2)
+
+  def test_compiled_program_recompiles_after_copy_resets_layout(self):
+    device = torch.device("tpu")
+    # Column-major, which takes as many bytes as the default row-major layout.
+    layout = tpu_annotations.TpuLayout(
+        minor_to_major=[0, 1],
+        tiles=[[8, 128]],
+    )
+    debugs = []
+
+    @torch.compile(
+        backend="tpu",
+        fullgraph=True,
+        options={"debug_callback": debugs.append},
+    )
+    def add_one(x):
+      return x + 1.0
+
+    expected = torch.arange(128 * 128, dtype=torch.float32).reshape(128, 128)
+    with tpu_annotations.LayoutContext(layout):
+      x = expected.to(device)
+    # The first call compiles the program for `layout`.
+    test_utils.assert_close(add_one(x).cpu(), expected + 1.0)
+    self.assertLen(debugs, 1)
+
+    # Like load_state_dict, copy_ gives `x` the default layout, so the next call
+    # compiles a program for it.
     x.copy_(expected)
-    with self.assertRaisesRegex(RuntimeError, "compiled for"):
-      add_one(x).cpu()
+    test_utils.assert_close(add_one(x).cpu(), expected + 1.0)
+    self.assertLen(debugs, 2)
 
   def test_compiled_program_is_compiled_for_layouts_of_dtensor_inputs(self):
     device = torch.device("tpu")

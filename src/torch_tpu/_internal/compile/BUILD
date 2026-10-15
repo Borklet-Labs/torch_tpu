@@ -141,6 +141,7 @@ torch_tpu_py_library(
         "//src/torch_tpu/_internal/distributed:device_mesh",
         "//src/torch_tpu/_internal/distributed:process_group_utils",
         "//src/torch_tpu/_internal/execution_mode",
+        "//src/torch_tpu/_internal/sync",
         "//src/torch_tpu/_internal/utils",
     ],
 )

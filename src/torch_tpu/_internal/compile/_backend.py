@@ -67,6 +67,7 @@ from torch_tpu._internal.compile.dynamic import dynamic_compiler
 from torch_tpu._internal.compile.torch_tpu_compiled_executable import AsyncCompiledArtifact
 from torch_tpu._internal.distributed import device_mesh
 from torch_tpu._internal.distributed import process_group_utils
+from torch_tpu._internal.sync import sync
 from torch_tpu._internal.utils import utils
 from torch_tpu._internal.benchmarks import xprof_adapter
 
@@ -288,6 +289,16 @@ def _process_group_cache_key_tag(graph_module: torch.fx.GraphModule) -> str:
   return ";".join(
       f"{name}:{','.join(map(str, device_mesh.get_device_assignment(pg)))}"
       for name, pg in sorted(groups.items())
+  )
+
+
+def _layouts_key(
+    layouts: Mapping[_aot_descriptors.AOTInput, Any],
+) -> frozenset[tuple[_aot_descriptors.AOTInput, Any]]:
+  """Returns a hashable key for layouts, with their minor_to_major and tiles."""
+  return frozenset(
+      (desc, (tuple(layout[0]), tuple(map(tuple, layout[1]))))
+      for desc, layout in layouts.items()
   )
 
 
@@ -861,10 +872,13 @@ class TpuBackend:
     _log_gm_and_inputs("__call__", "Pre", graph_module, example_inputs)
     _guard_input_storage_offsets(graph_module)
     input_layouts = {}
+    # The inputs with non-default layouts, which are checked on each call.
+    input_indices = []
     for i, x in enumerate(example_inputs):
-      input_layouts.update(
-          _get_device_layouts(x, _aot_descriptors.PlainAOTInput(i))
-      )
+      layouts = _get_device_layouts(x, _aot_descriptors.PlainAOTInput(i))
+      input_layouts.update(layouts)
+      if layouts:
+        input_indices.append(i)
     if input_layouts:
       # AOTAutogradCache keys don't include device layouts.
       serializable = False
@@ -941,6 +955,40 @@ class TpuBackend:
               decompositions=_TPU_DECOMPOSITIONS,  # pyrefly: ignore[bad-argument-type]
               keep_inference_input_mutations=False,
           )(graph_module, example_inputs)
+
+      if input_indices:
+        # An input can lose its layout after compilation, e.g. copy_() and
+        # load_state_dict() give a tensor the default layout. Like Dynamo does
+        # for new shapes, compile again for the new layouts of these inputs.
+        programs = {_layouts_key(input_layouts): result}
+
+        def call_program_for_layouts(*args: Any, **kwargs: Any) -> Any:
+          # A tensor's layout is known once it starts materializing.
+          sync.synchronize([args[i] for i in input_indices])
+          layouts = {}
+          for i in input_indices:
+            layouts.update(
+                _get_device_layouts(args[i], _aot_descriptors.PlainAOTInput(i))
+            )
+          key = _layouts_key(layouts)
+          if key not in programs:
+            logging.warning(
+                "Compiling %s again for new on-device layouts of its inputs.",
+                custom_module_name,
+            )
+            programs[key] = self(
+                graph_module,
+                list(args),
+                options={
+                    **options,
+                    "async_compile": False,
+                    "serializable": False,
+                },
+                name=name,
+            )
+          return programs[key](*args, **kwargs)
+
+        result = call_program_for_layouts
 
       # The following section allows us to avoid blocking within Dynamo on
       # first execution following compilation when `async_compile=True`. This
