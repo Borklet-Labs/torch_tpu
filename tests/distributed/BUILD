@@ -603,6 +603,61 @@ torch_tpu_py_test(
 )
 
 torch_tpu_py_test(
+    name = "fp8_collectives_test",
+    srcs = ["fp8_collectives_test.py"],
+    shard_count = 8,
+    tags = if_oss(
+        ["exclusive"],
+        [],
+    ) + [
+        "noasan",  # TODO(b/497035517): fix the test in asan mode.
+        "nomsan",  # TODO(b/497035517): fix the test in msan mode.
+        "notsan",  # TODO(b/497035517): fix the test in tsan mode.
+        "requires-tpu-v5lite:8",
+    ],
+    deps = [
+        ":distributed_utils",
+        "//shims/absl_py/testing:absltest",
+        "//shims/absl_py/testing:parameterized",
+        "//shims/torch:pytorch",
+        "//src/torch_tpu",
+        "//src/torch_tpu/_internal/distributed:multiprocessing",
+        "//tests:seed_test_utils",
+    ],
+)
+
+# Same tests on TPU v7x, the FP8 target. There each chip has two TensorCores and
+# uneven all-to-all runs on SparseCore.
+torch_tpu_py_test(
+    name = "fp8_collectives_v7x_test",
+    srcs = ["fp8_collectives_test.py"],
+    main = "fp8_collectives_test.py",
+    nopresubmit = "Same tests as :fp8_collectives_test, which runs in presubmit; TPU v7x has long Forge queues.",
+    notest_oss = True,  # NOTEST_OSS_OK=Disabled in OSS due to multi-process v7x runner hang.
+    shard_count = 4,
+    tags = if_oss(
+        ["exclusive"],
+        [],
+    ) + [
+        "fails-on-tpu-v5",
+        "fails-on-tpu-v6",
+        "noasan",  # TODO(b/497035517): fix the test in asan mode.
+        "nomsan",  # TODO(b/497035517): fix the test in msan mode.
+        "notsan",  # TODO(b/497035517): fix the test in tsan mode.
+        "requires-tpu-v7x:4",
+    ],
+    deps = [
+        ":distributed_utils",
+        "//shims/absl_py/testing:absltest",
+        "//shims/absl_py/testing:parameterized",
+        "//shims/torch:pytorch",
+        "//src/torch_tpu",
+        "//src/torch_tpu/_internal/distributed:multiprocessing",
+        "//tests:seed_test_utils",
+    ],
+)
+
+torch_tpu_py_test(
     name = "all_gather_errors_test",
     srcs = ["all_gather_errors_test.py"],
     args = [
