@@ -128,6 +128,7 @@
 #include "csrc/ops/hardsigmoid/hardsigmoid_aten_kernels.h"
 #include "csrc/ops/hardswish/hardswish_aten_kernels.h"
 #include "csrc/ops/hardtanh/hardtanh_aten_kernels.h"
+#include "csrc/ops/has_compatible_shallow_copy_type/has_compatible_shallow_copy_type_aten_kernels.h"
 #include "csrc/ops/histc/histc_aten_kernels.h"
 #include "csrc/ops/im2col/im2col_aten_kernels.h"
 #include "csrc/ops/index/index_aten_kernels.h"
@@ -756,6 +757,8 @@ TORCH_LIBRARY_IMPL(aten, PrivateUse1, m) {
                                                  AtenHardtanhBackwardGradInput);
   ImplStable<OpName::kHardtanhOut>(m, AtenHardtanhOut);
   ImplStable<OpName::kHardtanh_>(m, AtenHardtanh_);
+  ImplStable<OpName::kHasCompatibleShallowCopyType>(
+      m, AtenHasCompatibleShallowCopyType);
   ImplStable<OpName::kHistc>(m, AtenHistc);
   ImplStable<OpName::kHistcOut>(m, AtenHistcOut);
   ImplStable<OpName::kIlshiftScalar>(m, AtenIlshiftScalar);

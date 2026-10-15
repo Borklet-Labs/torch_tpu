@@ -414,6 +414,9 @@ REGISTRATION_OVERRIDES = frozenset([
     # registered for fused forward/backward lowerings.
     '_fused_rms_norm',
     '_grouped_mm',
+    # This is a PrivateUse1 specific op that communicates shallow-copyability.
+    # If it is missing, parameter tieing falls back to untied copies.
+    '_has_compatible_shallow_copy_type',
     '_masked_softmax.out',
     '_masked_softmax_backward.out',
     '_scaled_dot_product_cudnn_attention',

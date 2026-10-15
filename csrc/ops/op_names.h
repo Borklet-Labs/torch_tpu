@@ -462,6 +462,7 @@ enum class OpName {
   kHardtanhBackwardGradInput,
   kHardtanhOut,
   kHardtanh_,
+  kHasCompatibleShallowCopyType,
   kHistc,
   kHistcOut,
   kIlshiftScalar,
@@ -1765,6 +1766,8 @@ ToString(  // NOLINT(google-readability-function-size)
       return "hardtanh.out";
     case OpName::kHardtanh_:
       return "hardtanh_";
+    case OpName::kHasCompatibleShallowCopyType:
+      return "_has_compatible_shallow_copy_type";
     case OpName::kHistc:
       return "histc";
     case OpName::kHistcOut:

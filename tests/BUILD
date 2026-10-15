@@ -2861,4 +2861,16 @@ torch_tpu_py_test(
     ],
 )
 
+torch_tpu_py_test(
+    name = "parameter_tying_test",
+    srcs = ["parameter_tying_test.py"],
+    tags = ["requires-tpu-v5lite"],
+    deps = [
+        ":seed_test_utils",
+        "//shims/absl_py/testing:absltest",
+        "//shims/torch:pytorch",
+        "//src/torch_tpu",
+    ],
+)
+
 torch_tpu_package_end()

@@ -703,6 +703,7 @@ torch_tpu_cc_library(
         # Ensure that both TORCH_LIBRARY_IMPL values get built together always.
         ":amp_policies",  # buildcleaner: keep
         "//csrc/common:to_string",
+        "//csrc/ops/has_compatible_shallow_copy_type:has_compatible_shallow_copy_type_aten_kernels",
         "//csrc/ops/pooling",
         "//csrc/ops/repeat_interleave:repeat_interleave_aten_kernels",
         "//csrc/ops:assertion_aten_kernels",
