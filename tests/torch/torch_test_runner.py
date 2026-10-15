@@ -46,10 +46,15 @@ from absl.testing import absltest
 import torch
 import torch_tpu  # pylint: disable=unused-import  # noqa: F401
 from torch.testing._internal import common_device_type  # pylint: disable=g-bad-import-order
+from torch.testing._internal import common_utils
 from torch_tpu._internal.utils import annotations
 
 _TORCH_TEST_DIR_ENV_VAR: Final = "TORCH_TPU_INTERNAL_PYTORCH_TEST_DIR"
 _TORCH_TEST_MODULE_ENV_VAR: Final = "TORCH_TPU_INTERNAL_TORCH_TEST_MODULE"
+
+# Intentionally keep it close to the latest PyTorch version to leverage
+# newly introduced accelerator testing APIs.
+_MINIMAL_TORCH_VERSION: Final = "2.14"
 
 
 def _set_private_use1_test_configs() -> None:
@@ -72,7 +77,7 @@ def _set_private_use1_test_configs() -> None:
 
 
 def _filter_device_generic_tests() -> None:
-  """Restricts unittest's loader to device-generic test classes only."""
+  """Restricts unittest's loader to device-generic test classes for TPU."""
   original = unittest.TestLoader.getTestCaseNames
 
   def device_generic_tests(
@@ -85,6 +90,14 @@ def _filter_device_generic_tests() -> None:
     if not (
         isinstance(testCaseClass, type)
         and issubclass(testCaseClass, common_device_type.DeviceTypeTestBase)
+    ):
+      return []
+    # Drop classes labelled for other hardware types, e.g. CUDA, or as GENERIC,
+    # which are plain tests covered by PyTorch CPU CI. Keep unlabelled classes
+    # until the entire test suite is labelled.
+    if getattr(testCaseClass, "hw_classification", None) not in (
+        None,
+        common_utils.HardwareClassification.ACCELERATOR,
     ):
       return []
     return original(self, testCaseClass)
@@ -160,14 +173,12 @@ def main(argv: Sequence[str]) -> None:
   if len(argv) > 1:
     raise app.UsageError("Too many command-line arguments.")
 
-  # Early exit on older PyTorch versions where PrivateUse1TestBase APIs are not
-  # available.
-  base = getattr(common_device_type, "PrivateUse1TestBase", None)
-  if not hasattr(base, "set_test_configs"):
+  # Early exit on older PyTorch versions where the accelerator testing APIs
+  # used by this runner are not available.
+  if torch.__version__ < _MINIMAL_TORCH_VERSION:
     sys.exit(
-        "ERROR: PrivateUse1TestBase.set_test_configs API is not available in"
-        f" torch version {torch.__version__}.\n"
-        "ERROR: Please use v2.13+ to run device-generic tests with TorchTPU."
+        f"ERROR: Please use v{_MINIMAL_TORCH_VERSION}+ to run device-generic"
+        " tests with TorchTPU."
     )
 
   test_dir_path, test_module_path = _parse_test_env_vars()
