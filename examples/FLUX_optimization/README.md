@@ -417,60 +417,77 @@ essential:
     device-side `self_device_time_total` microseconds to display the top TPU
     operators.
 
-### 1. Running on TPU:
+### 1. From the Command Line (TPU VM or Container Shell)
+
+From this directory, run the verification test suites:
 
 ```bash
 # Run RoPE mathematical and module-level parity tests:
-bazel test \
-  //examples/FLUX_optimization:flux_rope_parity_test
+python3 ./flux_rope_parity_test.py
 
 # Run custom Pallas SplashAttention kernel parity tests:
-bazel test \
-  //examples/FLUX_optimization/kernels:splash_attention_test
+python3 ./kernels/splash_attention_test.py
 
 # Run layout parity, compilation parity, and baseline speed test:
-bazel test \
-  //examples/FLUX_optimization:flux_test
+python3 ./flux_test.py
 ```
 
 ### 2. Run Interactive Benchmarks Across Optimization Milestones
 
-You can run `flux_test` directly on a TPU host and toggle individual
+You can run `flux_test.py` directly on a TPU host and toggle individual
 optimization flags via CLI arguments. The commands below use a sequence length
 of 640 for faster iteration. To match the sequence length used in the benchmark
 matrix, pass `--img_seq_len=32256 --txt_seq_len=512 --dtype=bfloat16` instead:
 
 ```bash
 # Configuration 1: Unoptimized Baseline (Eager)
-bazel run \
-  //examples/FLUX_optimization:flux_test -- \
+python3 ./flux_test.py \
   --batch_size=2 --img_seq_len=512 --txt_seq_len=128 --hidden_size=1024 \
   --use_zero_copy_view=false --use_fused_rope=false --compile=false \
   --num_warmup_steps=2 --num_benchmark_steps=10
 
 # Configuration 2: Zero-Copy Views Only (Eager)
-bazel run \
-  //examples/FLUX_optimization:flux_test -- \
+python3 ./flux_test.py \
   --batch_size=2 --img_seq_len=512 --txt_seq_len=128 --hidden_size=1024 \
   --use_zero_copy_view=true --use_fused_rope=false --compile=false \
   --num_warmup_steps=2 --num_benchmark_steps=10
 
 # Configuration 5: Full Optimization (Zero-Copy Views + Fused 2D RoPE + XLA Compile)
-bazel run \
-  //examples/FLUX_optimization:flux_test -- \
+python3 ./flux_test.py \
   --batch_size=2 --img_seq_len=512 --txt_seq_len=128 --hidden_size=1024 \
   --use_zero_copy_view=true --use_fused_rope=true --compile=true \
   --num_warmup_steps=2 --num_benchmark_steps=10
 
 # Configuration 6: Pallas SplashAttention (Eager)
-bazel run \
-  //examples/FLUX_optimization:flux_test -- \
+python3 ./flux_test.py \
   --use_splash_attention=true --compile=false \
   --num_warmup_steps=2 --num_benchmark_steps=10
 
 # Configuration 7: Zero-Copy Views + Fused 2D RoPE + Pallas SplashAttention + Compile
-bazel run \
-  //examples/FLUX_optimization:flux_test -- \
+python3 ./flux_test.py \
   --use_zero_copy_view=true --use_fused_rope=true --use_splash_attention=true --compile=true \
   --num_warmup_steps=2 --num_benchmark_steps=10
 ```
+
+### 3. Running on GKE
+
+To run these tests or benchmarks on a single-device TPU v7x pod on GKE, update
+the container `command:` in
+`examples/simple_pytorch/torchtpu_singledevice_slice_job.yaml` to run:
+
+```bash
+cd /workspace/examples/FLUX_optimization/
+python3 ./flux_rope_parity_test.py
+python3 ./kernels/splash_attention_test.py
+python3 ./flux_test.py
+```
+
+Then:
+
+<!-- disableFinding(LINK_RELATIVE_G3DOC) -->
+
+1.  If you haven't set up your cluster yet, complete the **One-time setup**
+    section in
+    [Get started with TorchTPU on GKE](../../docs/markdown/1_basics_3_get_started_on_gke.md).
+2.  Submit the job by following the **Single-Host Workload Execution (1-chip /
+    1-device slice)** section in the same guide.

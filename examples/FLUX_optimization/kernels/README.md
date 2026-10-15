@@ -364,11 +364,31 @@ def check_forward_parity(
 
 ## Running & Testing on TPU
 
-To run the verification suite via Bazel (see [`BUILD`](BUILD) for target
-definitions):
+### 1. From the Command Line (TPU VM or Container Shell)
+
+From this directory, run the custom Pallas kernel parity test suite:
 
 ```bash
-# Run the custom Pallas kernel parity test suite on Cloud TPU:
-bazel test \
-  //examples/FLUX_optimization/kernels:splash_attention_test
+python3 ./splash_attention_test.py
 ```
+
+### 2. Running on GKE
+
+To run this test suite on a single-device TPU v7x pod on GKE, update the
+container `command:` in
+`examples/simple_pytorch/torchtpu_singledevice_slice_job.yaml` to run:
+
+```bash
+cd /workspace/examples/FLUX_optimization/kernels/
+python3 ./splash_attention_test.py
+```
+
+Then:
+
+<!-- disableFinding(LINK_RELATIVE_G3DOC) -->
+
+1.  If you haven't set up your cluster yet, complete the **One-time setup**
+    section in
+    [Get started with TorchTPU on GKE](../../../docs/markdown/1_basics_3_get_started_on_gke.md).
+2.  Submit the job by following the **Single-Host Workload Execution (1-chip /
+    1-device slice)** section in the same guide.

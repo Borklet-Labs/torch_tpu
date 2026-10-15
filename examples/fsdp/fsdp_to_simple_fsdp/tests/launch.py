@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Bazel test runner for the FSDPv2 to SimpleFSDP tutorial.
+"""Test runner for the FSDPv2 to SimpleFSDP tutorial.
 
 This file is a test harness used to execute `fsdp_to_simple_fsdp_worker` in
-automated test suites (`bazel test`). To run this tutorial directly from the
-command line, use `../run_fsdp_to_simple_fsdp.sh` instead.
+automated test suites. To run this tutorial directly from the command line, use
+`../run_fsdp_to_simple_fsdp.sh` instead.
 """
 
 import os

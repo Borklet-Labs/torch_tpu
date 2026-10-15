@@ -26,7 +26,8 @@ matrices against 6D reshaped queries/keys `x = [x_0, x_1]^T`:
   x_out_0 = R[..., 0, 0] * x_0 + R[..., 0, 1] * x_1 = cos * x_0 + (-sin) * x_1
   x_out_1 = R[..., 1, 0] * x_0 + R[..., 1, 1] * x_1 = sin * x_0 +   cos  * x_1
 
-In optimized FLUX (`rope` / `apply_rope`), we store only the compact `[cos, sin]`
+In optimized FLUX (`rope` / `apply_rope`), we store only the compact `[cos,
+sin]`
 tuple in a 4D tensor `(B, S, 1, D/2, 2)` and directly compute:
   x_out_0 = x_0 * cos - x_1 * sin
   x_out_1 = x_0 * sin + x_1 * cos
@@ -39,9 +40,8 @@ halving positional embedding HBM bandwidth.
 ================================================================================
 HOW TO RUN
 ================================================================================
-Via Bazel:
-  bazel test \\
-    //examples/FLUX_optimization:flux_rope_parity_test
+From this directory:
+  python3 ./flux_rope_parity_test.py
 """
 
 import logging

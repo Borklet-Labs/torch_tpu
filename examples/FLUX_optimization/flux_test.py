@@ -57,14 +57,12 @@ SplashAttention blocks of 2048)
 ================================================================================
 HOW TO RUN
 ================================================================================
-Run test suite via Bazel:
-  bazel test \\
-    //examples/FLUX_optimization:flux_test
+From this directory, run the test suite:
+  python3 ./flux_test.py
 
-Run interactive benchmark with custom flags (the configuration used for the
+Run the interactive benchmark with custom flags (the configuration used for the
 results above):
-  bazel run \\
-    //examples/FLUX_optimization:flux_test -- \\
+  python3 ./flux_test.py \\
     --batch_size=2 --img_seq_len=32256 --txt_seq_len=512 --hidden_size=1024 \\
     --dtype=bfloat16 --use_zero_copy_view=true --use_fused_rope=true \\
     --use_splash_attention=true --compile=true \\

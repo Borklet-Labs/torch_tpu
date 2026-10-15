@@ -31,7 +31,7 @@ torch_tpu_py_test(
     srcs = ["hello_world_llm_eager_test.py"],
     notap = "this is a manual test",
     tags = [
-        "no-sandbox",  # Bazel's linux-sandbox restricts write access to your home directory for downloading weights.
+        "no-sandbox",  # linux-sandbox restricts write access to your home directory for downloading weights.
         "requires-net:external",
         "requires-tpu-v5lite",
     ],
