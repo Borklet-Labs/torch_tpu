@@ -237,7 +237,7 @@ ACCURACY_OVERRIDES_VS_GPU = {
         torch.float32: {"rtol": 2.0e-1, "atol": 3.2e-1},
     },
     "_softmax_backward_data": {
-        torch.bfloat16: {"atol": 5.9e-3},
+        torch.bfloat16: {"atol": 3.6e-3},
         torch.float16: {"atol": 5.9e-4},
     },
     "_transformer_encoder_layer_fwd": {
@@ -620,7 +620,7 @@ ACCURACY_OVERRIDES_VS_GPU_COMPILED = {
         torch.float32: {"rtol": 2.0e-1, "atol": 3.2e-1},
     },
     "_softmax_backward_data": {
-        torch.bfloat16: {"atol": 5.9e-3},
+        torch.bfloat16: {"atol": 3.6e-3},
         torch.float16: {"atol": 5.9e-4},
     },
     "abs": {
@@ -1033,10 +1033,6 @@ ACCURACY_OVERRIDES_GRAD_VS_GPU: dict[
         },
         "prod": {
             torch.float16: {"rtol": 1.6e-3, "atol": 9.8e-4},
-        },
-        "softmax": {
-            torch.bfloat16: {"rtol": 320, "atol": 7.4e-3},
-            torch.float16: {"rtol": 170, "atol": 9.2e-4},
         },
         "std": {
             torch.float16: {"atol": 6e-4},

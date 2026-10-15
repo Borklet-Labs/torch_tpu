@@ -21,18 +21,15 @@
 #include <limits>
 #include <optional>
 
-#include "absl/log/absl_check.h"
 #include "absl/log/absl_log.h"
 #include "absl/status/statusor.h"
 #include "csrc/common/aten_utils.h"
 #include "csrc/common/dimension_types.h"
 #include "csrc/common/error_utils.h"
-#include "csrc/common/to_string.h"
 #include "csrc/ops/op_builder_utils.h"
 #include "csrc/ops/reductions/sum.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
-#include "mlir/IR/Types.h"
 #include "mlir/Support/DebugStringHelper.h"
 #include "mlir/Support/LLVM.h"
 #include "stablehlo/dialect/StablehloOps.h"
@@ -134,7 +131,7 @@ absl::StatusOr<mlir::MlirOp> BuildSoftmaxShlo(mlir::MlirOp input_op,
 
 absl::StatusOr<mlir::MlirOp> BuildSoftmaxBackwardDataShlo(
     mlir::MlirOp grad_output_op, mlir::MlirOp output_op, int64_t dim,
-    mlir::stablehlo::Precision precision, SoftmaxMode softmax_mode) {
+    mlir::stablehlo::Precision /*precision*/, SoftmaxMode softmax_mode) {
   const mlir::RankedTensorType grad_output_type =
       GetTensorTypeOrDie(grad_output_op);
   const mlir::RankedTensorType output_type = GetTensorTypeOrDie(output_op);
@@ -148,25 +145,12 @@ absl::StatusOr<mlir::MlirOp> BuildSoftmaxBackwardDataShlo(
     return MakeScalarConstant(builder, 0.0, output_type.getElementType());
   }
 
-  ABSL_CHECK_EQ(  // CRASH_OK=checked in AtenSoftmaxBackwardData
-      output_type.getShape(), grad_output_type.getShape())
-      << "expected grad_output and output arguments to have the same shape, "
-         "got "
-      << ToString(grad_output_type.getShape()) << " vs. "
-      << ToString(output_type.getShape());
   TT_ASSIGN_OR_RETURN(dim, SafeWrapDim(dim, output_type.getRank()));
   TT_RET_CHECK(  // ERROR_COV_INFEASIBLE=Caught by the `SafeWrapDim()` function
                  // call above.
       0 <= dim && dim < output_type.getRank(), error::kInvalidArgument)
       << "expected the dim argument to be in the range [0, "
       << output_type.getRank() << " (rank of the output)], got " << dim;
-  Dimensions all_but_dim;
-  all_but_dim.reserve(output_type.getRank() - 1);
-  for (int i = 0; i < output_type.getRank(); ++i) {
-    if (i != dim) {
-      all_but_dim.push_back(i);
-    }
-  }
 
   const mlir::ElementType out_element_type = GetElementTypeOrDie(output_op);
   TT_ASSIGN_OR_RETURN(mlir::ElementType computation_dtype,
@@ -174,33 +158,27 @@ absl::StatusOr<mlir::MlirOp> BuildSoftmaxBackwardDataShlo(
   TT_ASSIGN_OR_RETURN(grad_output_op,
                       CastIfNeeded(grad_output_op, computation_dtype));
   TT_ASSIGN_OR_RETURN(output_op, CastIfNeeded(output_op, computation_dtype));
-  const mlir::RankedTensorType comp_output_type = GetTensorTypeOrDie(output_op);
+  TT_ASSIGN_OR_RETURN((auto [grad_output_bcast, output_bcast]),
+                      ApplyBroadcastIfNeeded(grad_output_op, output_op));
+  grad_output_op = grad_output_bcast;
+  output_op = output_bcast;
+
+  const mlir::MlirOp sum_input_op =
+      softmax_mode == SoftmaxMode::kSoftmax
+          ? mlir::stablehlo::Mul(grad_output_op, output_op)
+          : grad_output_op;
+  TT_ASSIGN_OR_RETURN(mlir::MlirOp sum_op, BuildSumShlo(sum_input_op, {dim}));
+  TT_ASSIGN_OR_RETURN(mlir::MlirOp unsqueezed_sum_op, Unsqueeze(sum_op, dim));
+  TT_ASSIGN_OR_RETURN(mlir::MlirOp sum_broadcasted,
+                      BroadcastIfNeeded(unsqueezed_sum_op, grad_output_op));
 
   mlir::MlirOp result;
   if (softmax_mode == SoftmaxMode::kSoftmax) {
     // For i a valid index in the dim-th dimension:
-    //   (dL / d input)_i = (output_op)_i * ((grad_output_op)_i - dot(output_op,
-    //   grad_output_op, dim))
-    // where the dot is broadcasted back to the original shape.
-    auto& ctx = output_op.getContext();
-
-    // Start by computing the dot.
-    auto precision_attr =
-        mlir::stablehlo::PrecisionConfigAttr::get(&ctx, {precision, precision});
-
-    auto dot_dimension_numbers = mlir::stablehlo::DotDimensionNumbersAttr::get(
-        &ctx, all_but_dim, all_but_dim, {dim}, {dim});
-    auto dot_op = mlir::stablehlo::DotGeneral(
-        output_op, grad_output_op, dot_dimension_numbers, precision_attr);
-    const mlir::RankedTensorType dot_op_type = GetTensorTypeOrDie(dot_op);
-    ABSL_VLOG(3) << "BuildSoftmaxBackwardDataShlo: dot_op_type: "
-                 << mlir::debugString(dot_op_type);
-    auto dot_broadcasted =
-        mlir::stablehlo::BroadcastInDim(comp_output_type, dot_op, all_but_dim);
-    // Compute grad_output_op - dot_broadcasted
-    auto sub_op = mlir::stablehlo::Subtract(grad_output_op, dot_broadcasted);
-
-    // Compute output_op * sub_op
+    //   (dL / d input)_i = (output_op)_i * ((grad_output_op)_i -
+    //   sum(grad_output_op * output_op, dim))
+    // where the sum is broadcasted back to the original shape.
+    auto sub_op = mlir::stablehlo::Subtract(grad_output_op, sum_broadcasted);
     result = mlir::stablehlo::Mul(output_op, sub_op);
   } else {
     // softmax_mode == SoftmaxMode::kLogSoftmax
@@ -208,14 +186,8 @@ absl::StatusOr<mlir::MlirOp> BuildSoftmaxBackwardDataShlo(
     //   (dL / d input)_i = (grad_output_op)_i - exp((output_op)_i) *
     //   sum(grad_output_op, dim)
     // where the sum is broadcasted back to the original shape.
-    // Start by computing the sum
-    TT_ASSIGN_OR_RETURN(auto sum_op, BuildSumShlo(grad_output_op, {dim}));
-    auto sum_broadcasted =
-        mlir::stablehlo::BroadcastInDim(comp_output_type, sum_op, all_but_dim);
-    // Compute exp(output_op) * sum(grad_output_op, dim)
     auto exp_op = mlir::stablehlo::Exp(output_op);
     auto mul_op = mlir::stablehlo::Mul(exp_op, sum_broadcasted);
-    // Compute grad_output_op - mul_op
     result = mlir::stablehlo::Subtract(grad_output_op, mul_op);
   }
 

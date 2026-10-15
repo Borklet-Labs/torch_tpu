@@ -551,7 +551,11 @@ class BinaryElementwiseDynamicOpInfo(DynamicOpInfo):
   def adapter_supports_op(op_info: core.OpInfo):
     """Method to declare ops supported by this adapter."""
 
-    additional_binary_ops = ["equal"]
+    additional_binary_ops = [
+        "_log_softmax_backward_data",
+        "_softmax_backward_data",
+        "equal",
+    ]
     return (
         isinstance(op_info, core.BinaryUfuncInfo)
         or op_info.name in additional_binary_ops
