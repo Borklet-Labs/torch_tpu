@@ -198,14 +198,7 @@ def main(argv: Sequence[str]) -> None:
   # point invoking `run_tests()` from its own namespace. Google-internal build
   # patches `run_tests()` to run with pytest.
   _use_absltest_main()
-  # Restore the initial working directory on exit in case the test framework or
-  # test module changes it, so relative paths in sanitizer options remain valid
-  # during process teardown.
-  initial_cwd = pathlib.Path.cwd()
-  try:
-    runpy.run_path(str(test_module_path), run_name="__main__")
-  finally:
-    os.chdir(initial_cwd)
+  runpy.run_path(str(test_module_path), run_name="__main__")
 
 
 if __name__ == "__main__":
