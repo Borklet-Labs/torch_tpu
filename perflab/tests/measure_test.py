@@ -51,9 +51,13 @@ class CountingStep:
 
 class RecordingOps:
 
-  def __init__(self, peak_mb=None, recompile_on_calls=None):
+  def __init__(
+      self, peak_mb=None, recompile_on_calls=None, fail_check_on_calls=None
+  ):
     self.events = []
     self.awaited = []
+    self.checked = []
+    self.fail_check_on_calls = fail_check_on_calls or set()
     self.reset_count = 0
     self.peak_mb = peak_mb
     self.recompile_on_calls = recompile_on_calls or set()
@@ -66,6 +70,12 @@ class RecordingOps:
     self.calls += 1
     if self.calls in self.recompile_on_calls:
       self._recompiles += 1
+
+  def check_result(self, out):
+    self.events.append("check")
+    self.checked.append(out)
+    if len(self.checked) in self.fail_check_on_calls:
+      raise RuntimeError(f"execution failed for {out}")
 
   def reset_peak_memory(self):
     self.events.append("reset")
@@ -308,6 +318,74 @@ class MeasureSequenceTest(seed_test_utils.RepeatableTest):
     step, ops = CountingStep(), RecordingOps()
     _run_measure(step, ops, steps=2, min_warmup=2)
     self.assertEqual(ops.awaited, ["out-1", "out-2", "out-3", "out-4"])
+
+
+class MeasureCheckResultTest(seed_test_utils.RepeatableTest):
+
+  def test_check_result_follows_every_await(self):
+    step, ops = CountingStep(), RecordingOps()
+    _run_measure(step, ops, steps=4, min_warmup=2)
+
+    steps = [e for e in ops.events if e in ("await", "check")]
+    self.assertEqual(steps, ["await", "check"] * 6)
+    self.assertEqual(ops.checked, ops.awaited)
+
+  def test_check_result_runs_once_per_profiled_step(self):
+    step, ops = CountingStep(), RecordingOps()
+    with mock.patch.object(
+        measure_lib.xprof_adapter, "XprofSession"
+    ) as mock_session_cls:
+      mock_session_cls.return_value.end_session_and_get_xspace_and_url.return_value = (
+          None,
+          "http://xprof/?session_id=sess_id",
+      )
+      with flagsaver.flagsaver(post_warmup_steps=3, xprof_steps=2):
+        measure_lib._post_warmup_run(
+            step, ops, name="test_post_warmup", enable_xprof=True
+        )
+
+    # 3 timed steps + 2 profiled steps.
+    self.assertEqual(ops.checked, ["out-1", "out-2", "out-3", "out-4", "out-5"])
+
+  def test_failed_warmup_step_raises(self):
+    # A failed asynchronous execution must fail the benchmark instead of
+    # being timed as if the step had run.
+    ops = RecordingOps(fail_check_on_calls={1})
+    with self.assertRaisesRegex(  # ASSERT_RAISES_OK=benchmark
+        RuntimeError, "execution failed for out-1"
+    ):
+      _run_measure(CountingStep(), ops, steps=3, min_warmup=2)
+
+  def test_failed_timed_step_raises(self):
+    ops = RecordingOps(fail_check_on_calls={4})
+    with self.assertRaisesRegex(  # ASSERT_RAISES_OK=benchmark
+        RuntimeError, "execution failed for out-4"
+    ):
+      _run_measure(CountingStep(), ops, steps=3, min_warmup=2)
+    self.assertTrue(gc.isenabled())
+
+  def test_check_result_is_not_timed(self):
+    clock = [0.0]
+
+    class TimedStep(CountingStep):
+
+      def __call__(self):
+        clock[0] += 1.0
+        return super().__call__()
+
+    class SlowCheckOps(RecordingOps):
+
+      def check_result(self, out):
+        clock[0] += 100.0
+        super().check_result(out)
+
+    with mock.patch.object(
+        measure_lib.time, "perf_counter", side_effect=lambda: clock[0]
+    ):
+      m = _run_measure(TimedStep(), SlowCheckOps(), steps=3, min_warmup=2)
+
+    self.assertEqual(m.first_step_time_seconds, 1.0)
+    self.assertEqual(m.post_warmup_step_time_seconds, 1.0)
 
 
 class MeasureRecompileGuardTest(seed_test_utils.RepeatableTest):

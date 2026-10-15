@@ -51,6 +51,26 @@ class DeviceOps(Protocol):
     """
     ...
 
+  def check_result(self, out: Any) -> None:
+    """Raise if the work that produced `out` failed.
+
+    measure() calls this after `await_result` for every step, outside the
+    timed region, so it may be slower than `await_result` without affecting
+    the measurement.
+
+    Backends with asynchronous execution may not report a failed execution
+    (e.g. a device OOM) from their device-level barrier: TorchTPU's
+    torch.accelerator.synchronize() returns and only marks the outputs of the
+    failed execution as failed. Without this check such a step would be timed
+    as if it had run. Backends whose `await_result` already raises on failure
+    may implement this as a no-op.
+
+    The step output must therefore contain the backend's device outputs (e.g.
+    the logits or the loss); backends that check them may raise if it does
+    not.
+    """
+    ...
+
   def reset_peak_memory(self) -> None:
     """Reset the peak-memory counter."""
     ...

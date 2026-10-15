@@ -235,6 +235,27 @@ class StepperTypeTest(seed_test_utils.RepeatableTest):
     stepper.get_step_fn()()
     my_loss.assert_called_once_with(model, args, kwargs)
 
+  def test_standard_training_returns_last_micro_batch_loss(self):
+    # measure() checks the step output, so the step must return its loss.
+    losses = iter([torch.tensor(float(i), requires_grad=True) for i in (2, 6)])
+
+    def compute_loss(model, args, kwargs):
+      del model, args, kwargs  # Unused.
+      return next(losses)
+
+    model = _mlp()
+    opt = torch.optim.SGD(model.parameters(), lr=0.0)
+    stepper = step_lib.resolve_stepper(
+        step_lib.StepperType.TRAINING,
+        accum_steps=2,
+        compute_loss=compute_loss,
+    )
+    stepper.init_with_benchmark_args(model, (torch.randn(2, 4),), {}, opt)
+
+    loss = stepper.get_step_fn()()
+
+    test_utils.assert_close(loss, torch.tensor(3.0))  # 6 / accum_steps
+
   def _ops(self):
     return torch_device_ops.TorchDeviceOps(
         target_lib.make_target(target_lib.Platform.V5E_1X1)
@@ -608,12 +629,15 @@ class StepperTypeTest(seed_test_utils.RepeatableTest):
     stepper.init_with_benchmark_args(model, (x,), {}, opt)
     self.assertIsNone(stepper._trainer)
     before = [p.clone() for p in model.parameters()]
-    stepper.get_step_fn()()
+    loss = stepper.get_step_fn()()
     self.assertIsNone(stepper._trainer)
     changed = [
         not torch.equal(b, p) for b, p in zip(before, model.parameters())
     ]
     self.assertTrue(all(changed))
+    # The eager step returns a TPU loss, so check_result has a tensor to check.
+    self.assertEqual(loss.device.type, "tpu")
+    ops.check_result(loss)
 
   def test_training_stepper_composite_dispatch_compiled(self):
     ops = self._ops()
@@ -636,8 +660,8 @@ class StepperTypeTest(seed_test_utils.RepeatableTest):
         name: p.detach().cpu().clone() for name, p in model.named_parameters()
     }
     loss = stepper.get_step_fn()()
-    # Only the single-trace step returns the loss, and it must come from
-    # `compute_loss` (a sum) rather than the built-in loss (a mean).
+    # The loss must come from `compute_loss` (a sum) rather than the built-in
+    # loss (a mean).
     test_utils.assert_close(loss, expected_loss)
     after = stepper.get_params()
     changed = [

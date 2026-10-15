@@ -397,6 +397,8 @@ def _warmup_run(
       out = step_fn()
       device_ops.await_result(out)
       timings[step] = time.perf_counter() - start_time
+      # Outside the timed region: fail instead of timing a failed step.
+      device_ops.check_result(out)
       # E.g. reset kv cache to its post-prefill state.
       stepper.post_warmup_hook()
       compile_count[step] = device_ops.compile_count()
@@ -478,6 +480,8 @@ def _post_warmup_run(
     out = step_fn()
     device_ops.await_result(out)
     elapsed = time.perf_counter() - start_time
+    # Outside the timed region: fail instead of timing a failed step.
+    device_ops.check_result(out)
     stepper.post_warmup_hook()
 
     step_compile_count = device_ops.compile_count()

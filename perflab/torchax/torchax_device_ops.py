@@ -73,6 +73,10 @@ class TorchaxDeviceOps:
     """Block until the value-level futures reachable from out complete."""
     _sync_jax_device(out)
 
+  def check_result(self, out: Any) -> None:
+    """No-op: `await_result` already raises if the work for out failed."""
+    del out
+
   def reset_peak_memory(self) -> None:
     """Reset peak memory stats if supported by the underlying JAX backend."""
     try:

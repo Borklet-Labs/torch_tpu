@@ -88,6 +88,31 @@ class TorchDeviceOps:
     if self.target.device_kind != target_lib.DeviceKind.CPU:
       torch.accelerator.synchronize()
 
+  def check_result(self, out: Any) -> None:
+    """Raise if the work that produced out failed.
+
+    A failed TorchTPU execution (e.g. an HBM OOM) does not fail
+    torch.accelerator.synchronize(); it only marks its outputs as failed.
+    Synchronizing on the outputs raises that failure.
+
+    Args:
+      out: The step's output. On TPU it must contain a TPU tensor.
+
+    Raises:
+      ValueError: If the target is a TPU and out contains no TPU tensors.
+    """
+    if self.target.device_kind != target_lib.DeviceKind.TPU:
+      return
+    tensors = device_utils.collect_tensors_on("tpu", out)
+    if not tensors:
+      raise ValueError(
+          "The step returned no TPU tensors, so its success can't be"
+          " verified: a failed TorchTPU execution only marks its outputs as"
+          " failed. Return the step's TPU outputs (e.g. the logits or the"
+          f" loss) from the step function. Got: {type(out).__name__}."
+      )
+    device_utils.synchronize("tpu", tensors)
+
   def reset_peak_memory(self) -> None:
     """Reset the peak-memory counter."""
     if self.target.device_kind != target_lib.DeviceKind.CPU:

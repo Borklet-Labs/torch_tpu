@@ -18,6 +18,8 @@ from unittest import mock
 
 from absl.testing import absltest
 import torch
+from torch_tpu._internal.utils import test_utils
+from perflab import device_utils
 from perflab import target as target_lib
 from perflab import torch_device_ops
 from tests import seed_test_utils
@@ -54,6 +56,65 @@ class TorchDeviceOpsTest(seed_test_utils.RepeatableTest):
     ops.await_result(None)
 
     mock_accelerator.synchronize.assert_called_once()
+
+  @mock.patch.object(device_utils, "synchronize", autospec=True)
+  def test_check_result_raises_if_output_execution_failed(
+      self, mock_synchronize
+  ):
+    # A failed asynchronous execution (e.g. an HBM OOM) leaves the device
+    # barrier successful and only marks the outputs as failed.
+    mock_synchronize.side_effect = RuntimeError("RESOURCE_EXHAUSTED")
+    target = target_lib.make_target(platform=target_lib.Platform.V5E_1X1)
+    ops = torch_device_ops.TorchDeviceOps(target)
+
+    with self.assertRaisesRegex(  # ASSERT_RAISES_OK=benchmark
+        RuntimeError, "RESOURCE_EXHAUSTED"
+    ):
+      ops.check_result({"logits": torch.ones(4, device=ops.device)})
+
+  @mock.patch.object(device_utils, "synchronize", autospec=True)
+  def test_check_result_raises_without_tpu_outputs(self, mock_synchronize):
+    target = target_lib.make_target(platform=target_lib.Platform.V5E_1X1)
+    ops = torch_device_ops.TorchDeviceOps(target)
+
+    for out in (None, {"n": 3}, torch.ones(4)):
+      with self.subTest(out=out):
+        with self.assertRaisesRegex(  # ASSERT_RAISES_OK=benchmark
+            ValueError, "returned no TPU tensors"
+        ):
+          ops.check_result(out)
+    mock_synchronize.assert_not_called()
+
+  @mock.patch.object(device_utils, "synchronize", autospec=True)
+  @mock.patch("torch.accelerator")
+  def test_check_result_ignores_non_tpu_targets(
+      self, mock_accelerator, mock_synchronize
+  ):
+    mock_accelerator.device_count.return_value = 1
+    for platform in (target_lib.Platform.B200_1, target_lib.Platform.CPU):
+      with self.subTest(platform=platform):
+        target = target_lib.make_target(platform=platform)
+        ops = torch_device_ops.TorchDeviceOps(target)
+
+        ops.check_result({"logits": mock.sentinel.logits})
+        ops.check_result(None)
+
+    mock_synchronize.assert_not_called()
+
+  def test_check_result_succeeds_for_real_tpu_outputs(self):
+    target = target_lib.make_target(platform=target_lib.Platform.V5E_1X1)
+    ops = torch_device_ops.TorchDeviceOps(target)
+    # Non-TPU leaves (a CPU tensor, an int) are ignored.
+    out = {
+        "x": torch.ones(4, device=ops.device) + 1,
+        "cpu": torch.ones(2),
+        "n": 3,
+    }
+    ops.await_result(out)
+
+    ops.check_result(out)
+
+    test_utils.assert_close(out["x"].cpu(), torch.full((4,), 2.0))
 
   @mock.patch("torch.accelerator")
   def test_reset_peak_memory(self, mock_accelerator):

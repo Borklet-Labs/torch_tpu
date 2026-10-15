@@ -18,6 +18,7 @@ from unittest import mock
 
 from absl.testing import absltest
 import torch
+from torch_tpu._internal.utils import test_utils
 from torch_tpu._internal.benchmarks import xprof_adapter
 from perflab import device_utils
 from tests import oss_utils
@@ -451,6 +452,35 @@ class DeviceUtilsTest(seed_test_utils.RepeatableTest):
     self.assertEqual(out, 'WRAPPED')
     mock_cfg.assert_called_once()
     tc.assert_called_once_with(dummy_fn, backend='inductor', fullgraph=True)
+
+  def test_collect_tensors_on_keeps_only_tensors_on_the_device(self):
+    tpu_a = torch.ones(2, device='tpu')
+    tpu_b = torch.zeros(3, device='tpu')
+    cpu = torch.ones(4)
+    tree = {'a': tpu_a, 'nested': (cpu, [tpu_b, 3, None]), 's': 'text'}
+
+    tpu_tensors = device_utils.collect_tensors_on('tpu', tree)
+    cpu_tensors = device_utils.collect_tensors_on('cpu', tree)
+
+    self.assertLen(tpu_tensors, 2)
+    self.assertIs(tpu_tensors[0], tpu_a)
+    self.assertIs(tpu_tensors[1], tpu_b)
+    self.assertLen(cpu_tensors, 1)
+    self.assertIs(cpu_tensors[0], cpu)
+
+  def test_collect_tensors_on_returns_empty_without_matching_tensors(self):
+    for tree in (None, 3, {'n': 3}, torch.ones(2)):
+      with self.subTest(tree=tree):
+        self.assertEmpty(device_utils.collect_tensors_on('tpu', tree))
+
+  def test_collect_tensors_on_expands_sparse_tensors(self):
+    sparse = torch.sparse_coo_tensor([[0, 2]], [1.0, 2.0], (3,))
+
+    tensors = device_utils.collect_tensors_on('cpu', {'s': sparse, 'n': 3})
+
+    self.assertLen(tensors, 2)
+    test_utils.assert_close(tensors[0], torch.tensor([[0, 2]]))
+    test_utils.assert_close(tensors[1], torch.tensor([1.0, 2.0]))
 
 
 if __name__ == '__main__':

@@ -52,7 +52,11 @@ class _StandardTrainingStepper(common.BaseStepper):
       loss.backward()
     if opt is not None:
       opt.step()
-    return
+    # Return the last micro-batch loss so measure() can check that the step's
+    # executions succeeded. A failed `opt.step()` leaves the params failed, so
+    # the next step's loss fails; only a failure in the final step's
+    # `opt.step()` goes unnoticed.
+    return loss
 
   def get_params(self) -> dict[str, torch.Tensor]:
     """Returns the current model parameters."""

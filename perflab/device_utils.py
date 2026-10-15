@@ -376,6 +376,16 @@ def _collect_tensors(tensors: Any) -> Sequence[torch.Tensor]:
   return collected
 
 
+def collect_tensors_on(device_type: str, tensors: Any) -> list[torch.Tensor]:
+  """Returns the tensors on `device_type` reachable from `tensors`.
+
+  Args:
+    device_type: The torch device type to keep, e.g. "tpu".
+    tensors: A tensor or a pytree containing tensors; other leaves are ignored.
+  """
+  return [t for t in _collect_tensors(tensors) if t.device.type == device_type]
+
+
 def synchronize(
     device,
     tensor_to_sync: (

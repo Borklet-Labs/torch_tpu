@@ -115,6 +115,9 @@ class _DeviceOps:
   def await_result(self, out):
     del out
 
+  def check_result(self, out):
+    del out
+
   def reset_peak_memory(self):
     pass
 
