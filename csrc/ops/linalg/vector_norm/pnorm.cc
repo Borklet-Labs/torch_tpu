@@ -34,6 +34,28 @@
 #include "stablehlo/integrations/cpp/builder/StablehloBuilder.h"
 
 namespace torch_tpu {
+namespace {
+
+absl::StatusOr<mlir::MlirOp> ApplyNormPower(mlir::MlirOp op,
+                                            mlir::MlirOp ord_op, double ord,
+                                            bool is_root) {
+  const double abs_ord = std::abs(ord);
+  const mlir::ElementType dtype = GetElementTypeOrDie(op);
+  const mlir::MlirOp one = MakeScalarConstant(op.getBuilder(), 1.0, dtype);
+  if (abs_ord == 1.0) {
+    return ord < 0.0 ? BuildDivShlo(one, op) : op;
+  }
+  if (abs_ord == 2.0) {
+    op = is_root ? mlir::stablehlo::Sqrt(op) : mlir::stablehlo::Mul(op, op);
+    return ord < 0.0 ? BuildDivShlo(one, op) : op;
+  }
+  TT_ASSIGN_OR_RETURN(ord_op, CastIfNeeded(ord_op, dtype));
+  TT_ASSIGN_OR_RETURN(const mlir::MlirOp exp,
+                      is_root ? BuildDivShlo(one, ord_op) : ord_op);
+  return BuildPowShlo(op, exp);
+}
+
+}  // namespace
 
 absl::StatusOr<mlir::MlirOp> BuildPNormShlo(
     mlir::MlirOp input_op, double ord, absl::Span<const int64_t> reduce_dims,
@@ -80,7 +102,6 @@ absl::StatusOr<mlir::MlirOp> BuildPNormShlo(
 
   input_op = mlir::stablehlo::Abs(input_op);
   TT_ASSIGN_OR_RETURN(input_op, CastIfNeeded(input_op, compute_dtype));
-  TT_ASSIGN_OR_RETURN(ord_op, CastIfNeeded(ord_op, compute_dtype));
 
   if (ord == INFINITY) {
     // Inf-norm is max(abs(x)).
@@ -104,32 +125,12 @@ absl::StatusOr<mlir::MlirOp> BuildPNormShlo(
         BuildReductionShlo(input_op, reduce_dims, compute_mlir_type,
                            init_val_inf, reduce_fn, reduction_mode);
     return CastIfNeeded(reduction_res, out_type);
-  } else if (ord == 1.0) {
-    // 1-norm is sum(abs(x)).
-    auto reduce_fn = [compute_mlir_type](mlir::RegionBuilder& rb) {
-      mlir::stablehlo::buildReduceBody<mlir::stablehlo::AddOp>(
-          compute_mlir_type, rb.getRegion(), rb.getOpBuilder());
-    };
-    mlir::MlirOp reduction_res =
-        BuildReductionShlo(input_op, reduce_dims, compute_mlir_type, init_val,
-                           reduce_fn, reduction_mode);
-    return CastIfNeeded(reduction_res, out_type);
-  } else if (ord == 2.0) {
-    // 2-norm is sqrt(sum(abs(x)^2)).
-    input_op = mlir::stablehlo::Mul(input_op, input_op);
-    auto reduce_fn = [compute_mlir_type](mlir::RegionBuilder& rb) {
-      mlir::stablehlo::buildReduceBody<mlir::stablehlo::AddOp>(
-          compute_mlir_type, rb.getRegion(), rb.getOpBuilder());
-    };
-    mlir::MlirOp reduction_res =
-        BuildReductionShlo(input_op, reduce_dims, compute_mlir_type, init_val,
-                           reduce_fn, reduction_mode);
-    mlir::MlirOp sqrt_res = mlir::stablehlo::Sqrt(reduction_res);
-    return CastIfNeeded(sqrt_res, out_type);
   } else {
     // The general p-norm is sum(abs(x)^ord)^(1/ord).
     mlir::MlirOp orig_abs_input = input_op;
-    TT_ASSIGN_OR_RETURN(input_op, BuildPowShlo(input_op, ord_op));
+    TT_ASSIGN_OR_RETURN(
+        input_op, ApplyNormPower(input_op, ord_op, ord, /*is_root=*/false));
+
     auto reduce_fn = [compute_mlir_type](mlir::RegionBuilder& rb) {
       mlir::stablehlo::buildReduceBody<mlir::stablehlo::AddOp>(
           compute_mlir_type, rb.getRegion(), rb.getOpBuilder());
@@ -138,11 +139,8 @@ absl::StatusOr<mlir::MlirOp> BuildPNormShlo(
         BuildReductionShlo(input_op, reduce_dims, compute_mlir_type, init_val,
                            reduce_fn, reduction_mode);
 
-    auto one = MakeScalarConstant(builder, 1.0, compute_dtype);
-    auto one_bcast =
-        mlir::stablehlo::BroadcastInDim(GetTensorTypeOrDie(ord_op), one, {});
-    TT_ASSIGN_OR_RETURN(auto root, BuildDivShlo(one_bcast, ord_op));
-    TT_ASSIGN_OR_RETURN(auto res_root, BuildPowShlo(reduction_res, root));
+    TT_ASSIGN_OR_RETURN(reduction_res, ApplyNormPower(reduction_res, ord_op,
+                                                      ord, /*is_root=*/true));
 
     if (ord < 0.0) {
       // If ord < 0 and any element along reduce_dims is 0, pow(0, ord) = inf,
@@ -163,11 +161,12 @@ absl::StatusOr<mlir::MlirOp> BuildPNormShlo(
           BuildReductionShlo(is_zero, reduce_dims, pred_mlir_type, false_val,
                              or_reduce_fn, reduction_mode);
       mlir::MlirOp zero_res = mlir::stablehlo::BroadcastInDim(
-          GetTensorTypeOrDie(res_root), init_val, {});
-      res_root = mlir::stablehlo::Select(has_zero, zero_res, res_root);
+          GetTensorTypeOrDie(reduction_res), init_val, {});
+      reduction_res =
+          mlir::stablehlo::Select(has_zero, zero_res, reduction_res);
     }
 
-    return CastIfNeeded(res_root, out_type);
+    return CastIfNeeded(reduction_res, out_type);
   }
 }
 
