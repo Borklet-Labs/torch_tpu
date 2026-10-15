@@ -45,11 +45,28 @@ torch_tpu_py_test(
         "//perflab:export",
         "//perflab:flags",
         "//perflab:known_failures",
+        "//perflab:metrics",
         "//perflab:mode",
         "//perflab:target",
         "//shims/absl_py/testing:absltest",
         "//shims/absl_py/testing:flagsaver",
+        "//shims/absl_py/testing:parameterized",
         "//src/torch_tpu",
+        "//tests:seed_test_utils",
+    ],
+)
+
+torch_tpu_py_test(
+    name = "benchmark_registry_test",
+    srcs = ["benchmark_registry_test.py"],
+    data = ["//perflab:benchmark_registry.pbtxt"],
+    deps = [
+        "//perflab:measure",
+        "//perflab:target",
+        "//shims/absl_py/testing:absltest",
+        "//shims/absl_py/testing:flagsaver",
+        "//src/torch_tpu",
+        "//tests:repo_paths",
         "//tests:seed_test_utils",
     ],
 )
