@@ -14,6 +14,8 @@
 
 """Marks constants in the FX graph in preparation for MLIR serialization."""
 
+from collections.abc import Collection
+
 import torch
 from torch._subclasses.fake_tensor import unset_fake_temporarily
 from torch.export.unflatten import _assign_attr
@@ -23,6 +25,7 @@ from torch_tpu._internal.compile import tpu_torch_compile
 
 def apply(
     gm_or_graph: torch.fx.GraphModule | torch.fx.Graph,
+    skip_targets: Collection[str] = (),
 ) -> None:
   """Marks embedded constants (get_attr node targets) in an FX graph so that they may be properly handled during MLIR generation.
 
@@ -33,6 +36,8 @@ def apply(
 
   Args:
     gm_or_graph: The FX GraphModule or Graph to modify.
+    skip_targets: `get_attr` targets to leave unmarked, e.g. constants that are
+      consumed on CPU.
   """
   # pylint: disable=protected-access
   if isinstance(gm_or_graph, torch.fx.GraphModule):
@@ -52,7 +57,10 @@ def apply(
     }
 
     for attr_target in unique_attr_targets:
-      if attr_target in gm._processed_constant_attrs:  # pyrefly: ignore[missing-attribute]
+      if (
+          attr_target in skip_targets
+          or attr_target in gm._processed_constant_attrs  # pyrefly: ignore[missing-attribute]
+      ):
         continue
 
       # pylint: disable-next=protected-access

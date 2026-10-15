@@ -97,6 +97,26 @@ class SplitCompileTest(seed_test_utils.RepeatableTest):
     expected = torch.full((2, 2), 7.0, device="cpu")
     utils.assert_close(res.cpu(), expected)
 
+  def test_split_graph_without_value_metadata(self):
+    """Verifies that nodes of a graph without fake values are compiled for TPU."""
+
+    def f(x):
+      y = torch.ops.aten.sin(x)
+      z = torch.ops.aten.mul(y, 2.0)
+      return torch.ops.aten.add(z, 3.0)
+
+    # Monkeypatch COLLECTIVE_OPS to force a split on 'mul'.
+    orig_ops = collective_ops.COLLECTIVE_OPS
+    new_ops = orig_ops + (torch.ops.aten.mul,)
+
+    x = torch.ones((2, 2), device="tpu")
+    with unittest.mock.patch.object(collective_ops, "COLLECTIVE_OPS", new_ops):
+      split_comp = split_compiler.SplitCompiler(compiler.StaticCompiler())
+      executable = split_comp(torch.fx.symbolic_trace(f), (x,))
+
+    self.assertLen(executable.compiled_executables, 3)
+    utils.assert_close(executable(x).cpu(), f(x).cpu())
+
   def test_split_graph_with_mutated_returned_placeholder(self):
     """Verifies that an FX graph returning in-place mutated input placeholders is correctly compiled by SplitCompiler and returns updated tensors."""
     graph = torch.fx.Graph()

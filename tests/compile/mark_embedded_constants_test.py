@@ -44,6 +44,26 @@ class MarkEmbeddedConstantsTest(seed_test_utils.RepeatableTest):
     self.assertTrue(tpu_torch_compile.is_constant_tensor(gm.c_attr))
     self.assertIn("c_attr", gm._processed_constant_attrs)
 
+  def test_mark_embedded_constants_skip_targets(self):
+    g = Graph()
+    x = g.placeholder("x")
+    c = g.get_attr("c_attr")
+    d = g.get_attr("d_attr")
+    add_c = g.call_function(torch.ops.aten.add.Tensor, (x, c))
+    g.output(g.call_function(torch.ops.aten.add.Tensor, (add_c, d)))
+
+    root = torch.nn.Module()
+    root.c_attr = torch.tensor([1.0, 2.0], dtype=torch.float32)
+    root.d_attr = torch.tensor([3.0, 4.0], dtype=torch.float32)
+    gm = GraphModule(root, g)
+
+    mark_embedded_constants.apply(gm, skip_targets={"d_attr"})
+
+    self.assertTrue(tpu_torch_compile.is_constant_tensor(gm.c_attr))
+    self.assertFalse(tpu_torch_compile.is_constant_tensor(gm.d_attr))
+    self.assertEqual(gm.d_attr.device.type, "cpu")
+    self.assertNotIn("d_attr", gm._processed_constant_attrs)
+
   def test_mark_embedded_constants_idempotent(self):
     g = Graph()
     x = g.placeholder("x")

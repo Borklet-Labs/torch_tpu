@@ -15,10 +15,11 @@
 """Compiler split functionality for TorchTPU.
 
 This module contains the logic for splitting a GraphModule on collective
-operations and compiling it's submodules.
+operations and device boundaries, compiling its TPU submodules, and running its
+CPU submodules eagerly.
 """
 
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Collection, Iterator, Sequence
 import contextlib
 import copy
 import functools
@@ -33,8 +34,10 @@ from torch._inductor.utils import InputType
 from torch._logging import LazyString
 from torch._subclasses.fake_tensor import unset_fake_temporarily
 import torch.distributed as dist
+from torch.fx.experimental import symbolic_shapes
 from torch.fx.passes import graph_transform_observer
 from torch.fx.passes.split_module import split_module
+from torch.utils import _pytree as pytree
 from torch_tpu._internal import env
 from torch_tpu._internal.compile import compiler
 from torch_tpu._internal.compile import torch_tpu_compiled_executable
@@ -261,15 +264,145 @@ def _register_output_namedtuple_globals(gm: torch.fx.GraphModule) -> None:
   )
 
 
+_CPU = "cpu"
+_TPU = "tpu"
+
+# Ops with these tags are never constant expressions, even if all their inputs
+# are constants: tracing them into a TPU program would change their random
+# stream or require concrete input values.
+_NON_CONSTANT_OP_TAGS = frozenset({
+    torch.Tag.nondeterministic_seeded,
+    torch.Tag.data_dependent_output,
+    torch.Tag.dynamic_output_shape,
+})
+
+
+def _tensor_device_types(node: torch.fx.Node) -> set[str]:
+  """Returns the device types of the tensors in the value of `node`."""
+  return {
+      leaf.device.type
+      for leaf in pytree.tree_leaves(node.meta.get("val"))
+      if isinstance(leaf, torch.Tensor)
+  }
+
+
+def _assign_devices(graph: torch.fx.Graph) -> dict[torch.fx.Node, str | None]:
+  """Returns the device type each node must run on, or None if any works.
+
+  Nodes that produce CPU tensors run eagerly on CPU, as do nodes that produce no
+  tensors from CPU tensors or values computed on CPU, e.g. `.item()` and
+  arithmetic on its result. Other nodes that produce tensors, or that have no
+  value metadata, run on TPU. Expressions computed only from `get_attr`
+  constants are unconstrained since TPU programs embed constants, as are other
+  nodes that touch no tensors, such as SymInt arithmetic. An unconstrained node
+  runs on CPU if any of its users does.
+
+  Tensors offloaded by `torch.ops.ao.offload`, and tensors computed from them,
+  also run on TPU: fake tensors report them as CPU tensors, but TPU programs
+  keep them in pinned host memory.
+
+  Args:
+    graph: The graph to assign devices to.
+
+  Returns:
+    A mapping from each node other than placeholders and outputs to "cpu",
+    "tpu", or None.
+  """
+  # Registered when torch._functorch._activation_offloading is imported.
+  offload = getattr(torch.ops.ao, "offload", None)
+  constants = set()
+  pinned_host = set()
+  devices = {}
+  for node in graph.nodes:
+    if node.op in ("placeholder", "output"):
+      continue
+    outputs = _tensor_device_types(node)
+    op = getattr(node.target, "overloadpacket", node.target)
+    if (offload is not None and op is offload) or (
+        _CPU in outputs and not pinned_host.isdisjoint(node.all_input_nodes)
+    ):
+      pinned_host.add(node)
+      devices[node] = _TPU
+      continue
+    inputs = set().union(*(
+        _tensor_device_types(n)
+        for n in node.all_input_nodes
+        if n not in pinned_host
+    ))
+    if node.op == "get_attr" or (
+        node.all_input_nodes
+        and constants.issuperset(node.all_input_nodes)
+        and len(inputs | outputs) <= 1
+        and not _NON_CONSTANT_OP_TAGS.intersection(
+            getattr(node.target, "tags", ())
+        )
+    ):
+      constants.add(node)
+      devices[node] = None
+    elif _CPU in outputs or (
+        not outputs
+        and (_CPU in inputs or _CPU in map(devices.get, node.all_input_nodes))
+    ):
+      devices[node] = _CPU
+    else:
+      devices[node] = _TPU if outputs or "val" not in node.meta else None
+
+  for node in reversed(devices):
+    if devices[node] is None and any(
+        devices.get(user) == _CPU
+        or (user.op == "output" and _CPU in _tensor_device_types(node))
+        for user in node.users
+    ):
+      devices[node] = _CPU
+  return devices
+
+
+def _call_partitions_in_order(split_gm: torch.fx.GraphModule) -> None:
+  """Reorders the submodule calls of a split graph by partition id.
+
+  split_module only orders partitions by their data dependencies, so e.g. CPU
+  partitions could otherwise call random ops in a different order than eager.
+
+  Args:
+    split_gm: A graph split by `split_module` with partition ids that respect
+      the dependencies between partitions.
+  """
+  calls = split_gm.graph.find_nodes(op="call_module")
+  if not calls:
+    return
+  anchor = calls[0].prev
+  for call in sorted(calls, key=lambda n: int(str(n.target).split("_")[-1])):
+    unpacked = [u for u in call.users if u.target is operator.getitem]
+    for node in (call, *unpacked):
+      anchor.append(node)
+      anchor = node
+
+
 class _WrapperModule(torch.nn.Module):
   """Wrapper module for compiled submodules."""
 
-  def __init__(self, submod: Callable[..., Any], unwrap_singleton_tuple: bool):
+  # Positions of arguments that are CPU tensors, e.g. outputs of CPU partitions.
+  # TPU executables only accept TPU tensors, so these are transferred first.
+  cpu_arg_indices: tuple[int, ...] = ()
+
+  def __init__(
+      self,
+      submod: Callable[..., Any],
+      unwrap_singleton_tuple: bool,
+      cpu_arg_indices: Sequence[int] = (),
+  ):
     super().__init__()
     self.submod = submod
     self.unwrap_singleton_tuple = unwrap_singleton_tuple
+    self.cpu_arg_indices = tuple(cpu_arg_indices)
 
   def forward(self, *args: Any) -> Any:
+    if self.cpu_arg_indices:
+      device = torch.accelerator.current_accelerator()
+      args = tuple(
+          arg.to(device) if i in self.cpu_arg_indices else arg
+          for i, arg in enumerate(args)
+      )
     x = self.submod(*args)
     # AOT Autograd compiled submodules always wrap their output in a tuple.
     # If the original subgraph did not return a tuple, we unwrap the singleton
@@ -309,8 +442,8 @@ class _SubmodCompiler(torch.fx.interpreter.Interpreter):
   """Interpreter to propagate shape information and compile submodules.
 
   This class traverses the topologically-sorted split GraphModule sequentially,
-  compiles all submodules and propagates input/output shapes from one submodule
-  to the next.
+  compiles all TPU submodules and propagates input/output shapes from one
+  submodule to the next. CPU submodules are left uncompiled to run eagerly.
   """
 
   def __init__(
@@ -319,11 +452,13 @@ class _SubmodCompiler(torch.fx.interpreter.Interpreter):
       compiler_fn: Callable[..., CompiledArtifact],
       fake_mode: torch._subclasses.fake_tensor.FakeTensorMode,
       base_module_name: str | None = None,
+      cpu_submods: Collection[str] = frozenset(),
   ):
     super().__init__(module)
     self.compiler_fn = compiler_fn
     self.fake_mode = fake_mode
     self.base_module_name = base_module_name
+    self.cpu_submods = cpu_submods
     self.has_multiple_submods = (
         sum(1 for n in module.graph.nodes if n.op == "call_module") > 1
     )
@@ -375,12 +510,27 @@ class _SubmodCompiler(torch.fx.interpreter.Interpreter):
     if self.base_module_name and submod_name and self.has_multiple_submods:
       full_submod_name = f"{self.base_module_name}_{submod_name}"
 
+    cpu_arg_indices = [
+        i
+        for i, arg in enumerate(args)
+        if isinstance(arg, torch.Tensor) and arg.device.type == _CPU
+    ]
+    if symbolic_shapes.has_free_unbacked_symbols(
+        [args[i] for i in cpu_arg_indices]
+    ):
+      raise NotImplementedError(
+          f"{submod_name} runs on TPU but takes CPU tensors with data-dependent"
+          " shapes, e.g. from `torch.nonzero`, which TPU programs cannot be"
+          " compiled for. Let TorchDynamo graph break on such ops instead by"
+          " disabling `torch._dynamo.config.capture_dynamic_output_shape_ops`"
+          " and `capture_scalar_outputs`."
+      )
+
     compiled_submod_real = self.compiler_fn(
         input_mod, args, module_name=full_submod_name
     )
     wrapper = _WrapperModule(
-        compiled_submod_real,
-        unwrap_singleton_tuple,
+        compiled_submod_real, unwrap_singleton_tuple, cpu_arg_indices
     )
     return wrapper
 
@@ -399,6 +549,11 @@ class _SubmodCompiler(torch.fx.interpreter.Interpreter):
         new_args.append(self._convert_to_fake_tensor(arg))
       else:
         new_args.append(arg)
+
+    if n.op == "call_module" and n.target in self.cpu_submods:
+      # CPU submodules run eagerly, so only their output shapes are propagated.
+      with self.fake_mode, _allow_non_fake_inputs(self.fake_mode):
+        return self.fetch_attr(str(n.target))(*new_args, **kwargs)
 
     if n.op == "call_module":
       real_mod = self.fetch_attr(str(n.target))
@@ -617,22 +772,53 @@ class SplitCompiler(compiler.Compiler):
       module_name: str | None = None,
       **kwargs,
   ) -> _SplitCompiledExecutable:
-    """Splits the graph on collectives and compiles the submodules."""
-    graph_transform_observer.GraphTransformObserver(
-        graph_module, "mark_embedded_constants"
-    ).apply_graph_pass(mark_embedded_constants.apply)
+    """Splits the graph on collectives and devices and compiles the submodules."""
     graph_transform_observer.GraphTransformObserver(
         graph_module, "clone_mutated_returned_placeholders"
     ).apply_graph_pass(clone_mutated_returned_placeholders.apply)
+    devices = _assign_devices(graph_module.graph)
+    # Constants used on CPU must stay CPU tensors. TPU partitions using them
+    # still embed them when the base compiler marks its own copy of the graph.
+    graph_transform_observer.GraphTransformObserver(
+        graph_module, "mark_embedded_constants"
+    ).apply_graph_pass(
+        functools.partial(
+            mark_embedded_constants.apply,
+            skip_targets={
+                str(node.target)
+                for node, device in devices.items()
+                if node.op == "get_attr" and device == _CPU
+            },
+        )
+    )
     graph_module.graph.lint()
     _register_output_namedtuple_globals(graph_module)
     graph_module.recompile()
 
     partition_id = 0
     partition_map = {}
+    # Even stages run on CPU and odd stages on TPU. Each node runs in the
+    # earliest stage after its inputs, so that CPU work that does not depend on
+    # TPU results is batched instead of splitting TPU programs.
+    stages = {}
+    last_random_ops = {}
+    # Maps device-agnostic nodes to the partition id at their position.
+    deferred = {}
     for node in graph_module.graph.nodes:
-      if node.op in ("placeholder", "output"):
+      # split_module does not partition these.
+      if node.op in ("placeholder", "get_attr", "output"):
         continue
+
+      device = devices[node]
+      inputs = list(node.all_input_nodes)
+      if torch.Tag.nondeterministic_seeded in getattr(node.target, "tags", ()):
+        # Random ops on each device keep their order to draw the same values.
+        inputs.append(last_random_ops.get(device))
+        last_random_ops[device] = node
+      stage = max((stages[n] for n in inputs if n in stages), default=0)
+      if device is not None and (stage % 2 == 1) != (device == _TPU):
+        stage += 1
+      stages[node] = stage
 
       in_spmd_safe_region = bool(
           isinstance(getattr(node, "meta", None), dict)
@@ -681,14 +867,44 @@ class SplitCompiler(compiler.Compiler):
         # Make sure the next node doesn't end up in a partition with the
         # collective.
         partition_id += 1
+      elif device is None:
+        deferred[node] = partition_id
       else:
         partition_map[node] = partition_id
 
-    num_partitions = len(set(partition_map.values()))
-
+    # Device-agnostic nodes, e.g. constant expressions that TPU programs can
+    # embed, run in the partition of their first user. Those without users in
+    # partitions, e.g. returned SymInts, default to TPU. TPU programs cannot
+    # return values other than tensors, such as SymInts, so those are recomputed
+    # in every partition that uses them.
+    keys = {node: (partition_map[node], stages[node]) for node in partition_map}
+    for node in reversed(deferred):
+      user_keys = sorted({keys[user] for user in node.users if user in keys})
+      keys[node] = (
+          user_keys[0] if user_keys else (deferred[node], max(stages[node], 1))
+      )
+      if _tensor_device_types(node):
+        continue
+      for key in user_keys[1:]:
+        with graph_module.graph.inserting_after(node):
+          duplicate = graph_module.graph.node_copy(node)
+        node.replace_all_uses_with(
+            duplicate,
+            delete_user_cb=lambda user, key=key: keys.get(user) == key,
+        )
+        keys[duplicate] = key
+    # Sorting the keys numbers partitions in an order that respects their
+    # dependencies.
+    partition_ids = {key: i for i, key in enumerate(sorted(set(keys.values())))}
+    cpu_submods = {
+        f"submod_{i}"
+        for (_, stage), i in partition_ids.items()
+        if stage % 2 == 0
+    }
     logging.info(
-        "Split graph into %d partitions",
-        num_partitions,
+        "Split graph into %d partitions, %d of which run on CPU",
+        len(partition_ids),
+        len(cpu_submods),
     )
 
     # WARNING: agents tend to fix regressions by falling back to the base_compiler
@@ -707,8 +923,9 @@ class SplitCompiler(compiler.Compiler):
     split_gm = split_module(
         graph_module,
         None,  # type: ignore[arg-type]
-        lambda node: partition_map[node],
+        lambda node: partition_ids[keys[node]],
     )
+    _call_partitions_in_order(split_gm)
     _register_output_namedtuple_globals(split_gm)
     graph_transform_observer.GraphTransformObserver(
         split_gm, "sink_get_attr_constants"
@@ -733,7 +950,11 @@ class SplitCompiler(compiler.Compiler):
         self.base_compiler.__call__, is_fwd=is_fwd, **kwargs
     )
     submod_compiler = _SubmodCompiler(
-        split_gm, compiler_fn, fake_mode, base_module_name=module_name
+        split_gm,
+        compiler_fn,
+        fake_mode,
+        base_module_name=module_name,
+        cpu_submods=cpu_submods,
     )
 
     # See NOTE: [Deferring tensor pack/unpack hooks until runtime]
