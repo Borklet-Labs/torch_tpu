@@ -562,6 +562,9 @@ ACCURACY_OVERRIDES_VS_GPU = {
         torch.int8: {"atol": 3.6e-5},
         torch.uint8: {"atol": 3.6e-5},
     },
+    "torch._scaled_mm": {
+        torch.float8_e4m3fn: {"rtol": 9.4e-3, "atol": 4.7e-3},
+    },
     "torch.ops.aten._safe_softmax.default": {
         torch.float16: {"atol": 5.9e-4},
     },
@@ -833,6 +836,9 @@ ACCURACY_OVERRIDES_VS_GPU_COMPILED = {
         torch.int64: {"atol": 3.6e-5},
         torch.int8: {"atol": 3.6e-5},
         torch.uint8: {"atol": 3.6e-5},
+    },
+    "torch._scaled_mm": {
+        torch.float8_e4m3fn: {"rtol": 9.4e-3, "atol": 4.7e-3},
     },
     # go/keep-sorted end
 }  # end of ACCURACY_OVERRIDES_VS_GPU_COMPILED
@@ -3481,6 +3487,31 @@ class TestOps(op_testing.OpInfoTestBase):
 
   def test_rsub(self):
     self.do_test_op("rsub")
+
+  # Recorded on Hopper as only there do the GPU kernels honor use_fast_accum
+  # for rowwise scaling: cuBLASLt implements it, whereas Blackwell runs CUTLASS
+  # kernels that ignore it.
+  @op_testing.record_gpu_goldens_on(op_testing.GPU_SM90)
+  def test_scaled_mm_rowwise(self):
+    self.do_test_op(
+        "torch._scaled_mm",
+        variant_test_name="rowwise",
+        exclude_dtypes={
+            "cpu": ALL_NUMERIC_DTYPES,
+            "gpu": UNQUANTIZED_NUMERIC_DTYPES,
+        },
+        # aten._scaled_mm.out only supports tensorwise scaling in PyTorch.
+        check_out_variant=False,
+        check_grad=False,
+        # TODO(amainz): Bounded dynamism requires synchronized scale/operand
+        # dimension marking and dynamic scale reshape support.
+        check_dynamism=False,
+        # TODO(amainz): Test the use_fast_accum samples once cl/990400735 lets
+        # TorchTPU's torch._scaled_mm accept use_fast_accum=True.
+        skip_if=lambda _, __, op_input: op_input.kwargs["use_fast_accum"],
+        # Cover all 7 samples regardless of --max_samples_per_op_dtype.
+        max_samples_per_op_dtype=7,
+    )
 
   def test_scaled_mm_v2(self):
     self.do_test_op(

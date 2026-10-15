@@ -19,7 +19,7 @@ See go/torch-tpu-op-test for more details.
 
 import builtins
 import collections
-from collections.abc import Callable, Iterable, Mapping, MutableMapping, MutableSequence, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, MutableMapping, MutableSequence, Sequence
 import copy
 import dataclasses
 import enum
@@ -1321,6 +1321,118 @@ def _sample_inputs_scaled_mm_v2(
   )
 
 
+# The in_features (K) of the Llama3-8B linear layers, whose (in_features,
+# out_features) are wq/wo (4096, 4096), wk/wv (4096, 1024), w1/w3 (4096, 14336)
+# and w2 (14336, 4096).
+_LLAMA3_8B_DIM: Final[int] = 4096
+_LLAMA3_8B_FFN_DIM: Final[int] = 14336
+
+
+def _quantize_rowwise_to_float8(
+    hp: torch.Tensor,
+    float8_dtype: torch.dtype,
+    *,
+    round_scales_to_power_of_2: bool,
+) -> tuple[torch.Tensor, torch.Tensor]:
+  """Quantizes each row of `hp` to `float8_dtype` like torchao's Float8Linear.
+
+  Mirrors torchao's rowwise scaling (`hp_tensor_to_float8_dynamic` with
+  `axiswise_dim=-1`): the scale of each row maps its amax to the largest finite
+  `float8_dtype` value, and the scaled values saturate before the cast.
+
+  Args:
+    hp: The high-precision tensor of rank >= 2 and shape (..., K) to quantize.
+    float8_dtype: The float8 dtype to quantize to.
+    round_scales_to_power_of_2: Whether to round the scales down to a power of
+      2, as torchao's ROWWISE recipe does by default.
+
+  Returns:
+    The quantized tensor, and the float32 dequantization scales of shape
+    (*hp.shape[:-1], 1), i.e. the reciprocals of the quantization scales, which
+    is what `torch._scaled_mm` expects.
+  """
+  float8_max = torch.finfo(float8_dtype).max
+  amax = hp.abs().amax(dim=-1, keepdim=True).to(torch.float32)
+  scale = float8_max / amax.clamp(min=1e-12)
+  if round_scales_to_power_of_2:
+    scale = torch.exp2(torch.floor(torch.log2(scale)))
+  data = (hp.to(torch.float32) * scale).clamp(-float8_max, float8_max)
+  return data.to(float8_dtype), scale.reciprocal()
+
+
+def _sample_inputs_scaled_mm_rowwise(
+    op_info: OpInfo,
+    device: torch.device | str,
+    dtype: torch.dtype,
+    requires_grad: bool = False,
+    **kwargs: Any,
+) -> Iterator[SampleInput]:
+  """Generates rowwise-scaled torch._scaled_mm inputs like torchao's.
+
+  Each sample quantizes activations `x` of shape (M, K) and a weight `w` of
+  shape (N, K) row by row and computes `x @ w.t()`, the forward of torchao's
+  Float8Linear. Hence mat2 is column-major, as the GPU kernels require.
+
+  The Llama3-8B samples keep the real accumulation depth K, which drives the
+  accumulated rounding error, but slice M and N to keep the golden files small.
+  """
+  del op_info, requires_grad, kwargs
+  if dtype != torch.float8_e4m3fn:
+    return
+
+  def make_sample(
+      name: str,
+      m: int,
+      k: int,
+      n: int,
+      *,
+      use_fast_accum: bool = False,
+      out_dtype: torch.dtype = torch.bfloat16,
+      with_bias: bool = False,
+      round_scales_to_power_of_2: bool = True,
+  ) -> SampleInput:
+    x_fp8, x_scale = _quantize_rowwise_to_float8(
+        torch.randn(m, k, device=device),
+        dtype,
+        round_scales_to_power_of_2=round_scales_to_power_of_2,
+    )
+    w_fp8, w_scale = _quantize_rowwise_to_float8(
+        torch.randn(n, k, device=device) * k**-0.5,
+        dtype,
+        round_scales_to_power_of_2=round_scales_to_power_of_2,
+    )
+    sample_kwargs = {"out_dtype": out_dtype, "use_fast_accum": use_fast_accum}
+    if with_bias:
+      # The GPU kernels require the bias dtype to match a bfloat16 output.
+      sample_kwargs["bias"] = torch.randn(n, dtype=out_dtype, device=device)
+    return SampleInput(
+        x_fp8,
+        args=(w_fp8.t(), x_scale, w_scale.t()),
+        kwargs=sample_kwargs,
+        name=name,
+    )
+
+  # wq/wk/wv/wo/w1/w3 contract over the model dim and w2 over the FFN dim.
+  llama3_8b_shapes = ((16, _LLAMA3_8B_DIM, 32), (16, _LLAMA3_8B_FFN_DIM, 16))
+  for m, k, n in llama3_8b_shapes:
+    yield make_sample(f"llama3_8b_k{k}", m, k, n)
+  yield make_sample("bias", 32, 128, 48, with_bias=True)
+  yield make_sample(
+      "float32_out",
+      32,
+      256,
+      96,
+      out_dtype=torch.float32,
+      round_scales_to_power_of_2=False,
+  )
+  yield make_sample("unaligned_m", 17, 128, 32)
+  # torchao's Float8Linear enables use_fast_accum in the forward by default.
+  for m, k, n in llama3_8b_shapes:
+    yield make_sample(
+        f"llama3_8b_k{k}_fast_accum", m, k, n, use_fast_accum=True
+    )
+
+
 def _sample_inputs_safe_softmax(
     opinfo: Any,
     device: str | torch.device,
@@ -2388,6 +2500,19 @@ _ADDITIONAL_TORCH_TPU_OPS: Final[Sequence[OpInfo]] = [
         dtypes=common_dtype.floating_types_and(torch.bfloat16, torch.float16),
         sample_inputs_func=_sample_inputs_fused_sgd,
         supports_out=False,
+        supports_autograd=False,
+    ),
+    OpInfo(
+        "torch._scaled_mm",
+        # PyTorch's own torch._scaled_mm OpInfo only covers tensorwise scaling.
+        # Note that _get_op("torch._scaled_mm") without a variant_test_name
+        # returns this OpInfo, since it precedes PyTorch's in _KNOWN_OPS.
+        variant_test_name="rowwise",
+        op=torch._scaled_mm,  # pylint: disable=protected-access
+        dtypes=common_dtype._dispatch_dtypes((torch.float8_e4m3fn,)),  # pylint: disable=protected-access
+        sample_inputs_func=_sample_inputs_scaled_mm_rowwise,
+        supports_out=True,
+        # Quantized primitive without autograd formula.
         supports_autograd=False,
     ),
     OpInfo(
