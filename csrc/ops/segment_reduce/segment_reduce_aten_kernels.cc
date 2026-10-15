@@ -508,12 +508,8 @@ at::Tensor AtenSegmentReduce(const at::Tensor& data, c10::string_view reduce,
               << data.size(d) << " and " << segment_info.size(d);
         }
 
-        int64_t num_segments = 0;
-        if (lengths.has_value()) {
-          num_segments = lengths->size(-1);
-        } else {
-          num_segments = offsets->size(-1) - 1;
-        }
+        const int64_t num_segments =
+            lengths.has_value() ? lengths->size(-1) : offsets->size(-1) - 1;
 
         Dimensions output_dims = CopyIntVector(data.sizes());
         output_dims[wrapped_axis] = num_segments;
@@ -542,22 +538,19 @@ at::Tensor AtenSegmentReduce(const at::Tensor& data, c10::string_view reduce,
               has_initial ? std::make_optional(inputs[2]) : std::nullopt);
         };
 
-        if (has_initial) {
-          TT_ASSIGN_OR_THROW(
-              DeviceBufferRef out_buf,
-              (DispatchOp<3>(std::move(op_builder),
-                             {data, segment_info, *initial_tensor},
-                             {.out_dtype = element_type,
-                              .out_dims = output_dims,
-                              .op_param_cache_keys = std::move(param_keys)})));
-          return MakeTensor(out_buf);
-        }
         TT_ASSIGN_OR_THROW(
             DeviceBufferRef out_buf,
-            (DispatchOp<2>(std::move(op_builder), {data, segment_info},
-                           {.out_dtype = element_type,
-                            .out_dims = output_dims,
-                            .op_param_cache_keys = std::move(param_keys)})));
+            has_initial ? (DispatchOp<3>(
+                              std::move(op_builder),
+                              {data, segment_info, *initial_tensor},
+                              {.out_dtype = element_type,
+                               .out_dims = output_dims,
+                               .op_param_cache_keys = std::move(param_keys)}))
+                        : (DispatchOp<2>(
+                              std::move(op_builder), {data, segment_info},
+                              {.out_dtype = element_type,
+                               .out_dims = output_dims,
+                               .op_param_cache_keys = std::move(param_keys)})));
         return MakeTensor(out_buf);
       });
 }

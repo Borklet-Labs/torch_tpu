@@ -24,7 +24,6 @@
 #include "ATen/core/TensorBody.h"
 #include "absl/status/statusor.h"
 #include "c10/core/Device.h"
-#include "c10/util/Exception.h"
 #include "csrc/common/cache_key.h"
 #include "csrc/common/device_type.h"
 #include "csrc/common/dimension_types.h"

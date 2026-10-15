@@ -149,7 +149,7 @@ at::Tensor& AtenEluOut(const at::Tensor& input, const at::Scalar& alpha,
 
         auto op_builder = [](FixedSizeSpan<mlir::MlirOp, 4> inputs)
             -> absl::StatusOr<mlir::MlirOp> {
-          auto [input, alpha, scale, input_scale] = inputs;
+          auto& [input, alpha, scale, input_scale] = inputs;
           return BuildEluShlo(input, alpha, scale, input_scale);
         };
 
@@ -188,8 +188,8 @@ at::Tensor& AtenEluBackwardGradInput(
 
         auto op_builder = [is_result](FixedSizeSpan<mlir::MlirOp, 5> inputs)
             -> absl::StatusOr<mlir::MlirOp> {
-          auto [grad_output_op, self_or_result_op, alpha_op, scale_op,
-                input_scale_op] = inputs;
+          auto& [grad_output_op, self_or_result_op, alpha_op, scale_op,
+                 input_scale_op] = inputs;
           return BuildEluBackwardGradInputShlo(
               grad_output_op, self_or_result_op, alpha_op, scale_op,
               input_scale_op, is_result);

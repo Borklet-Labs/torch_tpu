@@ -108,7 +108,7 @@ at::Tensor& AtenSoftplusOut(const at::Tensor& self, const at::Scalar& beta,
 
         auto op_builder = [](FixedSizeSpan<mlir::MlirOp, 3> inputs)
             -> absl::StatusOr<mlir::MlirOp> {
-          auto [self, beta, threshold] = inputs;
+          auto& [self, beta, threshold] = inputs;
           return BuildSoftplusShlo(self, beta, threshold);
         };
 
@@ -159,7 +159,7 @@ at::Tensor& AtenSoftplusBackwardGradInput(const at::Tensor& grad_output,
 
         auto op_builder = [](FixedSizeSpan<mlir::MlirOp, 4> inputs)
             -> absl::StatusOr<mlir::MlirOp> {
-          auto [grad_output, self, beta, threshold] = inputs;
+          auto& [grad_output, self, beta, threshold] = inputs;
           return BuildSoftplusBackwardShlo(grad_output, self, beta, threshold);
         };
 
