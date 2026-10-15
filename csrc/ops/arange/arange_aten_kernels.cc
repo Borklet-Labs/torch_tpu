@@ -34,9 +34,7 @@
 #include "csrc/common/error_utils.h"
 #include "csrc/common/fixed_size_span.h"
 #include "csrc/common/to_string.h"
-#include "csrc/eager/device_buffer.h"
 #include "csrc/eager/op_dispatcher.h"
-#include "csrc/eager/tensor_to_buffer.h"
 #include "csrc/ops/arange/arange.h"
 #include "csrc/ops/macros/kernel.h"
 #include "csrc/ops/op_builder_utils.h"
@@ -216,15 +214,11 @@ at::Tensor& AtenArangeStartOut(const at::Scalar& start, const at::Scalar& end,
                                           step_op);
         };
 
-        TT_ASSIGN_OR_THROW(
-            auto result_buf,
-            DispatchOp<3>(std::move(op_builder),
-                          {start_tensor, end_tensor, step_tensor},
-                          {.out_dtype = output_mlir_type,
-                           .out_dims = {num_elements},
-                           .op_param_cache_keys = std::move(param_keys)}));
-
-        TT_THROW_IF_ERROR(AssignBufferToAtTensor(std::move(result_buf), out));
+        TT_THROW_IF_ERROR(DispatchOpOut<3>(
+            std::move(op_builder), {start_tensor, end_tensor, step_tensor}, out,
+            {.out_dtype = output_mlir_type,
+             .out_dims = {num_elements},
+             .op_param_cache_keys = std::move(param_keys)}));
       });
   return out;
 }

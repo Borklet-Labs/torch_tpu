@@ -16,7 +16,6 @@
 
 #include "csrc/ops/masked_select/masked_select_aten_kernels.h"
 
-#include <cstdint>
 #include <optional>
 
 #include "ATen/core/TensorBody.h"
@@ -26,7 +25,6 @@
 #include "csrc/common/device_type.h"
 #include "csrc/common/error_utils.h"
 #include "csrc/common/to_string.h"
-#include "csrc/eager/tensor_to_buffer.h"
 #include "csrc/ops/copy_from/copy_from_aten_kernels.h"
 #include "csrc/ops/gather/gather_aten_kernels.h"
 #include "csrc/ops/macros/kernel.h"
@@ -58,10 +56,7 @@ at::Tensor MaskedSelectFlat(const at::Tensor& self, const at::Tensor& mask) {
                                    self.device(), std::nullopt);
   }
 
-  TT_ASSIGN_OR_THROW(at::Tensor result,
-                     MakeEmptyTensor(indices.sizes(), self_flat.scalar_type(),
-                                     self_flat.device()));
-  return AtenGatherOut(self_flat, 0, indices, /*sparse_grad=*/false, result);
+  return AtenGather(self_flat, 0, indices, /*sparse_grad=*/false);
 }
 
 // PrepareOutTensor validates that the out tensor is on TPU, resizes it to match

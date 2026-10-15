@@ -248,8 +248,7 @@ absl::StatusOr<Dimensions> ValidateLinearInputs(
   }
 
   if (bias.has_value() && bias->defined()) {
-    absl::StatusOr<Dimensions> broadcasted_dims =
-        InferSize(bias->sizes(), output_dims);
+    absl::StatusOr<Dimensions> broadcasted_dims = InferSize(*bias, output_dims);
     TT_RET_CHECK(broadcasted_dims.ok() && *broadcasted_dims == output_dims,
                  error::kInvalidArgument)
         << "expected the bias tensor to be broadcastable to the output shape "

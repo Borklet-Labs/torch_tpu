@@ -36,7 +36,6 @@
 #include "csrc/common/error_utils.h"
 #include "csrc/common/to_string.h"
 #include "csrc/common/utils.h"
-#include "csrc/eager/device_buffer.h"
 #include "csrc/eager/op_dispatcher.h"
 #include "csrc/eager/tensor_to_buffer.h"
 #include "csrc/ops/macros/kernel.h"
@@ -258,14 +257,10 @@ absl::Status ReplicationPadHelper(
     return output;
   };
 
-  TT_ASSIGN_OR_RETURN(
-      auto out_buf,
-      (DispatchOp<1>(std::move(op_builder), self,
-                     {.out_dtype = element_type,
-                      .out_dims = CopyIntVector(out.sizes()),
-                      .op_param_cache_keys = std::move(param_keys)})));
-
-  return AssignBufferToAtTensor(std::move(out_buf), out);
+  return DispatchOpOut<1>(std::move(op_builder), self, out,
+                          {.out_dtype = element_type,
+                           .out_dims = CopyIntVector(out.sizes()),
+                           .op_param_cache_keys = std::move(param_keys)});
 }
 
 absl::Status Validate3DPaddingIsValid(absl::Span<const int64_t> grad_output,
@@ -388,8 +383,7 @@ at::Tensor AtenReplicationPad2dBackward(const at::Tensor& grad_output,
        IgnoreInCacheKey(padding,
                         "Delegates to AtenReplicationPad2dBackwardGradInput")),
       {
-        Dimensions gidims(grad_output.sizes().begin(),
-                          grad_output.sizes().end());
+        Dimensions gidims = CopyIntVector(grad_output.sizes());
         TT_CHECK_THROW(  // ERROR_COV_INFEASIBLE=Current usages are
                          // guaranteed to be within range.
             gidims.size() > 2, error::kInvalidArgument)
@@ -437,8 +431,7 @@ at::Tensor AtenReplicationPad3dBackward(const at::Tensor& grad_output,
        IgnoreInCacheKey(padding,
                         "Delegates to AtenReplicationPad3dBackwardGradInput")),
       {
-        Dimensions gidims(grad_output.sizes().begin(),
-                          grad_output.sizes().end());
+        Dimensions gidims = CopyIntVector(grad_output.sizes());
         TT_CHECK_THROW(  // ERROR_COV_INFEASIBLE=Current usages are guaranteed
                          // to be within range.
             gidims.size() > 3, error::kInvalidArgument)

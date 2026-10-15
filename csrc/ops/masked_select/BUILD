@@ -33,7 +33,6 @@ torch_tpu_cc_library(
         "//csrc/common:dtype",
         "//csrc/common:error_utils",
         "//csrc/common:to_string",
-        "//csrc/eager:tensor_to_buffer",
         "//csrc/ops:nullary_aten_kernels",
         "//csrc/ops:op_names",
         "//csrc/ops/copy_from:copy_from_aten_kernels",
