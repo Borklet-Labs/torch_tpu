@@ -5019,6 +5019,46 @@ module {
     ):
       torch.tpu.allow_excess_precision = not current
 
+  @et.why_tpu_only("TPU fallback mechanism when CPU fallback is disabled.")
+  def test_unimplemented_op_cpu_fallback_disabled(self):
+    """Tests that missing ops raise RuntimeError when CPU fallback is disabled."""
+    x = torch.randn(2, 2, device=et.device())
+    orig = execution_mode.enable_cpu_fallback
+    try:
+      execution_mode.enable_cpu_fallback = False
+      with et.assert_raises_message(
+          RuntimeError,
+          tpu="""operator 'aten::linalg_matrix_exp' is not implemented for TPU. Please file a feature request""",
+      ):
+        torch.ops.aten.matrix_exp(x)
+    finally:
+      execution_mode.enable_cpu_fallback = orig
+
+  @et.why_tpu_only(
+      "TPU _sparse_dense_matmul Meta kernel embedding_table 2D shape check."
+  )
+  def test_sparse_dense_matmul_embedding_table_not_2d(self):
+    """Tests that _sparse_dense_matmul validates embedding_table dimension."""
+    row_pointers = torch.empty(2, dtype=torch.int32, device="meta")
+    embedding_ids = torch.empty(2, dtype=torch.int32, device="meta")
+    sample_ids = torch.empty(2, dtype=torch.int32, device="meta")
+    gains = torch.empty(2, dtype=torch.float32, device="meta")
+    embedding_table = torch.empty(16, dtype=torch.float32, device="meta")
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""expected embedding_table to be a 2D tensor, got a 1D tensor of shape [16]""",
+    ):
+      torch.ops.tpu._sparse_dense_matmul(
+          row_pointers,
+          embedding_ids,
+          sample_ids,
+          gains,
+          embedding_table,
+          16,
+          16,
+          16,
+      )
+
 
 class PyBindErrorUtilsErrorsTest(et.TpuOnlyErrorTestBase):
 
