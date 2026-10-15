@@ -518,11 +518,7 @@ absl::StatusOr<DeviceBufferRef> ScaledGroupedMm(
     const at::Tensor& scale_b, const std::optional<at::Tensor>& offs,
     const std::optional<at::Tensor>& bias,
     const std::optional<at::Tensor>& scale_result,
-    std::optional<at::ScalarType> out_dtype, bool use_fast_accum,
-    OpParamCacheKeys& param_keys) {
-  TT_RET_CHECK(!use_fast_accum, error::kPythonNotImplementedError)
-      << "use_fast_accum=true is not supported yet";
-
+    std::optional<at::ScalarType> out_dtype, OpParamCacheKeys& param_keys) {
   const bool has_offs = offs.has_value() && offs->defined();
   const bool has_bias = bias.has_value() && bias->defined();
   const bool has_scale_result =
@@ -614,13 +610,14 @@ at::Tensor AtenScaledGroupedMm(const at::Tensor& self, const at::Tensor& mat2,
                                bool use_fast_accum) {
   TT_KERNEL(OpName::kScaledGroupedMm, param_keys,
             (self, mat2, scale_a, scale_b, offs, bias, scale_result, out_dtype,
-             use_fast_accum),
+             IgnoreInCacheKey(use_fast_accum, "Doesn't affect SHLO")),
             {
+              // use_fast_accum is accepted and ignored: the MXU always
+              // accumulates in F32.
               TT_ASSIGN_OR_THROW(
                   auto result_buffer,
                   ScaledGroupedMm(self, mat2, scale_a, scale_b, offs, bias,
-                                  scale_result, out_dtype, use_fast_accum,
-                                  param_keys));
+                                  scale_result, out_dtype, param_keys));
               return MakeTensor(result_buffer);
             });
 }
