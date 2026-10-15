@@ -32,7 +32,6 @@
 #include "csrc/common/error_utils.h"
 #include "csrc/common/to_string.h"
 #include "csrc/common/utils.h"
-#include "csrc/eager/device_buffer.h"
 #include "csrc/eager/op_dispatcher.h"
 #include "csrc/eager/tensor_to_buffer.h"
 #include "csrc/ops/macros/kernel.h"
@@ -306,14 +305,10 @@ absl::Status ReflectionPadHelper(
     return output;
   };
 
-  TT_ASSIGN_OR_RETURN(
-      auto out_buf,
-      (DispatchOp<1>(std::move(op_builder), self,
-                     {.out_dtype = element_type,
-                      .out_dims = CopyIntVector(out.sizes()),
-                      .op_param_cache_keys = std::move(param_keys)})));
-
-  return AssignBufferToAtTensor(std::move(out_buf), out);
+  return DispatchOpOut<1>(std::move(op_builder), self, out,
+                          {.out_dtype = element_type,
+                           .out_dims = CopyIntVector(out.sizes()),
+                           .op_param_cache_keys = std::move(param_keys)});
 }
 
 }  // namespace

@@ -222,10 +222,8 @@ at::Tensor& AtenArgminOut(const at::Tensor& self, c10::optional<int64_t> dim,
 at::Tensor AtenMax(const at::Tensor& self) {
   TT_KERNEL(OpName::kMax, _, (self), {
     TT_THROW_IF_ERROR(ValidateNotZeroElementTensor(self));
-    TT_ASSIGN_OR_THROW(at::Tensor max,
-                       MakeEmptyTensor({}, self.scalar_type(), self.device()));
-    TT_THROW_IF_ERROR(UnaryMinMax(self, MinMaxOp::kMax, max));
-    return max;
+    TT_ASSIGN_OR_THROW(auto result, DispatchUnaryMinMax(self, MinMaxOp::kMax));
+    return MakeTensor(result);
   });
 }
 
@@ -252,10 +250,8 @@ std::tuple<at::Tensor&, at::Tensor&> AtenMaxDimMax(const at::Tensor& self,
 at::Tensor AtenMin(const at::Tensor& self) {
   TT_KERNEL(OpName::kMin, _, (self), {
     TT_THROW_IF_ERROR(ValidateNotZeroElementTensor(self));
-    TT_ASSIGN_OR_THROW(at::Tensor min,
-                       MakeEmptyTensor({}, self.scalar_type(), self.device()));
-    TT_THROW_IF_ERROR(UnaryMinMax(self, MinMaxOp::kMin, min));
-    return min;
+    TT_ASSIGN_OR_THROW(auto result, DispatchUnaryMinMax(self, MinMaxOp::kMin));
+    return MakeTensor(result);
   });
 }
 

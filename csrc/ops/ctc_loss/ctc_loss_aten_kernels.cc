@@ -1264,27 +1264,8 @@ CtcLossForwardInternal(
                         {log_probs, targets, input_lengths, target_lengths},
                         std::move(options))));
 
-  TT_ASSIGN_OR_RETURN(
-      at::Tensor loss_reduced,
-      MakeEmptyTensor(loss_reduced_dims, log_probs.scalar_type(),
-                      log_probs.device()));
-  TT_RETURN_IF_ERROR(
-      AssignBufferToAtTensor(std::move(output_bufs[0]), loss_reduced));
-
-  TT_ASSIGN_OR_RETURN(at::Tensor log_alpha,
-                      MakeEmptyTensor(log_alpha_dims, log_probs.scalar_type(),
-                                      log_probs.device()));
-  TT_RETURN_IF_ERROR(
-      AssignBufferToAtTensor(std::move(output_bufs[1]), log_alpha));
-
-  TT_ASSIGN_OR_RETURN(
-      at::Tensor loss_unreduced,
-      MakeEmptyTensor(loss_unreduced_dims, log_probs.scalar_type(),
-                      log_probs.device()));
-  TT_RETURN_IF_ERROR(
-      AssignBufferToAtTensor(std::move(output_bufs[2]), loss_unreduced));
-
-  return std::make_tuple(loss_reduced, log_alpha, loss_unreduced);
+  return std::make_tuple(MakeTensor(output_bufs[0]), MakeTensor(output_bufs[1]),
+                         MakeTensor(output_bufs[2]));
 }
 
 absl::StatusOr<at::Tensor> CtcLossBackwardInternal(
@@ -1352,13 +1333,7 @@ absl::StatusOr<at::Tensor> CtcLossBackwardInternal(
                          target_lengths, loss_unreduced, log_alpha},
                         std::move(options))));
 
-  TT_ASSIGN_OR_RETURN(
-      at::Tensor grad_input,
-      MakeEmptyTensor(grad_input_dims, log_probs_batched.scalar_type(),
-                      log_probs_batched.device()));
-  TT_RETURN_IF_ERROR(
-      AssignBufferToAtTensor(std::move(output_bufs), grad_input));
-  return grad_input;
+  return MakeTensor(output_bufs);
 }
 
 absl::StatusOr<at::Tensor> CtcLossPublicInternal(
@@ -1423,13 +1398,7 @@ absl::StatusOr<at::Tensor> CtcLossPublicInternal(
                         {log_probs, targets, input_lengths, target_lengths},
                         std::move(options))));
 
-  TT_ASSIGN_OR_RETURN(
-      at::Tensor loss_reduced,
-      MakeEmptyTensor(loss_reduced_dims, log_probs.scalar_type(),
-                      log_probs.device()));
-  TT_RETURN_IF_ERROR(
-      AssignBufferToAtTensor(std::move(output_bufs), loss_reduced));
-  return loss_reduced;
+  return MakeTensor(output_bufs);
 }
 
 }  // namespace
@@ -1532,15 +1501,8 @@ std::tuple<at::Tensor, at::Tensor> AtenCtcLossTensor(
                                               target_lengths},
                                              std::move(options))));
 
-        at::Tensor loss = at::empty(loss_dims, log_probs.options());
-        TT_THROW_IF_ERROR(
-            AssignBufferToAtTensor(std::move(output_bufs[0]), loss));
-
-        at::Tensor log_alpha = at::empty(log_alpha_dims, log_probs.options());
-        TT_THROW_IF_ERROR(
-            AssignBufferToAtTensor(std::move(output_bufs[1]), log_alpha));
-
-        return std::make_tuple(loss, log_alpha);
+        return std::make_tuple(MakeTensor(output_bufs[0]),
+                               MakeTensor(output_bufs[1]));
       });
 }
 
@@ -1856,14 +1818,7 @@ at::Tensor AtenCtcLossBackwardTensor(
                                target_lengths, neg_log_likelihood, log_alpha},
                               std::move(options))));
 
-        TT_ASSIGN_OR_THROW(
-            at::Tensor grad_in,
-            MakeEmptyTensor(grad_in_dims, log_probs.scalar_type(),
-                            log_probs.device()));
-        TT_THROW_IF_ERROR(
-            AssignBufferToAtTensor(std::move(output_bufs), grad_in));
-
-        return grad_in;
+        return MakeTensor(output_bufs);
       });
 }
 
