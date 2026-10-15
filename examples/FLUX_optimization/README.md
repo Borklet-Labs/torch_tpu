@@ -29,6 +29,13 @@ and
 [black-forest-labs/flux](https://github.com/black-forest-labs/flux/blob/main/src/flux/)
 repository.
 
+<!-- disableFinding(LINK_RELATIVE_G3DOC) -->
+
+NOTE: We are not tackling distributed in this example. However, it is worth
+mentioning that from our torchtitan experiments, we know that SimpleFSDP
+performs significantly better than FSDPv2. For more details, see the
+[FSDPv2 to SimpleFSDP Example](../fsdp/fsdp_to_simple_fsdp/fsdp_to_simple_fsdp.md).
+
 --------------------------------------------------------------------------------
 
 ## Benchmark Matrix on Cloud TPU Hardware
