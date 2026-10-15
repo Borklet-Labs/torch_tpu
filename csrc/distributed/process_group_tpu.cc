@@ -95,9 +95,9 @@
 #include "csrc/distributed/utils.h"
 #include "csrc/distributed/window_tpu.h"
 #include "csrc/eager/device_buffer.h"
-#include "csrc/eager/events_queue.h"
 #include "csrc/eager/materialize.h"
 #include "csrc/eager/op_dispatcher.h"
+#include "csrc/eager/split_traversal.h"
 #include "csrc/eager/structured_log_buffer.h"
 #include "csrc/eager/tensor_to_buffer.h"
 #include "csrc/ops/macros/kernel.h"
@@ -2256,7 +2256,7 @@ c10::intrusive_ptr<c10d::Work> ProcessGroupTpu::gather(
           }
           TT_THROW_IF_ERROR(
               Materialize(empty_buffers, MaterializationReason::kDistributedOp,
-                          MaterializationMode::kSplitGraph,
+                          GraphSplitMode::kSplitGraph,
                           MaterializationBlockMode::kNonBlocking));
         }
 

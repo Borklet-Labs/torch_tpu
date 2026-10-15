@@ -47,6 +47,7 @@
 #include "csrc/eager/eager_mode.h"
 #include "csrc/eager/events_queue.h"
 #include "csrc/eager/materialize.h"
+#include "csrc/eager/split_traversal.h"
 #include "csrc/eager/structured_log_buffer.h"
 #include "csrc/ops/macros/kernel.h"
 #include "csrc/ops/op_builder_utils.h"
@@ -157,7 +158,7 @@ absl::Status DeferNeverDispatch(absl::Span<const DeviceBufferRef> results,
   }
 
   // materialize.cc and events_queue.h will respect OpSplitMode, even with
-  // MaterializationMode::kFullGraph.
+  // GraphSplitMode::kFullGraph.
   // In DeferNever, we don't block on materialization, we initiate and continue.
   // In DeferNeverAndLaunchBlocking, we first block until the materialization is
   // started, and then block on its completion.
@@ -166,7 +167,7 @@ absl::Status DeferNeverDispatch(absl::Span<const DeviceBufferRef> results,
             : MaterializationBlockMode::kNonBlocking;
   TT_RETURN_IF_ERROR(Materialize(device_buffer_list,
                                  MaterializationReason::kDebugMode,
-                                 MaterializationMode::kFullGraph, block_mode));
+                                 GraphSplitMode::kFullGraph, block_mode));
   if (block) {
     return device_buffer_list->Synchronize();
   }
@@ -184,13 +185,13 @@ bool MustApplyRepeatedOpsHeuristic() {
           detect_repeated_ops == kRepeatedOpAggressiveMode);
 }
 
-MaterializationMode GetRepeatedOpsMaterializationMode() {
+GraphSplitMode GetRepeatedOpsGraphSplitMode() {
   const std::string& detect_repeated_ops =
       GetEnvOnce<kTorchTpuInternalDetectRepeatedOpsEnvVar>().value_or(
           std::string(kRepeatedOpSafeMode));
   return (detect_repeated_ops == kRepeatedOpAggressiveMode)
-             ? MaterializationMode::kFullGraph
-             : MaterializationMode::kSplitGraph;
+             ? GraphSplitMode::kFullGraph
+             : GraphSplitMode::kSplitGraph;
 }
 
 // Handles post-op creation events for the kDeferAndFuse eager mode.
@@ -207,7 +208,7 @@ absl::Status DeferAndFuseDispatch(absl::Span<const DeviceBufferRef> results,
       // Start a background materialization of the current stream; don't
       // wait for it to complete.
       MaterializeCurrentStream(MaterializationReason::kRepeatedOpDetection,
-                               GetRepeatedOpsMaterializationMode());
+                               GetRepeatedOpsGraphSplitMode());
     }
   } else {
     RecordDeferredOpCreated(device_buffer_list);

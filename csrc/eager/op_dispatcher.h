@@ -44,6 +44,7 @@
 #include "csrc/eager/eager_mode.h"
 #include "csrc/eager/events_queue.h"
 #include "csrc/eager/materialize.h"
+#include "csrc/eager/split_traversal.h"
 #include "csrc/eager/structured_log_buffer.h"
 #include "csrc/eager/tensor_to_buffer.h"
 #include "csrc/ops/op_builder_utils.h"
@@ -490,7 +491,7 @@ absl::Status DispatchOpOut(NAryMlirOpBuilder<kArity, kNumOutputs> op_builder,
   }
   if (autodonated) {
     auto snapshot_future = MaterializeCurrentStream(
-        MaterializationReason::kDebugMode, MaterializationMode::kFullGraph);
+        MaterializationReason::kDebugMode, GraphSplitMode::kFullGraph);
     if (GetEagerMode() == EagerMode::kDeferNeverAndLaunchBlocking) {
       TT_ASSIGN_OR_RETURN(auto snapshot, snapshot_future.Await());
       TT_RETURN_IF_ERROR(snapshot->Synchronize());

@@ -114,9 +114,9 @@ inline constexpr char kTorchTpuHandshakePortEnvVar[] =
     "TORCH_TPU_INTERNAL_HANDSHAKE_PORT";
 // Specifies the repeated op detection mode. If not set, "safe" mode is used.
 // Supported modes:
-// - "safe": Uses MaterializationMode::kSplitGraph when a repeated sequence is
+// - "safe": Uses GraphSplitMode::kSplitGraph when a repeated sequence is
 // detected.
-// - "aggressive": Uses MaterializationMode::kFullGraph when a repeated sequence
+// - "aggressive": Uses GraphSplitMode::kFullGraph when a repeated sequence
 // is detected.
 // Other values are no-ops.
 inline constexpr char kTorchTpuInternalDetectRepeatedOpsEnvVar[] =

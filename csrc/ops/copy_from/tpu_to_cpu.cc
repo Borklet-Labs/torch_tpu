@@ -42,8 +42,8 @@
 #include "csrc/common/to_string.h"
 #include "csrc/common/utils.h"
 #include "csrc/eager/device_buffer.h"
-#include "csrc/eager/events_queue.h"
 #include "csrc/eager/materialize.h"
+#include "csrc/eager/split_traversal.h"
 #include "csrc/eager/structured_log_buffer.h"
 #include "csrc/eager/tensor_to_buffer.h"
 #include "csrc/ops/as_strided/as_strided_aten_kernels.h"
@@ -157,7 +157,7 @@ absl::Status CopyTpuToCpuStorageDirect(const at::Tensor& src,
     tsl::profiler::TraceMe trace_mat("CopyTpuToCpu::MaterializeBase");
     TT_RETURN_IF_ERROR(TranslateXlaTensorOomError(
         Materialize(base_buf, MaterializationReason::kCpuTransfer,
-                    MaterializationMode::kSplitGraph, block_mode),
+                    GraphSplitMode::kSplitGraph, block_mode),
         dest.scalar_type(), src.sizes()));
   }
   // Copy directly into dest's storage.
@@ -345,7 +345,7 @@ absl::Status CopyTpuToCpuWithCpuConversion(const at::Tensor& src,
     tsl::profiler::TraceMe trace_mat("CopyTpuToCpu::MaterializeBase");
     TT_RETURN_IF_ERROR(TranslateXlaTensorOomError(
         Materialize(base_buf, MaterializationReason::kCpuTransfer,
-                    MaterializationMode::kSplitGraph,
+                    GraphSplitMode::kSplitGraph,
                     MaterializationBlockMode::kBlockUntilStarted),
         dest.scalar_type(), src.sizes()));
   }

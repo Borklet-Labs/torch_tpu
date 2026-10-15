@@ -51,9 +51,9 @@
 #include "csrc/common/error_utils.h"
 #include "csrc/eager/device_buffer.h"
 #include "csrc/eager/eager_mode.h"
-#include "csrc/eager/events_queue.h"
 #include "csrc/eager/materialize.h"
 #include "csrc/eager/op_dispatcher.h"
+#include "csrc/eager/split_traversal.h"
 #include "csrc/eager/structured_log_buffer.h"
 #include "csrc/eager/tensor_to_buffer.h"
 #include "csrc/ops/macros/kernel.h"
@@ -290,7 +290,7 @@ absl::Status DeviceGeneratorState::MaybeMaterializeDeviceStateTensor(
       should_block ? MaterializationBlockMode::kBlockUntilStarted
                    : MaterializationBlockMode::kNonBlocking;
   TT_RETURN_IF_ERROR(Materialize(buf, MaterializationReason::kExplicitSync,
-                                 MaterializationMode::kSplitGraph, block_mode));
+                                 GraphSplitMode::kSplitGraph, block_mode));
   if (should_block) {
     TT_RETURN_IF_ERROR(buf.Synchronize());
   }

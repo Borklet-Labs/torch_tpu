@@ -27,6 +27,20 @@
 
 namespace torch_tpu {
 
+// A configuration setting for determining if additional split points should be
+// considered when splitting a traversal.
+enum class GraphSplitMode {
+  // No additional split points beyond those required by OpSplitMode are added.
+  // This may result in large, M-to-N graphs.
+  kFullGraph,
+  // All outputs are split into single-output graphs, with additional graphs
+  // added to prevent recomputation or out-of-order execution.
+  // Exception: if no additional outputs are required to prevent recomputation
+  // or out-of-order execution, no split is made, and the behavior is the
+  // same as kFullGraph.
+  kSplitGraph,
+};
+
 // This function splits a given traversal into multiple traversals by applying
 // materialization heuristics for determining internal materialization/split
 // points. The returned traversals are guaranteed to have only one output, and

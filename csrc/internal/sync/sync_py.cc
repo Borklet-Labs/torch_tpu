@@ -29,8 +29,8 @@
 #include "csrc/common/error_utils.h"
 #include "csrc/common/pybind_error_utils.h"
 #include "csrc/eager/device_buffer.h"
-#include "csrc/eager/events_queue.h"
 #include "csrc/eager/materialize.h"
+#include "csrc/eager/split_traversal.h"
 #include "csrc/eager/structured_log_buffer.h"
 #include "csrc/eager/tensor_to_buffer.h"
 #include "csrc/internal/sync/sync.h"
@@ -116,7 +116,7 @@ void PySyncSpanNoWait(absl::Span<const at::Tensor> tensors_span) {
   // wait until they reach the full is_materialized() state.
   TT_THROW_IF_ERROR(Materialize(buffer_refs,
                                 MaterializationReason::kExplicitSync,
-                                MaterializationMode::kSplitGraph,
+                                GraphSplitMode::kSplitGraph,
                                 MaterializationBlockMode::kBlockUntilStarted));
 }
 
@@ -214,7 +214,7 @@ bool TrySyncSingleTensorFast(PyObject* ptr, bool wait) {
     // just don't wait until they reach the full is_materialized() state.
     TT_THROW_IF_ERROR(Materialize(
         absl::MakeConstSpan(&buffer_ref, 1),
-        MaterializationReason::kExplicitSync, MaterializationMode::kSplitGraph,
+        MaterializationReason::kExplicitSync, GraphSplitMode::kSplitGraph,
         MaterializationBlockMode::kBlockUntilStarted));
   }
   return true;
@@ -293,7 +293,7 @@ bool TrySyncTensorArrayFast(PyObject* const* items, Py_ssize_t size,
     // don't wait until they reach the full is_materialized() state.
     TT_THROW_IF_ERROR(
         Materialize(buffer_refs, MaterializationReason::kExplicitSync,
-                    MaterializationMode::kSplitGraph,
+                    GraphSplitMode::kSplitGraph,
                     MaterializationBlockMode::kBlockUntilStarted));
   }
   return true;

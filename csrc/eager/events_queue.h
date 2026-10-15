@@ -35,6 +35,7 @@
 #include "csrc/common/context_states.h"
 #include "csrc/eager/device_buffer.h"
 #include "csrc/eager/execution_task.h"
+#include "csrc/eager/split_traversal.h"
 #include "csrc/eager/structured_log_buffer.h"
 #include "xla/future.h"
 
@@ -70,8 +71,6 @@ void RecordAsyncHostToDevice(const DeviceBufferRef& device_buffer_ref);
 // The future should be the return value from a call to PjRtBuffer::ToLiteral.
 void RecordAsyncDeviceToHost(xla::Future<void> to_literal_future);
 
-enum class MaterializationMode { kFullGraph, kSplitGraph };
-
 // An EventSnapshot is a joined XLA future that represents the state of
 // a stream at a particular point in time.
 class EventSnapshot {
@@ -82,7 +81,7 @@ class EventSnapshot {
       c10::DeviceIndex device_index, c10::StreamId stream_id,
       std::vector<SharedDeviceBufferList> must_materialize = {},
       MaterializationReason reason = MaterializationReason::kUnknown,
-      MaterializationMode mode = MaterializationMode::kSplitGraph);
+      GraphSplitMode mode = GraphSplitMode::kSplitGraph);
 
   // Blocks the calling thread until the event snapshot is complete, then
   // surfaces the warnings rerouted from background threads. Must be called on a
@@ -138,7 +137,7 @@ std::vector<PendingEventSnapshot> RecordDeviceSnapshots(
     c10::DeviceIndex device_index,
     std::vector<SharedDeviceBufferList> must_materialize = {},
     MaterializationReason reason = MaterializationReason::kUnknown,
-    MaterializationMode mode = MaterializationMode::kSplitGraph);
+    GraphSplitMode mode = GraphSplitMode::kSplitGraph);
 
 // Returns the CompilationMode for the given EagerMode.
 CompilationMode GetCompilationMode(EagerMode eager_mode);
@@ -148,13 +147,12 @@ CompilationMode GetCompilationMode(EagerMode eager_mode);
 // later behavior.
 struct MaterializationSettings {
   MaterializationSettings(MaterializationReason reason,
-                          MaterializationMode materialization_mode,
-                          EagerMode eager_mode)
-      : materialization_mode(materialization_mode),
+                          GraphSplitMode graph_split_mode, EagerMode eager_mode)
+      : graph_split_mode(graph_split_mode),
         reason(reason),
         compilation_mode(GetCompilationMode(eager_mode)),
         compilation_context(GetCompilationContext()) {}
-  MaterializationMode materialization_mode;
+  GraphSplitMode graph_split_mode;
   MaterializationReason reason;
   CompilationMode compilation_mode;
   // Immutable, shared set of pre-resolved CompilationSpecs for every

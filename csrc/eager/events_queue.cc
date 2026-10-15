@@ -51,6 +51,7 @@
 #include "csrc/eager/device_buffer.h"
 #include "csrc/eager/eager_mode.h"
 #include "csrc/eager/execution_task.h"
+#include "csrc/eager/split_traversal.h"
 #include "csrc/eager/structured_log_buffer.h"
 #include "csrc/ops/op_builder_utils.h"
 #include "csrc/ops/op_names.h"
@@ -333,8 +334,7 @@ class StreamState {
 
   xla::Future<std::shared_ptr<EventSnapshot>> RequestEventSnapshot(
       std::vector<SharedDeviceBufferList> must_materialize,
-      MaterializationReason reason, MaterializationMode mode,
-      EagerMode eager_mode) {
+      MaterializationReason reason, GraphSplitMode mode, EagerMode eager_mode) {
     absl::MutexLock lock(mu_);
     return RequestEventSnapshotLocked(std::move(must_materialize), reason, mode,
                                       eager_mode,
@@ -381,8 +381,7 @@ class StreamState {
     absl::MutexLock lock(mu_);
     RequestEventSnapshotLocked(
         /*must_materialize=*/{}, MaterializationReason::kCompileModeExecution,
-        MaterializationMode::kSplitGraph, eager_mode,
-        std::move(execution_task));
+        GraphSplitMode::kSplitGraph, eager_mode, std::move(execution_task));
   }
 
   xla::Future<void> JoinFutures() {
@@ -434,8 +433,8 @@ class StreamState {
   // Common helper for RequestEventSnapshot and RecordCompiledExecutionTask.
   xla::Future<std::shared_ptr<EventSnapshot>> RequestEventSnapshotLocked(
       std::vector<SharedDeviceBufferList> must_materialize,
-      MaterializationReason reason, MaterializationMode mode,
-      EagerMode eager_mode, std::optional<ExecutionTask> execution_task)
+      MaterializationReason reason, GraphSplitMode mode, EagerMode eager_mode,
+      std::optional<ExecutionTask> execution_task)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
     // Freeze the graph state at the time of the snapshot request.
     // All (non-constant) deferred ops created since the last snapshot must be
@@ -827,7 +826,7 @@ void RecordAsyncDeviceToHost(xla::Future<void> to_literal_future) {
 std::vector<PendingEventSnapshot> RecordDeviceSnapshots(
     c10::DeviceIndex device_index,
     std::vector<SharedDeviceBufferList> must_materialize,
-    MaterializationReason reason, MaterializationMode mode) {
+    MaterializationReason reason, GraphSplitMode mode) {
   ABSL_VLOG(1) << "RecordDeviceSnapshots: device="
                << static_cast<int>(device_index);
   auto eager_mode = GetEagerMode();
@@ -860,7 +859,7 @@ std::vector<PendingEventSnapshot> RecordDeviceSnapshots(
 xla::Future<std::shared_ptr<EventSnapshot>> EventSnapshot::Record(
     c10::DeviceIndex device_index, c10::StreamId stream_id,
     std::vector<SharedDeviceBufferList> must_materialize,
-    MaterializationReason reason, MaterializationMode mode) {
+    MaterializationReason reason, GraphSplitMode mode) {
   auto eager_mode = GetEagerMode();
   if (eager_mode == EagerMode::kInternalCompileFxGraph) {
     return xla::Future<std::shared_ptr<EventSnapshot>>(

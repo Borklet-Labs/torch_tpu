@@ -287,7 +287,7 @@ FilterPlaceholderDependentTraversals(
 }
 
 // Converts a sequence of Traversals to a sequence of ExecutionTasks.
-// If materialization_mode is kSplitGraph, then there may be more returned
+// If graph_split_mode is kSplitGraph, then there may be more returned
 // tasks than there were original traversals; otherwise, there will be exactly
 // one ExecutionTask per traversal (provided all task creations succeed).
 MaterializationStages ApplySplitMode(
@@ -297,7 +297,7 @@ MaterializationStages ApplySplitMode(
   traversals = FilterPlaceholderDependentTraversals(std::move(traversals),
                                                     result.first_error);
 
-  if (settings.materialization_mode == MaterializationMode::kSplitGraph) {
+  if (settings.graph_split_mode == GraphSplitMode::kSplitGraph) {
     tsl::profiler::TraceMe t("SplitTraversal");
     std::vector<absl_nonnull std::unique_ptr<Traversal>> post_split_traversals;
     absl::flat_hash_set<const DeviceBufferList*> scratch_set;
@@ -754,7 +754,7 @@ absl::StatusOr<std::vector<SharedDeviceBufferList>> GetUniqueDeferredNodes(
 template <typename T>
 absl::Status MaterializeSpan(absl::Span<const T> items,
                              MaterializationReason reason,
-                             MaterializationMode materialization_mode,
+                             GraphSplitMode graph_split_mode,
                              MaterializationBlockMode block_mode) {
   if (items.empty()) {
     return absl::OkStatus();
@@ -801,7 +801,7 @@ absl::Status MaterializeSpan(absl::Span<const T> items,
         GetUniqueDeferredNodes(items, node->device_index(), node->stream_id()));
     auto future = EventSnapshot::Record(node->device_index(), node->stream_id(),
                                         std::move(nodes_on_stream), reason,
-                                        materialization_mode);
+                                        graph_split_mode);
     GetMaterializationWorker().EnqueueStream(node->device_index(),
                                              node->stream_id());
 
@@ -823,23 +823,23 @@ void ShutDownMaterializationState() { GetMaterializationWorker().Shutdown(); }
 
 absl::Status Materialize(absl::Span<const SharedDeviceBufferList> nodes,
                          MaterializationReason reason,
-                         MaterializationMode materialization_mode,
+                         GraphSplitMode graph_split_mode,
                          MaterializationBlockMode block_mode) {
-  return MaterializeSpan(nodes, reason, materialization_mode, block_mode);
+  return MaterializeSpan(nodes, reason, graph_split_mode, block_mode);
 }
 
 absl::Status Materialize(absl::Span<const DeviceBufferRef> buffer_refs,
                          MaterializationReason reason,
-                         MaterializationMode materialization_mode) {
-  return Materialize(buffer_refs, reason, materialization_mode,
+                         GraphSplitMode graph_split_mode) {
+  return Materialize(buffer_refs, reason, graph_split_mode,
                      MaterializationBlockMode::kBlockUntilStarted);
 }
 
 absl::Status Materialize(absl::Span<const DeviceBufferRef> buffer_refs,
                          MaterializationReason reason,
-                         MaterializationMode materialization_mode,
+                         GraphSplitMode graph_split_mode,
                          MaterializationBlockMode block_mode) {
-  return MaterializeSpan(buffer_refs, reason, materialization_mode, block_mode);
+  return MaterializeSpan(buffer_refs, reason, graph_split_mode, block_mode);
 }
 
 absl::StatusOr<std::vector<DeviceBufferRef>> EnqueueExecutable(
@@ -886,7 +886,7 @@ absl::StatusOr<std::vector<DeviceBufferRef>> EnqueueExecutable(
 
 xla::Future<std::shared_ptr<EventSnapshot>> MaterializeStream(
     c10::DeviceIndex device_index, c10::StreamId stream_id,
-    MaterializationReason reason, MaterializationMode mode,
+    MaterializationReason reason, GraphSplitMode mode,
     absl::Span<const SharedDeviceBufferList> must_materialize) {
 #ifndef NDEBUG
   for (const auto& node : must_materialize) {
@@ -907,7 +907,7 @@ xla::Future<std::shared_ptr<EventSnapshot>> MaterializeStream(
 
 std::vector<xla::Future<std::shared_ptr<EventSnapshot>>> MaterializeDevice(
     c10::DeviceIndex device_index, MaterializationReason reason,
-    MaterializationMode mode,
+    GraphSplitMode mode,
     absl::Span<const SharedDeviceBufferList> must_materialize) {
 #ifndef NDEBUG
   for (const auto& node : must_materialize) {
@@ -940,7 +940,7 @@ std::vector<xla::Future<std::shared_ptr<EventSnapshot>>> MaterializeDevice(
 }
 
 xla::Future<std::shared_ptr<EventSnapshot>> MaterializeCurrentStream(
-    MaterializationReason reason, MaterializationMode mode,
+    MaterializationReason reason, GraphSplitMode mode,
     absl::Span<const SharedDeviceBufferList> must_materialize) {
   const auto [device_index, stream_id] = GetCurrentDeviceStreamId();
   return MaterializeStream(device_index, stream_id, reason, mode,

@@ -50,6 +50,7 @@ torch_tpu_cc_library(
         "//csrc/eager:device_buffer",
         "//csrc/eager:device_buffer_utils",
         "//csrc/eager:materialize",
+        "//csrc/eager:split_traversal",
         "//csrc/eager:structured_log_buffer",
         "//csrc/eager:tensor_to_buffer",
         "//csrc/eager:traversal",

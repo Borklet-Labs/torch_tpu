@@ -64,8 +64,8 @@
 #include "csrc/common/warnings.h"
 #include "csrc/eager/device_buffer.h"
 #include "csrc/eager/device_buffer_utils.h"
-#include "csrc/eager/events_queue.h"
 #include "csrc/eager/materialize.h"
+#include "csrc/eager/split_traversal.h"
 #include "csrc/eager/structured_log_buffer.h"
 #include "csrc/ops/op_names.h"
 #include "csrc/ops/python_context.h"
@@ -714,19 +714,18 @@ absl::StatusOr<DeviceBufferRef> MaterializeAndReturn(
     // one-stream-per-thread setup).
     if (!base_buffer_ref.is_materializing()) {
       TT_RETURN_IF_ERROR(
-          Materialize(base_buffer_ref, reason, MaterializationMode::kSplitGraph,
+          Materialize(base_buffer_ref, reason, GraphSplitMode::kSplitGraph,
                       MaterializationBlockMode::kBlockUntilStarted));
     }
-    TT_RETURN_IF_ERROR(Materialize(
-        view_buffer_ref, reason, MaterializationMode::kSplitGraph, block_mode));
+    TT_RETURN_IF_ERROR(Materialize(view_buffer_ref, reason,
+                                   GraphSplitMode::kSplitGraph, block_mode));
   } else {
     // Deduplication will happen inside the Materialize() call; this will cover
     // the case where a tensor is a trivial view.
     // If the view is not trivial but the base and view are on the same stream,
     // we can materialize them jointly.
     TT_RETURN_IF_ERROR(Materialize({base_buffer_ref, view_buffer_ref}, reason,
-                                   MaterializationMode::kSplitGraph,
-                                   block_mode));
+                                   GraphSplitMode::kSplitGraph, block_mode));
   }
 
   return view_buffer_ref;
