@@ -3475,6 +3475,158 @@ class OpsUnitTest(TorchTpuVsCpuTestBase):
       self.assert_close_tpu_vs_cpu(compute_out, rtol=1.6e-2, atol=5e-2)
 
   @parameterized.product(
+      compiled=[False, True],
+      out_dtype=[torch.bfloat16, torch.float32],
+      dtype=[torch.float8_e4m3fn, torch.float8_e5m2],
+  )
+  def test_scaled_mm_rank0_tensorwise_scales(self, compiled, out_dtype, dtype):
+    """Tests torch._scaled_mm with rank-0 tensorwise scales.
+
+    torchao's tensorwise float8 training passes 0-d scales, while the other
+    tensorwise tests here use shape-[1] scales.
+
+    Args:
+      compiled: Whether to run under `torch.compile(fullgraph=True)`.
+      out_dtype: Output dtype of the scaled matmul.
+      dtype: Input tensor data type.
+    """
+    torch._dynamo.reset()
+    m, k, n = 32, 64, 48
+    self_fp8 = torch.randn(m, k, dtype=torch.float32).to(dtype)
+    mat2_fp8 = torch.randn(k, n, dtype=torch.float32).to(dtype)
+    scale_a = torch.tensor(1.5, dtype=torch.float32)
+    scale_b = torch.tensor(0.25, dtype=torch.float32)
+
+    def scaled_mm(a, b, sa, sb):
+      return torch._scaled_mm(a, b, sa, sb, out_dtype=out_dtype)
+
+    def compute(device):
+      if device == "cpu":
+        out = (self_fp8.float() * scale_a) @ (mat2_fp8.float() * scale_b)
+        return out.to(out_dtype)
+      fn = (
+          torch.compile(scaled_mm, backend="tpu", fullgraph=True)
+          if compiled
+          else scaled_mm
+      )
+      return fn(
+          self_fp8.to(device),
+          mat2_fp8.to(device),
+          scale_a.to(device),
+          scale_b.to(device),
+      )
+
+    self.assert_close_tpu_vs_cpu(compute, rtol=1.6e-2, atol=5e-2)
+
+  @parameterized.product(
+      out_dtype=[torch.bfloat16, torch.float32],
+      dtype=[torch.float8_e4m3fn, torch.float8_e5m2],
+  )
+  def test_scaled_mm_rowwise_compiled_without_graph_breaks(
+      self, out_dtype, dtype
+  ):
+    """Tests rowwise torch._scaled_mm under torch.compile in a single graph.
+
+    torchao's rowwise float8 training calls torch._scaled_mm with (M, 1) and
+    (1, N) scales from inside compiled models.
+
+    Args:
+      out_dtype: Output dtype of the scaled matmul.
+      dtype: Input tensor data type.
+    """
+    torch._dynamo.reset()
+    m, k, n = 32, 64, 48
+    self_fp8 = torch.randn(m, k, dtype=torch.float32).to(dtype)
+    mat2_fp8 = torch.randn(k, n, dtype=torch.float32).to(dtype)
+    scale_a = torch.rand(m, 1, dtype=torch.float32) + 0.5
+    scale_b = torch.rand(1, n, dtype=torch.float32) + 0.5
+
+    def scaled_mm(a, b, sa, sb):
+      return torch._scaled_mm(a, b, sa, sb, out_dtype=out_dtype)
+
+    def compute(device):
+      if device == "cpu":
+        out = (self_fp8.float() * scale_a) @ (mat2_fp8.float() * scale_b)
+        return out.to(out_dtype)
+      compiled = torch.compile(scaled_mm, backend="tpu", fullgraph=True)
+      return compiled(
+          self_fp8.to(device),
+          mat2_fp8.to(device),
+          scale_a.to(device),
+          scale_b.to(device),
+      )
+
+    self.assert_close_tpu_vs_cpu(compute, rtol=1.6e-2, atol=5e-2)
+
+    explanation = torch._dynamo.explain(scaled_mm)(
+        self_fp8.to("tpu"),
+        mat2_fp8.to("tpu"),
+        scale_a.to("tpu"),
+        scale_b.to("tpu"),
+    )
+    self.assertEqual(explanation.graph_count, 1)
+    self.assertEqual(explanation.graph_break_count, 0)
+
+  @parameterized.product(
+      compiled=[False, True],
+      orig_dtype=[torch.bfloat16, torch.float32],
+      dtype=[torch.float8_e4m3fn, torch.float8_e5m2],
+  )
+  def test_scaled_mm_unit_scales_then_rowwise_post_scale(
+      self, compiled, orig_dtype, dtype
+  ):
+    """Tests the sequence torchao runs for rowwise scales without fast accum.
+
+    In that case torchao's `addmm_float8_unwrapped` calls torch._scaled_mm with
+    rank-0 ones scales and a bf16 output, multiplies the output in place by the
+    (M, 1) x (1, N) inverse scales, and casts to the original dtype.
+
+    Args:
+      compiled: Whether to run under `torch.compile(fullgraph=True)`.
+      orig_dtype: Dtype the result is cast to after the post-scale.
+      dtype: Input tensor data type.
+    """
+    torch._dynamo.reset()
+    m, k, n = 32, 64, 48
+    self_fp8 = torch.randn(m, k, dtype=torch.float32).to(dtype)
+    mat2_fp8 = torch.randn(k, n, dtype=torch.float32).to(dtype)
+    inv_scale_a = torch.rand(m, 1, dtype=torch.float32) + 0.5
+    inv_scale_b = torch.rand(1, n, dtype=torch.float32) + 0.5
+
+    def rowwise_as_tensorwise(a, b, inv_sa, inv_sb):
+      post_inverse_scale = inv_sa * inv_sb
+      ones = inv_sa.new_ones(())
+      out = torch._scaled_mm(
+          a,
+          b,
+          scale_a=ones,
+          scale_b=ones,
+          out_dtype=torch.bfloat16,
+          use_fast_accum=False,
+      )
+      out *= post_inverse_scale
+      return out.to(orig_dtype)
+
+    def compute(device):
+      if device == "cpu":
+        out = (self_fp8.float() @ mat2_fp8.float()).to(torch.bfloat16)
+        out *= inv_scale_a * inv_scale_b
+        return out.to(orig_dtype)
+      fn = (
+          torch.compile(rowwise_as_tensorwise, backend="tpu", fullgraph=True)
+          if compiled
+          else rowwise_as_tensorwise
+      )
+      return fn(
+          self_fp8.to(device),
+          mat2_fp8.to(device),
+          inv_scale_a.to(device),
+          inv_scale_b.to(device),
+      )
+
+    self.assert_close_tpu_vs_cpu(compute, rtol=1.6e-2, atol=5e-2)
+
+  @parameterized.product(
       m=[16, 32],
       n=[16, 32],
       k=[16, 32],
