@@ -2660,6 +2660,7 @@ inline std::ostream& operator<<(std::ostream& os, const OpName op_name) {
     case OpName::kEmptyMemoryFormat:
     case OpName::kEmptyStrided:
     case OpName::kTorchTpuInternalConstant:
+    case OpName::kTorchTpuInternalZeroSize:
       return true;
     default:
       return false;
