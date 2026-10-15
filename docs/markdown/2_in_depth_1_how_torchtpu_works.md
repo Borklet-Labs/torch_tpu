@@ -2,7 +2,7 @@
 torch_tpu_version: 0.1.1.dev20260922
 ---
 
-# How TorchTPU Works
+# How TorchTPU works
 
 ## TPU primer
 
@@ -49,14 +49,14 @@ that executable, and to copy data to-from the TPU. Note that TPU execution is
 asynchronous and the CPU can wait for a TPU result to be ready by waiting on the
 associated PjRTBuffer. StableHLO follows the
 [SSA Paradigm](https://en.wikipedia.org/wiki/Static_single-assignment_form) and,
-hence, doesn’t allow for in-place mutations, i.e., a write operation always
+hence, doesn't allow for in-place mutations, i.e., a write operation always
 produces a new value (at least conceptually). This is particularly significant
-for TorchTPU, which provides familiar Pytorch “view” semantics, including
-mutations, through view decomposition and inversion. The XLA compiler and PjRT
-runtime assume that tensor shapes are known at compile time. This constraint is
-relaxed by [bounded dynamism](./3_practical_examples_6_bounded_dynamism.md)
+for TorchTPU, which provides familiar Pytorch "view" semantics, including
+mutations, through view decomposition and inversion. The XLA compiler assumes
+that tensor shapes are known at compile time. This constraint is relaxed in
+TorchTPU by [bounded dynamism](./3_practical_examples_6_bounded_dynamism.md).
 Recognizing this as a limitation for PyTorch workloads, we have been adding
-support for bounded dynamism, i.e., when the maximum bounds of a shape’s
+support for bounded dynamism, i.e., when the maximum bounds of a shape's
 dimensions are known at compile time, but the actual dimensions are known only
 at runtime.
 
@@ -66,12 +66,12 @@ Following
 [current best practice](https://docs.pytorch.org/tutorials/advanced/extend_dispatcher.html)
 where additional backends are constructed out of tree and registered at runtime,
 we extend the PyTorch dispatcher with a new C++ backend, registered as
-PrivateUse1. Additionally, we have used the standard at::Tensor mechanism to
+`PrivateUse1`. Additionally, we have used the standard `at::Tensor` mechanism to
 define a device-specific implementation of tensor storage (by using the
-c10::UniqueVoidPtr inside c10::StorageImpl).
+`c10::UniqueVoidPtr` inside `c10::StorageImpl`).
 
 We designed TorchTPU with usability in mind. When the user imports PyTorch on a
-TPU machine where the TorchTPU wheel is installed Python will autoload the
+TPU machine where the TorchTPU wheel is installed, Python will autoload the
 TorchTPU wheel. Autoloading the wheel sets up the backend and replaces the
 `PrivateUse1` name with `tpu`. This makes a TorchTPU program no different in
 simple example from the in-tree backends, and a PyTorch program can run on the
@@ -88,19 +88,18 @@ def main():
     word_size = dist.get_world_size()
     ...
     model = model.to(device)
-    …
+    ...
 ```
 
-Or even, because the TPU becomes the current accelerator and `tpu_dist` is the
-default backend for TorchTPU:
+Because the TPU becomes the current accelerator and `tpu_dist` is the default
+backend for TorchTPU, they don't need to be specified explicitly:
 
 ```python
 import torch
 import torch.distributed as dist
 
 def main():
-    device =
-      torch.accelerator.current_accelerator()
+    device = torch.accelerator.current_accelerator()
     dist.init_process_group()
     rank = dist.get_rank()
     word_size = dist.get_world_size()
@@ -111,16 +110,16 @@ def main():
 
 ## Capturing the graph
 
-TorchTPU traces eager ops at the ATen level relying on the PyTorch op dispatch
+TorchTPU traces eager ops at the ATen level, relying on the PyTorch op dispatch
 hooks that are part of the backend infrastructure. TorchTPU ops are constructed
 as StableHLO programs, and passed to XLA singly, or in groups, allowing the
-compiler to performance significant fusion of operations to more effectively
-utilize the hardware. When TorchTPU receives a callback invocation from the
-PyTorch dispatcher the runtime:
+compiler to perform significant fusion of operations to more effectively utilize
+the hardware. When TorchTPU receives a callback invocation from the PyTorch
+dispatcher the runtime:
 
 *   Creates a Deferred Op instance that contains:
     *   A StableHLO builder object, which when invoked returns a StableHLO
-        function implementing the semantics of aten::mul, as shown below (note
+        function implementing the semantics of `aten::mul`, as shown below (note
         that any implicit broadcasting and dtype promotion are handled
         elsewhere)
 
@@ -132,25 +131,25 @@ func.func @main(%arg0: tensor<4x16xbfloat16>, %arg1: tensor<4x16xbfloat16>) -> t
 ```
 
 *   An optional map of static op parameters (e.g., training and momentum for
-    aten::native_batch_norm) to be used for the computation of a cache key;
-*   Return a new at::Tensor with c10::StorageImpl pointing (through indirection)
-    to that Deferred Op instance.
+    `aten::native_batch_norm`) to be used for the computation of a cache key;
+*   Return a new `at::Tensor` with `c10::StorageImpl` pointing (through
+    indirection) to that Deferred Op instance.
 
 Upon reaching an appropriate synchronization point, dependent on the execution
 mode, TorchTPU will:
 
-*   Analyze the region of ops
-*   Determine which ops to materialize into executable code
-*   Create a compilation cache key for the graph
+*   Analyze the region of ops;
+*   Determine which ops to materialize into executable code;
+*   Create a compilation cache key for the graph;
 *   If it already exists in the cache, fetch and dispatch the executable on the
-    TPU
-*   If not asynchronously compile the object, add it to the cache and dispatch
-    for execution
+    TPU;
+*   If it does not exist in the cache, asynchronously compile the object, add it
+    to the cache and dispatch for execution;
 *   Potentially wait for the value to be ready and copy it back, if that was
-    appropriate for the synchronization point reached
+    appropriate for the synchronization point reached.
 
 We discuss mode details on the various modes of execution in
-[execution modes](torch_tpu/docs/source/2_in_depth_3_torchtpu_execution_modes.py).
+[TorchTPU execution model](./2_in_depth_3_torchtpu_execution_modes.md).
 
 ## The TorchTPU compilation cache
 
@@ -175,28 +174,29 @@ are represented by fingerprints combining the structure of the graph, the tensor
 shapes of the inputs/outputs, and the compiler options including the versions of
 the TPU hardware, libtpu, and the PjRt runtime.
 
-## Torch.compile support
+## `torch.compile` support
 
 To maintain a user experience consistent with other hardware supporting
-torch.compile() we register a new TorchDynamo
+`torch.compile()` we register a new TorchDynamo
 [backend](https://docs.pytorch.org/docs/stable/torch.compiler_custom_backends.html),
-which can be used as follows: compiled_model = torch.compile(model,
-backend="tpu")
+which can be used as follows: `compiled_model = torch.compile(model,
+backend="tpu")`.
 
-Dynamo invokes the TorchTPU backend by passing torch.fx.GraphModule plus a list
-of example input tensors. At that point the runtime traces the provided graph as
-if we were in eager mode, but with all ops deferred and no execution on the TPU.
-The runtime generates and compiles a single StableHLO program for the entire FX
-graph and returns a Python callable that wraps the invocation. Note that
-TorchTPU does not use TorchInductor, instead reusing the mature XLA compiler
-stack that has developed alongside the TPU architecture.
+Dynamo invokes the TorchTPU backend by passing `torch.fx.GraphModule` plus a
+list of example input tensors. At that point the runtime traces the provided
+graph as if we were in eager mode, but with all ops deferred and no execution on
+the TPU. The runtime generates and compiles a single StableHLO program for the
+entire FX graph and returns a Python callable that wraps the invocation. Note
+that TorchTPU does not use `TorchInductor`, instead reusing the mature XLA
+compiler stack that has developed alongside the TPU architecture.
 
-# More detail
-In the following documents we’ll go into more detail about the:
+## More detail
+
+In the following documents we'll go into more detail about the:
 
 *   [Memory model](./2_in_depth_2_torchtpu_and_tpu_memory_model.md) supported by
-    the TPU and what its implications are on PyTorch
+    the TPU and what its implications are on PyTorch;
 *   The [Execution Modes](./2_in_depth_3_torchtpu_execution_modes.md) TorchTPU
-    supports
-*   Support for [custom kernels](./2_in_depth_4_custom_kernels.md)
+    supports;
+*   Support for [custom kernels](./2_in_depth_4_custom_kernels.md);
 *   [Distributed execution](./2_in_depth_5_distributed.md) on clusters of TPUs.
