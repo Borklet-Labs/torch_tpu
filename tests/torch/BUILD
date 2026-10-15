@@ -16,17 +16,28 @@
 # chizhang529
 # jialei-chen
 
-load("//build_files:build_defs.bzl", "torch_tpu_package_end")
+load(
+    "//build_files:build_defs.bzl",
+    "torch_tpu_package_end",
+    "torch_tpu_py_library",
+)
 load("//shims/build_files:torch_rules.bzl", "torch_tpu_torch_test")
 load("//shims/py_rules:pytype.bzl", "pytype_strict_binary")
 
 package(default_applicable_licenses = ["//:license"])
+
+torch_tpu_py_library(
+    name = "torch_test_configs",
+    testonly = True,
+    srcs = ["torch_test_configs.py"],
+)
 
 pytype_strict_binary(
     name = "torch_test_runner",
     testonly = True,
     srcs = ["torch_test_runner.py"],
     deps = [
+        ":torch_test_configs",
         "//shims/absl_py:app",
         "//shims/absl_py/testing:absltest",
         "//shims/torch:pytorch",

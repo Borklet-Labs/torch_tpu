@@ -48,6 +48,7 @@ import torch_tpu  # pylint: disable=unused-import  # noqa: F401
 from torch.testing._internal import common_device_type  # pylint: disable=g-bad-import-order
 from torch.testing._internal import common_utils
 from torch_tpu._internal.utils import annotations
+from tests.torch import torch_test_configs
 
 _TORCH_TEST_DIR_ENV_VAR: Final = "TORCH_TPU_INTERNAL_PYTORCH_TEST_DIR"
 _TORCH_TEST_MODULE_ENV_VAR: Final = "TORCH_TPU_INTERNAL_TORCH_TEST_MODULE"
@@ -57,8 +58,8 @@ _TORCH_TEST_MODULE_ENV_VAR: Final = "TORCH_TPU_INTERNAL_TORCH_TEST_MODULE"
 _MINIMAL_TORCH_VERSION: Final = "2.14"
 
 
-def _set_private_use1_test_configs() -> None:
-  """Declares TorchTPU test configuration on PrivateUse1TestBase."""
+def _set_private_use1_test_configs(test_module: str) -> None:
+  """Declares TorchTPU configuration on PrivateUse1TestBase per test module."""
   base = common_device_type.PrivateUse1TestBase
   if base not in common_device_type.device_type_test_bases:
     raise RuntimeError(
@@ -73,7 +74,9 @@ def _set_private_use1_test_configs() -> None:
   # has "TPU" suffix.
   base.setUpClass()
   # TODO(b/523293280): extend test configs with TPU-specific overrides.
-  base.set_test_configs()
+  base.set_test_configs(
+      test_exclusions=torch_test_configs.TEST_EXCLUSIONS.get(test_module)
+  )
 
 
 def _filter_device_generic_tests() -> None:
@@ -105,7 +108,7 @@ def _filter_device_generic_tests() -> None:
   unittest.TestLoader.getTestCaseNames = device_generic_tests
 
 
-def _parse_test_env_vars() -> tuple[pathlib.Path, pathlib.Path]:
+def _parse_test_env_vars() -> tuple[str, pathlib.Path, pathlib.Path]:
   """Parses required test directory and module from environment variables."""
   test_module = os.environ.get(_TORCH_TEST_MODULE_ENV_VAR)
   if not test_module:
@@ -130,7 +133,7 @@ def _parse_test_env_vars() -> tuple[pathlib.Path, pathlib.Path]:
         " https://github.com/pytorch/pytorch checkout."
     )
 
-  return test_dir_path, test_module_path
+  return test_module, test_dir_path, test_module_path
 
 
 def _setup_test_args(test_dir: pathlib.Path, test_module: pathlib.Path) -> None:
@@ -181,13 +184,20 @@ def main(argv: Sequence[str]) -> None:
         " tests with TorchTPU."
     )
 
-  test_dir_path, test_module_path = _parse_test_env_vars()
+  test_module, test_dir_path, test_module_path = _parse_test_env_vars()
   _setup_test_args(test_dir_path, test_module_path)
 
-  # Read by torch.testing._internal.common_device_type to
-  # restrict instantiate_device_type_tests to the TPU backend.
+  # PYTORCH_TESTING_DEVICE_* environment variables are read by
+  # `torch.testing._internal.common_device_type` to pick the device test bases
+  # of each `instantiate_device_type_tests` invocation in the following steps:
+  #   1. Filter by `only_for` / `except_for` fields at the call site.
+  #   2. Add back the bases named in PYTORCH_TESTING_DEVICE_FOR_CUSTOM.
+  #   3. Filter by PYTORCH_TESTING_DEVICE_ONLY_FOR / PYTORCH_TESTING_DEVICE_EXCEPT_FOR.  # pylint: disable=line-too-long
+  # Setting both to "tpu" overrides upstream settings and yields exactly one
+  # TPU variant per instantiation.
+  os.environ["PYTORCH_TESTING_DEVICE_FOR_CUSTOM"] = "tpu"
   os.environ["PYTORCH_TESTING_DEVICE_ONLY_FOR"] = "tpu"
-  _set_private_use1_test_configs()
+  _set_private_use1_test_configs(test_module)
   _filter_device_generic_tests()
 
   # TODO(b/571605100): fix upstream tests to use public APIs only and then
