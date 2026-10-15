@@ -2735,21 +2735,19 @@ void AtenForeachSub_ScalarList(at::TensorList self,
 }
 
 absl::StatusOr<at::Tensor> AtenClampMax(const at::Tensor& self,
-                                        const at::Scalar& alpha) {
-  TT_ASSIGN_OR_RETURN(
-      at::Tensor out,
-      MakeEmptyTensor(self.sizes(), self.scalar_type(), self.device()));
-  AtenClampMaxOut(self, alpha, out);
-  return out;
-}
-
-absl::StatusOr<at::Tensor> AtenClampMax(const at::Tensor& self,
                                         const at::Tensor& other) {
   TT_ASSIGN_OR_RETURN(
       at::Tensor out,
       MakeEmptyTensor(self.sizes(), self.scalar_type(), self.device()));
   AtenClampMaxTensorOut(self, other, out);
   return out;
+}
+
+absl::StatusOr<at::Tensor> AtenClampMax(const at::Tensor& self,
+                                        PromotedScalar& other) {
+  TT_ASSIGN_OR_RETURN(at::Tensor other_tensor,
+                      other.GetTensor(at::toOpMathType(self.scalar_type())));
+  return AtenClampMax(self, other_tensor);
 }
 
 std::vector<at::Tensor> AtenForeachClampMaxScalar(at::TensorList self,
@@ -2762,10 +2760,8 @@ std::vector<at::Tensor> AtenForeachClampMaxScalar(at::TensorList self,
       TT_ASSIGN_OR_THROW(
           const at::ScalarType out_dtype,
           ForeachScalarResultType(tensor, promoted_scalar.scalar()));
-      TT_ASSIGN_OR_THROW(at::Tensor scalar_tensor,
-                         promoted_scalar.GetTensor(out_dtype));
       TT_ASSIGN_OR_THROW(auto out,
-                         AtenClampMax(tensor.to(out_dtype), scalar_tensor));
+                         AtenClampMax(tensor.to(out_dtype), promoted_scalar));
       result.push_back(out);
     }
     return result;
@@ -2777,8 +2773,9 @@ void AtenForeachClampMax_Scalar(at::TensorList self, const at::Scalar& scalar) {
   TT_KERNEL(OpName::kForeachClampMax_Scalar, _, (self, promoted_scalar), {
     TT_THROW_IF_ERROR(ValidateForeachUnaryNotBool(self));
     for (const auto& tensor : self) {
-      TT_ASSIGN_OR_THROW(at::Tensor scalar_tensor,
-                         promoted_scalar.GetTensor(tensor.scalar_type()));
+      TT_ASSIGN_OR_THROW(
+          at::Tensor scalar_tensor,
+          promoted_scalar.GetTensor(at::toOpMathType(tensor.scalar_type())));
       AtenClampMaxTensorOut(tensor, scalar_tensor,
                             const_cast<at::Tensor&>(tensor));
     }
@@ -2817,10 +2814,8 @@ std::vector<at::Tensor> AtenForeachClampMaxScalarList(
       TT_ASSIGN_OR_THROW(
           const at::ScalarType out_dtype,
           ForeachScalarResultType(self[i], promoted_scalars[i].scalar()));
-      TT_ASSIGN_OR_THROW(at::Tensor scalar_tensor,
-                         promoted_scalars[i].GetTensor(out_dtype));
-      TT_ASSIGN_OR_THROW(auto out,
-                         AtenClampMax(self[i].to(out_dtype), scalar_tensor));
+      TT_ASSIGN_OR_THROW(
+          auto out, AtenClampMax(self[i].to(out_dtype), promoted_scalars[i]));
       result.push_back(out);
     }
     return result;
@@ -2834,20 +2829,12 @@ void AtenForeachClampMax_ScalarList(at::TensorList self,
     TT_THROW_IF_ERROR(ValidateForeachUnaryNotBool(self));
     for (size_t i = 0; i < self.size(); ++i) {
       TT_ASSIGN_OR_THROW(at::Tensor scalar_tensor,
-                         promoted_scalars[i].GetTensor(self[i].scalar_type()));
+                         promoted_scalars[i].GetTensor(
+                             at::toOpMathType(self[i].scalar_type())));
       AtenClampMaxTensorOut(self[i], scalar_tensor,
                             const_cast<at::Tensor&>(self[i]));
     }
   });
-}
-
-absl::StatusOr<at::Tensor> AtenClampMin(const at::Tensor& self,
-                                        const at::Scalar& alpha) {
-  TT_ASSIGN_OR_RETURN(
-      at::Tensor out,
-      MakeEmptyTensor(self.sizes(), self.scalar_type(), self.device()));
-  AtenClampMinOut(self, alpha, out);
-  return out;
 }
 
 absl::StatusOr<at::Tensor> AtenClampMin(const at::Tensor& self,
@@ -2857,6 +2844,13 @@ absl::StatusOr<at::Tensor> AtenClampMin(const at::Tensor& self,
       MakeEmptyTensor(self.sizes(), self.scalar_type(), self.device()));
   AtenClampMinTensorOut(self, other, out);
   return out;
+}
+
+absl::StatusOr<at::Tensor> AtenClampMin(const at::Tensor& self,
+                                        PromotedScalar& other) {
+  TT_ASSIGN_OR_RETURN(at::Tensor other_tensor,
+                      other.GetTensor(at::toOpMathType(self.scalar_type())));
+  return AtenClampMin(self, other_tensor);
 }
 
 std::vector<at::Tensor> AtenForeachClampMinScalar(at::TensorList self,
@@ -2869,10 +2863,8 @@ std::vector<at::Tensor> AtenForeachClampMinScalar(at::TensorList self,
       TT_ASSIGN_OR_THROW(
           const at::ScalarType out_dtype,
           ForeachScalarResultType(tensor, promoted_scalar.scalar()));
-      TT_ASSIGN_OR_THROW(at::Tensor scalar_tensor,
-                         promoted_scalar.GetTensor(out_dtype));
       TT_ASSIGN_OR_THROW(auto out,
-                         AtenClampMin(tensor.to(out_dtype), scalar_tensor));
+                         AtenClampMin(tensor.to(out_dtype), promoted_scalar));
       result.push_back(out);
     }
     return result;
@@ -2884,8 +2876,9 @@ void AtenForeachClampMin_Scalar(at::TensorList self, const at::Scalar& scalar) {
   TT_KERNEL(OpName::kForeachClampMin_Scalar, _, (self, promoted_scalar), {
     TT_THROW_IF_ERROR(ValidateForeachUnaryNotBool(self));
     for (const auto& tensor : self) {
-      TT_ASSIGN_OR_THROW(at::Tensor scalar_tensor,
-                         promoted_scalar.GetTensor(tensor.scalar_type()));
+      TT_ASSIGN_OR_THROW(
+          at::Tensor scalar_tensor,
+          promoted_scalar.GetTensor(at::toOpMathType(tensor.scalar_type())));
       AtenClampMinTensorOut(tensor, scalar_tensor,
                             const_cast<at::Tensor&>(tensor));
     }
@@ -2924,10 +2917,8 @@ std::vector<at::Tensor> AtenForeachClampMinScalarList(
       TT_ASSIGN_OR_THROW(
           const at::ScalarType out_dtype,
           ForeachScalarResultType(self[i], promoted_scalars[i].scalar()));
-      TT_ASSIGN_OR_THROW(at::Tensor scalar_tensor,
-                         promoted_scalars[i].GetTensor(out_dtype));
-      TT_ASSIGN_OR_THROW(auto out,
-                         AtenClampMin(self[i].to(out_dtype), scalar_tensor));
+      TT_ASSIGN_OR_THROW(
+          auto out, AtenClampMin(self[i].to(out_dtype), promoted_scalars[i]));
       result.push_back(out);
     }
     return result;
@@ -2941,7 +2932,8 @@ void AtenForeachClampMin_ScalarList(at::TensorList self,
     TT_THROW_IF_ERROR(ValidateForeachUnaryNotBool(self));
     for (size_t i = 0; i < self.size(); ++i) {
       TT_ASSIGN_OR_THROW(at::Tensor scalar_tensor,
-                         promoted_scalars[i].GetTensor(self[i].scalar_type()));
+                         promoted_scalars[i].GetTensor(
+                             at::toOpMathType(self[i].scalar_type())));
       AtenClampMinTensorOut(self[i], scalar_tensor,
                             const_cast<at::Tensor&>(self[i]));
     }

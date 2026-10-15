@@ -844,14 +844,6 @@ ACCURACY_OVERRIDES_GRAD_VS_GPU: dict[
     copy.deepcopy(ACCURACY_OVERRIDES_VS_GPU),
     {
         # go/keep-sorted start
-        "_foreach_clamp_max": {
-            torch.bfloat16: {"atol": 1.0},
-            torch.float16: {"atol": 1.0},
-        },
-        "_foreach_clamp_min": {
-            torch.bfloat16: {"atol": 1.0},
-            torch.float16: {"atol": 1.0},
-        },
         "_foreach_erf": {
             torch.float16: {"rtol": 2.5e-3, "atol": 1e-4},
         },
@@ -1047,6 +1039,26 @@ ACCURACY_OVERRIDES_GRAD_VS_GPU: dict[
         # go/keep-sorted end
     },
 )
+if test_utils.parse_version(torch.__version__) < (2, 14, 0):
+  # PyTorch 2.14+ changed clamp_min/clamp_max derivative tie-breaking at
+  # self == bound from 1.0 to 0.0/0.5 ( matching the PyTorch 2.15 GPU goldens).
+  # In OSS (which pins PyTorch 2.11), autograd decomposition of
+  # _foreach_clamp_min/_foreach_clamp_max uses the pre-2.14 formula.
+  update_dict(
+      ACCURACY_OVERRIDES_GRAD_VS_GPU,
+      {
+          # go/keep-sorted start
+          "_foreach_clamp_max": {
+              torch.bfloat16: {"atol": 1.0},
+              torch.float16: {"atol": 1.0},
+          },
+          "_foreach_clamp_min": {
+              torch.bfloat16: {"atol": 1.0},
+              torch.float16: {"atol": 1.0},
+          },
+          # go/keep-sorted end
+      },
+  )
 
 
 # Returns true for test cases that trigger GPU bug.
