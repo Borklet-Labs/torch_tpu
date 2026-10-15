@@ -42,6 +42,7 @@ py_binary(
 )
 
 py_test(
+    # PY_TEST_OK=Standalone CI tooling test without torch_tpu dependency
     name = "gen_torch_tests_test",
     srcs = ["gen_torch_tests_test.py"],
     deps = [
@@ -55,6 +56,7 @@ py_binary(
 )
 
 py_test(
+    # PY_TEST_OK=Standalone CI tooling test without torch_tpu dependency
     name = "delete_cancelled_pr_runs_test",
     size = "small",
     srcs = ["delete_cancelled_pr_runs_test.py"],
@@ -76,6 +78,7 @@ py_binary(
 )
 
 py_test(
+    # PY_TEST_OK=Standalone CI tooling test without torch_tpu dependency
     name = "list_ci_tests_test",
     srcs = ["list_ci_tests_test.py"],
     data = [
@@ -93,6 +96,7 @@ py_binary(
 )
 
 py_test(
+    # PY_TEST_OK=Standalone CI tooling test without torch_tpu dependency
     name = "run_bazel_diff_test",
     srcs = ["run_bazel_diff_test.py"],
     deps = [
