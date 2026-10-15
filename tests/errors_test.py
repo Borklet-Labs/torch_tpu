@@ -3520,17 +3520,26 @@ Device-side assertion tracking was not enabled by user.""",
     ):
       torch.nn.functional.elu(inp)
 
-  def test_gelu_unsupported_input_dtype(self):
+  @parameterized.named_parameters(
+      ("complex64", torch.complex64, "complex64", "ComplexFloat"),
+      ("int32", torch.int32, "int32", "Int"),
+  )
+  def test_gelu_unsupported_input_dtype(
+      self, dtype: torch.dtype, tpu_dtype_str: str, gpu_dtype_str: str
+  ):
+    """Verifies that gelu raises NotImplementedError on unsupported input dtypes."""
     del self  # self is not used in this test
-    t = torch.ones(2, device=et.device(), dtype=torch.complex64)
+    t = torch.ones(2, device=et.device(), dtype=dtype)
     with et.assert_raises_message(
         NotImplementedError,
-        tpu="""gelu(): unsupported input dtype: 'complex64'""",
-        gpu=""""GeluCUDAKernelImpl" not implemented for 'ComplexFloat'""",
+        tpu=f"gelu(): unsupported input dtype: '{tpu_dtype_str}'",
+        gpu=f""""GeluCUDAKernelImpl" not implemented for '{gpu_dtype_str}'""",
+        message_reviewed_by="adivinpatel",
     ):
       torch.nn.functional.gelu(t)
 
   def test_gelu_unsupported_output_dtype(self):
+    """Verifies that gelu raises RuntimeError on unexpected output dtype."""
     del self  # self is not used in this test
     t = torch.ones(2, device=et.device(), dtype=torch.float32)
     out = torch.ones(2, device=et.device(), dtype=torch.int64)
@@ -3552,25 +3561,79 @@ Device-side assertion tracking was not enabled by user.""",
       torch.nn.functional.gelu(t, out=out_f64)  # pylint: disable=unexpected-keyword-arg
 
   def test_gelu_unsupported_approximation_type(self):
+    """Verifies that gelu raises RuntimeError on unsupported approximation type."""
     t = torch.randn(2, 3, device=et.device(), dtype=torch.float32)
     with et.assert_raises_message(
         RuntimeError,
         tpu="""gelu(): unsupported approximate argument: invalid""",
         gpu="""approximate argument must be either none or tanh.""",
+        message_reviewed_by="adivinpatel",
     ):
       torch.nn.functional.gelu(t, approximate="invalid")
 
+  def test_gelu_out_unsupported_approximation_type(self):
+    """Verifies that gelu.out raises on unsupported approximation type."""
+    t = torch.randn(2, 3, device=et.device(), dtype=torch.float32)
+    out = torch.empty_like(t)
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""gelu(): unsupported approximate argument: invalid""",
+        gpu="""approximate argument must be either none or tanh.""",
+        message_reviewed_by="adivinpatel",
+    ):
+      torch.ops.aten.gelu.out(t, approximate="invalid", out=out)
+
+  @parameterized.named_parameters(
+      ("complex64", torch.complex64, "complex64", "ComplexFloat"),
+      ("int32", torch.int32, "int32", "Int"),
+  )
+  def test_gelu_out_unsupported_input_dtype(
+      self, dtype: torch.dtype, tpu_dtype_str: str, gpu_dtype_str: str
+  ):
+    """Verifies that gelu.out raises NotImplementedError on unsupported input dtypes."""
+    del self  # self is not used in this test
+    t = torch.ones(2, device=et.device(), dtype=dtype)
+    out = torch.empty_like(t)
+    with et.assert_raises_message(
+        NotImplementedError,
+        tpu=f"gelu(): unsupported input dtype: '{tpu_dtype_str}'",
+        gpu=f""""GeluCUDAKernelImpl" not implemented for '{gpu_dtype_str}'""",
+        message_reviewed_by="adivinpatel",
+    ):
+      torch.ops.aten.gelu.out(t, out=out)
+
   def test_gelu_backward_grad_input_unsupported_approximation_type(self):
+    """Verifies that gelu_backward raises on unsupported approximation type."""
     t = torch.randn(2, 3, device=et.device(), dtype=torch.float32)
     grad_input = torch.empty_like(t)
     with et.assert_raises_message(
         RuntimeError,
         tpu="""gelu_backward(): unsupported approximate argument: invalid""",
         gpu="""approximate argument must be either none or tanh.""",
+        message_reviewed_by="adivinpatel",
     ):
       torch.ops.aten.gelu_backward.grad_input(
           t, t, approximate="invalid", grad_input=grad_input
       )
+
+  @parameterized.named_parameters(
+      ("complex64", torch.complex64, "complex64", "ComplexFloat"),
+      ("int32", torch.int32, "int32", "Int"),
+  )
+  def test_gelu_backward_grad_input_unsupported_input_dtype(
+      self, dtype: torch.dtype, tpu_dtype_str: str, gpu_dtype_str: str
+  ):
+    """Verifies that gelu_backward raises NotImplementedError on unsupported input dtypes."""
+    del self  # self is not used in this test
+    t = torch.ones(2, device=et.device(), dtype=dtype)
+    grad_input = torch.empty_like(t)
+    with et.assert_raises_message(
+        NotImplementedError,
+        tpu=f"gelu_backward(): unsupported input dtype: '{tpu_dtype_str}'",
+        gpu=f""""GeluBackwardCUDAKernelImpl" not implemented for '{gpu_dtype_str}'""",
+        message_reviewed_by="adivinpatel",
+    ):
+      torch.ops.aten.gelu_backward.grad_input(t, t, grad_input=grad_input)
 
   def test_glu_unsupported_input_dtype(self):
     if et.is_on_gpu():
