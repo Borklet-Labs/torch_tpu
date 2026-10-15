@@ -76,6 +76,7 @@ def torch_tpu_torch_test_impl(
         "@pypi//hypothesis",
         "@pypi//jax",
         "@pypi//packaging",
+        "@pypi//parameterized",
         "@pypi//pytest",
         "@pypi//scipy",
         "//shims/torch:tensorboard_support",
