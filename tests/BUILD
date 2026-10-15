@@ -2840,4 +2840,25 @@ torch_tpu_py_test(
     ],
 )
 
+# Fails if a Markdown file published on GitHub uses g3doc multi-line tables,
+# which GitHub can't render.
+torch_tpu_py_test(
+    name = "markdown_tables_test",
+    srcs = ["markdown_tables_test.py"],
+    # The docs/ and examples/ directories are listed separately because in OSS
+    # they're outside the torch_tpu package, so the root filegroup doesn't
+    # include them.
+    data = [
+        "//docs/markdown:all_doc_files_recursive",
+        "//docs/notebooks:all_doc_files_recursive",
+        "//examples:all_doc_files_recursive",
+        "//src/torch_tpu:all_doc_files_recursive",
+    ],
+    deps = [
+        ":repo_paths",
+        "//shims/absl_py/testing:absltest",
+        "//src/torch_tpu",
+    ],
+)
+
 torch_tpu_package_end()
