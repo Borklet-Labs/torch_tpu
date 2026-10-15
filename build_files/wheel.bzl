@@ -36,6 +36,7 @@ WHEEL_PY_TARGETS = [
     "//src/torch_tpu/_internal/execution_mode",
     "//src/torch_tpu/_internal/export",
     "//src/torch_tpu/_internal/ops",
+    "//src/torch_tpu/_internal/ops/scaled_grouped_mm/kernels:rowwise_scaled_grouped_mm_kernel",
     "//src/torch_tpu/_internal/ops/scaled_mm/kernels:aot_target",
     "//src/torch_tpu/_internal/ops/scaled_mm/kernels:blockwise128_scaled_mm_kernel",
     "//src/torch_tpu/_internal/ops/scaled_mm/kernels:blockwise_scaled_mm_kernel",
