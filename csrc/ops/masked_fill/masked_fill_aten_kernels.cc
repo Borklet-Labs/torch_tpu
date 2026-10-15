@@ -94,8 +94,7 @@ absl::StatusOr<at::Tensor> DispatchOutOfPlace(const at::Tensor& self,
                                               const at::Tensor& mask,
                                               const at::Tensor& value) {
   TT_RETURN_IF_ERROR(ValidateMaskIsBool(mask));
-  TT_ASSIGN_OR_RETURN(const Dimensions out_dims,
-                      InferSize(self.sizes(), mask.sizes()));
+  TT_ASSIGN_OR_RETURN(const Dimensions out_dims, InferSize(self, mask));
   TT_ASSIGN_OR_RETURN(const mlir::ElementType self_mlir_type,
                       ConvertTo<mlir::ElementType>(self.scalar_type()));
   TT_ASSIGN_OR_RETURN(
@@ -111,8 +110,7 @@ absl::StatusOr<at::Tensor> DispatchOutOfPlace(const at::Tensor& self,
 absl::Status DispatchInPlace(at::Tensor& self, const at::Tensor& mask,
                              const at::Tensor& value) {
   TT_RETURN_IF_ERROR(ValidateMaskIsBool(mask));
-  TT_ASSIGN_OR_RETURN(const Dimensions out_dims,
-                      InferSize(self.sizes(), mask.sizes()));
+  TT_ASSIGN_OR_RETURN(const Dimensions out_dims, InferSize(self, mask));
   TT_RETURN_IF_ERROR(ValidateInferredOutputShapeMatchesSelf(self, out_dims));
   TT_ASSIGN_OR_RETURN(const mlir::ElementType self_mlir_type,
                       ConvertTo<mlir::ElementType>(self.scalar_type()));

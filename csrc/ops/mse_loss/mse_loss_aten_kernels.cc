@@ -175,9 +175,6 @@ at::Tensor AtenMseLossBackward(const at::Tensor& grad_output,
         TT_ASSIGN_OR_THROW(Dimensions out_dims,
                            InferSize(self, target, grad_output));
 
-        TT_ASSIGN_OR_THROW(
-            at::Tensor grad_input,
-            MakeEmptyTensor(out_dims, self.scalar_type(), self.device()));
         TT_ASSIGN_OR_THROW(const mlir::ElementType out_dtype,
                            ConvertTo<mlir::ElementType>(self.scalar_type()));
 
@@ -197,10 +194,11 @@ at::Tensor AtenMseLossBackward(const at::Tensor& grad_output,
             .out_dims = out_dims,
             .op_param_cache_keys = std::move(param_keys),
         };
-        TT_THROW_IF_ERROR(DispatchOpOut<3>(std::move(op_builder),
-                                           {grad_output, self, target},
-                                           grad_input, std::move(options)));
-        return grad_input;
+        TT_ASSIGN_OR_THROW(
+            auto result_buf,
+            (DispatchOp<3>(std::move(op_builder), {grad_output, self, target},
+                           std::move(options))));
+        return MakeTensor(result_buf);
       });
 }
 

@@ -141,8 +141,7 @@ at::Tensor AtenPreluKernel(const at::Tensor& self, const at::Tensor& weight) {
         << ToString(self.scalar_type()) << " and "
         << ToString(weight.scalar_type());
 
-    TT_ASSIGN_OR_THROW(const auto expected_size,
-                       InferSize(self.sizes(), weight.sizes()));
+    TT_ASSIGN_OR_THROW(const auto expected_size, InferSize(self, weight));
     TT_CHECK_THROW(expected_size == self.sizes(), error::kInvalidArgument)
         << "expected weight tensor shape to be broadcastable to self shape "
         << ToString(self.sizes()) << ", got " << ToString(weight.sizes());
@@ -189,8 +188,7 @@ std::tuple<at::Tensor, at::Tensor> AtenPreluKernelBackward(
         << "expected grad_output shape to match self shape "
         << ToString(self.sizes()) << ", got " << ToString(grad_output.sizes());
 
-    TT_ASSIGN_OR_THROW(const auto expected_size,
-                       InferSize(self.sizes(), weight.sizes()));
+    TT_ASSIGN_OR_THROW(const auto expected_size, InferSize(self, weight));
     TT_CHECK_THROW(expected_size == self.sizes(), error::kInvalidArgument)
         << "expected weight tensor shape to be broadcastable to self shape "
         << ToString(self.sizes()) << ", got " << ToString(weight.sizes());

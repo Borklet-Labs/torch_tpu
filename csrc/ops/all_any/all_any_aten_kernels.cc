@@ -23,7 +23,6 @@
 
 #include "ATen/core/ATen_fwd.h"
 #include "ATen/core/TensorBody.h"
-#include "absl/algorithm/container.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "c10/core/ScalarType.h"
@@ -70,13 +69,7 @@ struct AllAnyReductionParams {
 absl::StatusOr<AllAnyReductionParams> GetAllAnyReductionParams(
     const at::Tensor& self, c10::OptionalArrayRef<int64_t> dims,
     bool keep_dims) {
-  Dimensions dims_to_reduce;
-  if (!dims.has_value()) {
-    dims_to_reduce.resize(self.dim());
-    absl::c_iota(dims_to_reduce, 0);
-  } else {
-    TT_ASSIGN_OR_RETURN(dims_to_reduce, CanonicalizeDims(self, dims));
-  }
+  TT_ASSIGN_OR_RETURN(Dimensions dims_to_reduce, CanonicalizeDims(self, dims));
 
   ReductionMode reduction_mode =
       keep_dims ? ReductionMode::kKeepDims : ReductionMode::kDropDims;

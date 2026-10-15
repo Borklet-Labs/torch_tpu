@@ -33,7 +33,6 @@
 #include "csrc/ops/macros/kernel.h"
 #include "csrc/ops/op_builder_utils.h"
 #include "csrc/ops/op_names.h"
-#include "csrc/ops/resize/resize_aten_kernels.h"
 #include "csrc/ops/unary_aten_kernels.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "stablehlo/dialect/StablehloOps.h"
@@ -91,8 +90,6 @@ at::Tensor AtenAngle(const at::Tensor& self) {
 
 at::Tensor& AtenAngleOut(const at::Tensor& self, at::Tensor& out) {
   TT_KERNEL(OpName::kAngleOut, _, (self, out), {
-    TT_THROW_IF_ERROR(ResizeTensorIfShapeDiffers(out, self.sizes()));
-
     const c10::ScalarType expected_dtype =
         c10::toRealValueType(InferOutputDtype(self));
 
