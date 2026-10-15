@@ -12,8 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from unittest import mock
+
 from absl.testing import absltest
 from absl.testing import parameterized
+import jax
 import jax.numpy as jnp
 import numpy as np
 from torch_tpu._internal.ops.scaled_mm.kernels import blockwise128_scaled_mm_kernel as kernels
@@ -200,6 +203,33 @@ class RecipeRegistryTest(_TestCase):
         has_bias=has_bias,
     )
     self.assertIn("@main", mlir_text)
+
+
+class ExportTargetTest(_TestCase):
+  """Tests the TPU generation the AOT export lowers for."""
+
+  # Tiles match the genrules in csrc/ops/scaled_mm/kernels/BUILD.
+  @parameterized.parameters(
+      ("blockwise_128", 128, (512, 512, 1024)),
+      ("mxfp8", 32, (128, 128, 256)),
+  )
+  def test_generator_lowers_for_v7x(self, recipe, block_size, tiles):
+    tile_m, tile_n, tile_k = tiles
+    with mock.patch.object(
+        jax.sharding, "use_abstract_mesh", wraps=jax.sharding.use_abstract_mesh
+    ) as use_mesh:
+      scaled_mm_generate.generate_kernel_module(
+          recipe=recipe,
+          in_dtype_name="float8_e4m3fn",
+          out_dtype_name="float32",
+          block_size=block_size,
+          tile_m=tile_m,
+          tile_n=tile_n,
+          tile_k=tile_k,
+      )
+    use_mesh.assert_called_once()
+    (mesh,), _ = use_mesh.call_args
+    self.assertEqual(mesh.abstract_device.device_kind, "TPU7x")
 
 
 if __name__ == "__main__":

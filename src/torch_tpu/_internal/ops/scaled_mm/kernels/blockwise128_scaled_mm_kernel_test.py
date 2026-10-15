@@ -12,9 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import functools
+
 from absl import logging
 from absl.testing import absltest
 from absl.testing import parameterized
+import jax
 import jax.numpy as jnp
 import numpy as np
 from torch_tpu._internal.ops.scaled_mm.kernels import blockwise128_scaled_mm_kernel as kernels
@@ -418,6 +421,50 @@ class BlockWise128ScaledMmRandomTest(_TestCase):
     expected_delta = np.broadcast_to(bias, (m, n))
 
     np.testing.assert_allclose(delta, expected_delta, atol=1e-3, rtol=1e-5)
+
+
+@functools.cache
+def _exported_module(out_dtype, has_bias: bool) -> jax.export.Exported:
+  return kernels.export(out_dtype=out_dtype, has_bias=has_bias)
+
+
+class BlockWise128ScaledMmAotTest(_TestCase):
+  # Runs the module the genrules precompile: exported for
+  # `aot_target.AOT_DEVICE_KIND` through an abstract mesh, serialized and
+  # deserialized, then compiled for the chip under test. A lowering choice that
+  # does not hold on this chip, or a symbolic-shape bug in the export, shows up
+  # as a mismatch with the JIT path.
+
+  @parameterized.product(
+      shape=((200, 1152, 384), (129, 256, 300)),
+      out_dtype=(jnp.bfloat16, jnp.float32),
+      has_bias=(False, True),
+  )
+  def test_aot_module_matches_jit(self, shape, out_dtype, has_bias):
+    # Both shapes have partial trailing M and N tiles; the second one also has
+    # a partial trailing N scale band. K stays a multiple of 128, the only
+    # shape constraint of the exported module.
+    m, k, n = shape
+    rng = np.random.default_rng(5)
+    a_fp8 = rng.integers(0, 16, (m, k)).astype(np.float32).astype(_FP8_E4M3)
+    b_fp8 = rng.integers(0, 16, (k, n)).astype(np.float32).astype(_FP8_E4M3)
+    sa = rng.uniform(0.5, 2.0, (m, k // _BLOCK_SIZE)).astype(np.float32)
+    n_bands = (n + _BLOCK_SIZE - 1) // _BLOCK_SIZE
+    sb = rng.uniform(0.5, 2.0, (k // _BLOCK_SIZE, n_bands)).astype(np.float32)
+    bias = rng.standard_normal(n).astype(np.float32) if has_bias else None
+
+    kwargs = {"bias": jnp.asarray(bias)} if has_bias else {}
+    aot_out = _exported_module(out_dtype, has_bias).call(
+        jnp.asarray(a_fp8),
+        jnp.asarray(b_fp8),
+        jnp.asarray(sa),
+        jnp.asarray(sb),
+        **kwargs,
+    )
+    aot_out = np.asarray(aot_out.astype(jnp.float32))
+
+    jit_out = _run_kernel(a_fp8, b_fp8, sa, sb, out_dtype, bias=bias)
+    np.testing.assert_array_equal(aot_out, jit_out)
 
 
 if __name__ == "__main__":

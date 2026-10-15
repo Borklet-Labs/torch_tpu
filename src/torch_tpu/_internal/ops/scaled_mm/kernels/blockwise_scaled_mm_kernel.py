@@ -28,15 +28,14 @@ Math per output element:
   out[i, j] = sum_b Sa[i, b] * Sb[b, j] * sum_{k in block b} A[i, k] * B[k, j]
 """
 
-import contextlib
 import functools
-import inspect
 from typing import Any
 
 import jax
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 import jax.numpy as jnp
+from torch_tpu._internal.ops.scaled_mm.kernels import aot_target
 
 pallas_export_experimental = pl.pallas_export_experimental
 
@@ -310,28 +309,6 @@ def blockwise_scaled_mm(
   return out[:m, :n]
 
 
-def _make_abstract_device(device_kind: str, num_cores: int, platform: str):
-  if "platform" in inspect.signature(jax.sharding.AbstractDevice).parameters:
-    return jax.sharding.AbstractDevice(device_kind, num_cores, platform)  # type: ignore[call-arg]
-  return jax.sharding.AbstractDevice(device_kind, num_cores)  # pyrefly: ignore[missing-argument]
-
-
-@contextlib.contextmanager
-def _maybe_use_abstract_tpu_mesh():
-  """Uses an abstract TPU mesh when exporting without a TPU (build time)."""
-  if not jax.devices() or jax.devices()[0].platform != "tpu":
-    abstract_mesh = jax.sharding.AbstractMesh(
-        (1,),
-        ("x",),
-        axis_types=(jax.sharding.AxisType.Auto,),
-        abstract_device=_make_abstract_device("TPU v5p", 1, "tpu"),
-    )
-    with jax.sharding.use_abstract_mesh(abstract_mesh):
-      yield
-  else:
-    yield
-
-
 def get_shapes(
     *,
     block_size: int,
@@ -365,7 +342,7 @@ def get_shapes(
   )
 
 
-def export_mlir_module(
+def export(
     *,
     block_size: int = 32,
     out_dtype: Any = jnp.float32,
@@ -373,8 +350,8 @@ def export_mlir_module(
     tile_m: int = 128,
     tile_n: int = 128,
     tile_k: int = 256,
-) -> str:
-  """Exports the kernel and returns the serialized MLIR module string."""
+) -> jax.export.Exported:
+  """Exports the kernel ahead of time for TPU `aot_target.AOT_DEVICE_KIND`."""
   a, b, scale_a, scale_b = get_shapes(
       block_size=block_size,
       tile_m=tile_m,
@@ -391,8 +368,27 @@ def export_mlir_module(
       tile_k=tile_k,
   )
   with pallas_export_experimental(dynamic_shapes=True):
-    with _maybe_use_abstract_tpu_mesh():
-      exp = jax.export.export(jax.jit(f), platforms=["tpu"])(
+    with aot_target.use_abstract_tpu_mesh():
+      return jax.export.export(jax.jit(f), platforms=["tpu"])(
           a, b, scale_a, scale_b
       )
-  return exp.mlir_module()
+
+
+def export_mlir_module(
+    *,
+    block_size: int = 32,
+    out_dtype: Any = jnp.float32,
+    in_dtype: Any = jnp.float8_e4m3fn,
+    tile_m: int = 128,
+    tile_n: int = 128,
+    tile_k: int = 256,
+) -> str:
+  """Exports the kernel and returns the serialized MLIR module string."""
+  return export(
+      block_size=block_size,
+      out_dtype=out_dtype,
+      in_dtype=in_dtype,
+      tile_m=tile_m,
+      tile_n=tile_n,
+      tile_k=tile_k,
+  ).mlir_module()

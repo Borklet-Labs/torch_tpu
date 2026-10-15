@@ -368,5 +368,43 @@ class BlockwiseScaledMmEdgeCaseTest(_BlockwiseScaledMmTestBase):
     np.testing.assert_array_equal(out, expected)
 
 
+class BlockwiseScaledMmAotTest(_BlockwiseScaledMmTestBase):
+  """Runs the module the genrules precompile against the JIT path.
+
+  The module is exported for `aot_target.AOT_DEVICE_KIND` through an abstract
+  mesh, serialized and deserialized, then compiled for the chip under test.
+  """
+
+  @parameterized.named_parameters(
+      ("e4m3", jnp.float8_e4m3fn), ("e5m2", jnp.float8_e5m2)
+  )
+  def test_aot_module_matches_jit(self, in_dtype):
+    # Tiles match the genrule defaults. The exported module requires M, N and
+    # K to be tile multiples (the C++ op pads to satisfy this).
+    tiles = dict(tile_m=128, tile_n=128, tile_k=256)
+    m, k, n = 256, 512, 384
+    rng = np.random.default_rng(5)
+    fp8 = np.dtype(in_dtype)
+    a_fp8 = rng.integers(0, 16, (m, k)).astype(np.float32).astype(fp8)
+    b_fp8 = rng.integers(0, 16, (k, n)).astype(np.float32).astype(fp8)
+    sa = np.exp2(rng.integers(-2, 3, (m, k // _BLOCK_SIZE))).astype(np.float32)
+    sb = np.exp2(rng.integers(-2, 3, (k // _BLOCK_SIZE, n))).astype(np.float32)
+    args = tuple(jnp.asarray(x) for x in (a_fp8, b_fp8, sa, sb))
+
+    exported = kernels.export(
+        block_size=_BLOCK_SIZE,
+        in_dtype=in_dtype,
+        out_dtype=jnp.float32,
+        **tiles,
+    )
+    aot_out = np.asarray(exported.call(*args))
+    jit_out = np.asarray(
+        kernels.blockwise_scaled_mm(
+            *args, block_size=_BLOCK_SIZE, out_dtype=jnp.float32, **tiles
+        )
+    )
+    np.testing.assert_array_equal(aot_out, jit_out)
+
+
 if __name__ == "__main__":
   absltest.main()

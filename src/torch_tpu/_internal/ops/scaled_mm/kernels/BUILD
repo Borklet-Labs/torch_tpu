@@ -50,9 +50,16 @@ pytype_strict_binary(
 )
 
 torch_tpu_py_library(
+    name = "aot_target",
+    srcs = ["aot_target.py"],
+    deps = ["@pypi//jax"],
+)
+
+torch_tpu_py_library(
     name = "blockwise_scaled_mm_kernel",
     srcs = ["blockwise_scaled_mm_kernel.py"],
     deps = [
+        ":aot_target",
         "//shims/jax:pallas",
         "//shims/jax:pallas_tpu",
         "@pypi//jax",
@@ -63,8 +70,11 @@ torch_tpu_py_library(
 torch_tpu_py_test(
     name = "blockwise_scaled_mm_kernel_test",
     srcs = ["blockwise_scaled_mm_kernel_test.py"],
-    tags = [
+    main = "blockwise_scaled_mm_kernel_test.py",
+    run_on_accelerators = [
         "requires-tpu-v5lite",
+        "requires-tpu-v6e",
+        "requires-tpu-v7x",
     ],
     deps = [
         ":blockwise_scaled_mm_kernel",
@@ -103,6 +113,7 @@ torch_tpu_py_library(
     name = "blockwise128_scaled_mm_kernel",
     srcs = ["blockwise128_scaled_mm_kernel.py"],
     deps = [
+        ":aot_target",
         "//shims/jax:pallas",
         "//shims/jax:pallas_tpu",
         "@pypi//jax",

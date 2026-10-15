@@ -32,30 +32,20 @@ activation/gradient.
 and involves no weight at all.
 """
 
-import contextlib
 import functools
-import inspect
 from typing import Any
 
 import jax
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 import jax.numpy as jnp
+from torch_tpu._internal.ops.scaled_mm.kernels import aot_target
 
 _DEFAULT_TILE_M = 512
 _DEFAULT_TILE_N = 512
 _DEFAULT_TILE_K = 1024
 
 _BLOCK_SIZE = 128
-
-
-def make_abstract_device(
-    device_kind: str = "TPU v6e", num_cores: int = 1, platform: str = "tpu"
-) -> Any:
-  """Compatible across Google3 HEAD (with platform) and OSS jax==0.9.2 (without platform)."""
-  if "platform" in inspect.signature(jax.sharding.AbstractDevice).parameters:
-    return jax.sharding.AbstractDevice(device_kind, num_cores, platform)  # type: ignore[call-arg]
-  return jax.sharding.AbstractDevice(device_kind, num_cores)  # pyrefly: ignore[missing-argument]
 
 
 def _next_multiple(x: int, multiple: int) -> int:
@@ -352,22 +342,6 @@ def scaled_mm_1x128_128x128(
   )
 
 
-@contextlib.contextmanager
-def _maybe_use_abstract_tpu_mesh():
-  """Uses an abstract TPU mesh when exporting without a TPU (build time)."""
-  if not jax.devices() or jax.devices()[0].platform != "tpu":
-    abstract_mesh = jax.sharding.AbstractMesh(
-        (1,),
-        ("x",),
-        axis_types=(jax.sharding.AxisType.Auto,),
-        abstract_device=make_abstract_device(),
-    )
-    with jax.sharding.use_abstract_mesh(abstract_mesh):
-      yield
-  else:
-    yield
-
-
 def get_shapes(
     *,
     in_dtype: Any = jnp.float8_e4m3fn,
@@ -396,7 +370,7 @@ def get_shapes(
   return args, bias
 
 
-def export_mlir_module(
+def export(
     *,
     block_size: int = _BLOCK_SIZE,
     in_dtype: Any = jnp.float8_e4m3fn,
@@ -405,8 +379,8 @@ def export_mlir_module(
     tile_n: int = _DEFAULT_TILE_N,
     tile_k: int = _DEFAULT_TILE_K,
     has_bias: bool = False,
-) -> str:
-  """Exports the kernel and returns the serialized MLIR module string."""
+) -> jax.export.Exported:
+  """Exports the kernel ahead of time for TPU `aot_target.AOT_DEVICE_KIND`."""
   if block_size != _BLOCK_SIZE:
     raise ValueError(
         "The 1x128 / 128x128 recipe family only defines scale layouts at a"
@@ -422,8 +396,29 @@ def export_mlir_module(
   if bias is not None:
     kwargs["bias"] = bias
 
-  with _maybe_use_abstract_tpu_mesh():
-    exported = jax.export.export(scaled_mm_1x128_128x128, platforms=["tpu"])(
+  with aot_target.use_abstract_tpu_mesh():
+    return jax.export.export(scaled_mm_1x128_128x128, platforms=["tpu"])(
         *args, **kwargs
     )
-  return exported.mlir_module()
+
+
+def export_mlir_module(
+    *,
+    block_size: int = _BLOCK_SIZE,
+    in_dtype: Any = jnp.float8_e4m3fn,
+    out_dtype: Any = jnp.bfloat16,
+    tile_m: int = _DEFAULT_TILE_M,
+    tile_n: int = _DEFAULT_TILE_N,
+    tile_k: int = _DEFAULT_TILE_K,
+    has_bias: bool = False,
+) -> str:
+  """Exports the kernel and returns the serialized MLIR module string."""
+  return export(
+      block_size=block_size,
+      in_dtype=in_dtype,
+      out_dtype=out_dtype,
+      tile_m=tile_m,
+      tile_n=tile_n,
+      tile_k=tile_k,
+      has_bias=has_bias,
+  ).mlir_module()
