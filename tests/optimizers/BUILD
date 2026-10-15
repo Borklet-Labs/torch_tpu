@@ -144,10 +144,12 @@ _DISTRIBUTED_SINGLE_TRACE_TRAINER_TEST_DEPS = [
 internal_target(
     torch_tpu_py_test,
     name = "distributed_single_trace_trainer_test",
+    timeout = "long",
     srcs = ["distributed_single_trace_trainer_test.py"],
     main = "distributed_single_trace_trainer_test.py",
     # Each case spawns its own 2-process gloo group (about a minute each).
     shard_count = 5,
+    tags = ["requires-mem:28g"],
     # Avoids TOO_MANY_INPUT_FILES from torchtitan's sources.
     use_precompile = False,
     deps = _DISTRIBUTED_SINGLE_TRACE_TRAINER_TEST_DEPS,
