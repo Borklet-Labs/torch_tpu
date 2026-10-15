@@ -221,7 +221,7 @@ def _(mo):
   mo.md(r"""
     ### **Distributed Training and Topology**
 
-    TorchTPU registers `"tpu_dist"` (also aliased as `"tpu"`) as the default `torch.distributed` backend for `"tpu"` devices. See [Running distributed workloads on GKE](1_basics_5_distributed_on_gke.py) and [FSDP best practices](3_practical_examples_3_fsdp_best_practices.py).
+    TorchTPU registers `"tpu_dist"` (also aliased as `"tpu"`) as the default `torch.distributed` backend for `"tpu"` devices. See [Get started with TorchTPU on GKE](1_basics_3_get_started_on_gke.py) and [FSDP best practices](3_practical_examples_3_fsdp_best_practices.py).
 
     | API | Description |
     | :--- | :--- |

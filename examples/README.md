@@ -31,7 +31,7 @@ For distributed training examples, refer to `examples/tensor_parallel/` and
 ## Available Examples
 
 -   [simple_pytorch](simple_pytorch/README.md): Minimal single-device PyTorch
-    example on TPU, plus reference Kueue and single-device GKE manifests.
+    example on TPU, plus a reference single-device GKE manifest.
 -   [classical_ml](classical_ml/README.md): Classical ML (MLP) training and
     full-stack profiling (TensorBoard + XProf) with eager vs. `torch.compile`
     execution.

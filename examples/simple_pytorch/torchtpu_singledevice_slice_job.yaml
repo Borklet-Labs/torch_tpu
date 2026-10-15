@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Public Reference Kubernetes Job manifest for single-device PyTorch Tensor Parallel execution on TPU v7x
+# Public Reference Kubernetes Job manifest for single-device PyTorch execution on TPU v7x
 # Slice topology: 2x2x1 (1 physical VM / 4 TPU chips / 8 addressable TPU devices)
-##
+#
 # Placeholder variables to customize:
 # - <NODEPOOL_NAME>: Name of your GKE 4-chip TPU node pool (e.g. your-v7x-4chip-nodepool).
 # - <DOCKER_IMAGE>: URI of your TorchTPU Docker image in Artifact Registry.
@@ -24,14 +24,11 @@ kind: Job
 metadata:
   name: torchtpu-singledevice-1chip-job
   namespace: default
-  labels:
-    kueue.x-k8s.io/queue-name: multislice-queue
 spec:
   template:
     metadata:
       labels:
         google.com/tpu: "Exists"
-        kueue.x-k8s.io/queue-name: multislice-queue
       annotations:
         cloud.google.com/gke-tpu-slice-topology: 2x2x1
     spec:

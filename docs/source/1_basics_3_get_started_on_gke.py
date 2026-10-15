@@ -13,9 +13,10 @@
 # limitations under the License.
 
 # pylint: skip-file
+
 import marimo
 
-__generated_with = "0.21.1"
+__generated_with = "0.25.1"
 app = marimo.App(width="medium")
 
 
@@ -29,168 +30,98 @@ def _():
 @app.cell(hide_code=True)
 def _(mo):
   mo.md(r"""
-    # GKE TPUv7 example
-    
-    We can run the same earlier very basic example through GKE.
-    This example is stored in github at examples/simple_pytorch/simple_pytorch.py
-    
-    Recent TPUs from v7 onwards are only supported on GKE.
-    Here we assume that you have a TPU cluster and node pool already created.
+    # Get started with TorchTPU on GKE
 
-   ## One-time setup that we can reuse for other GKE examples later.
-    
-    ### Check out the TorchTPU repo and set environment variables
+    This tutorial walks through running PyTorch workloads on a Google
+    Kubernetes Engine (GKE) TPU cluster in three parts:
 
-    Check out the TorchTPU repo to run this tutorial. You need access to the
-    kubernetes manifests and optionally the source code from which to build the docker image.
-    
+    1.  **Run a simple single-device example** (`examples/simple_pytorch/simple_pytorch.py`) as a Kubernetes `Job`.
+    2.  **Run a multi-device distributed example** (`examples/tensor_parallel/manual/tp_worker.py`) on a single 4-chip host (`Job`) and across a multi-host 64-chip slice (`JobSet`).
+    3.  **Run an upstream PyTorch example** from [`pytorch/examples`](https://github.com/pytorch/examples) (such as MNIST).
 
-    All of the steps in this tutorial rely on the following variables, set them
-    accordingly.
+    We assume you already have a GKE Standard cluster with a TPU node pool; see
+    [Deploy TPU workloads in GKE Standard](https://docs.cloud.google.com/kubernetes-engine/docs/how-to/tpus)
+    if you need to create one.
+
+    ## Before you begin
+
+    ### Prerequisites
+
+    *   A GKE cluster with a `tpu7x` node pool. This tutorial uses a 4-chip
+        (`2x2x1`) node pool.
+    *   The [gcloud CLI](https://docs.cloud.google.com/sdk/docs/install-sdk).
+
+    ### Set environment variables
+
+    All steps in this tutorial rely on the following variables; set them
+    accordingly. `LOCATION` is the zone or region of your cluster.
 
     ```bash
-    export CLUSTER=<YOUR_CLUSTER_NAME>
-    export ZONE_NAME=<YOUR_ZONE_NAME>
-    export NODEPOOL_NAME=<YOUR_NODEPOOL_NAME>
     export PROJECT=<YOUR_PROJECT_ID>
-    export TORCH_TPU_SRC=/path/to/torch_tpu
-    export TPU_TYPE=tpu7x-8
-    # Artifact registry to store the docker image.
-    # If you have your own, use it instead, but these default to the nightly build.
-    export ARTIFACT_REGISTRY_URL=us-docker.pkg.dev/ml-oss-artifacts-transient/torch-tpu-docker-container
-    export DOCKER_IMAGE=torch-tpu:nightly-latest
+    export CLUSTER=<YOUR_CLUSTER_NAME>
+    export LOCATION=<YOUR_CLUSTER_ZONE_OR_REGION>
+    export NODEPOOL_NAME=<YOUR_4CHIP_NODEPOOL_NAME>
+    export DOCKER_IMAGE=us-docker.pkg.dev/ml-oss-artifacts-published/torch-tpu-public-release-container/torch-tpu:latest
     ```
 
-    If using a fuse bucket, also setup:
-
-    ```bash
-    export BUCKET=<YOUR_BUCKET_NAME>
-    ```
-    
-    You may need to install the gcloud CLI following instructions at:
-    https://docs.cloud.google.com/sdk/docs/install-sdk
-    as well as setting up a cluster and node pool. 
-    
-
-    ### GCloud setup
-
-    Configure docker credentials so we can push to artifact registry for GKE to
-    consume.
+    ### Authenticate and get cluster credentials
 
     ```bash
     gcloud auth login
     gcloud auth application-default login
-    ```
-    
-    ### Cluster Credentials Setup
-    At this point you may need to install kubectl and the gke plugin:
-    ```bash
-    gcloud components install kubectl
-    gcloud components install gke-gcloud-auth-plugin
+    gcloud components install kubectl gke-gcloud-auth-plugin
+    gcloud container clusters get-credentials ${CLUSTER} --location=${LOCATION} --project=${PROJECT}
     ```
 
-    Follow instructions at
-    https://docs.cloud.google.com/kubernetes-engine/docs/how-to/cluster-access-for-kubectl#install_plugin
-    for more information.
+    See
+    [Install kubectl and configure cluster access](https://docs.cloud.google.com/kubernetes-engine/docs/how-to/cluster-access-for-kubectl)
+    for details.
 
-    Get cluster credentials to interact with the GKE TPU cluster using `kubectl`:
+    ## Submit workloads with kubectl
 
-    ```bash
-    gcloud container clusters get-credentials ${CLUSTER} --zone=${ZONE_NAME} --project=${PROJECT}
-    ```
+    Workloads are submitted as standard Kubernetes `Job` or `JobSet` manifests.
+    The Python example scripts are already pre-installed inside the public
+    container image at `/workspace/examples/`, while the reference Kubernetes
+    `.yaml` manifests
+    (`examples/simple_pytorch/torchtpu_singledevice_slice_job.yaml`,
+    `examples/tensor_parallel/torchtpu_singlehost_slice_job.yaml`, and
+    `examples/tensor_parallel/torchtpu_multihost_slice_jobset.yaml`) live in the
+    `examples/` directory of the TorchTPU repository. Run the `sed` and
+    `kubectl apply` commands below from the root of a local `torch_tpu`
+    repository checkout.
 
-    ### GCloud and docker setup
+    ## Run a single-device workload (one TensorCore of a 4-chip host)
 
-    Configure docker credentials so we can push to artifact registry for GKE to
-    consume.
+    The manifest `examples/simple_pytorch/torchtpu_singledevice_slice_job.yaml`
+    reserves one host with 4 TPU v7x chips. Each v7x chip has two TensorCores,
+    and TorchTPU exposes each TensorCore as one device, so the host has 8 TPU
+    devices and its slice topology is `2x2x1`:
 
-    ```bash
-    gcloud auth configure-docker ${ZONE_NAME}-docker.pkg.dev
-    sudo usermod -aG docker $USER # relaunch the terminal and activate venv
-    newgrp docker
-    docker run hello-world # Test Docker
-    ```
-
-    Follow
-    [this tutorial](https://docs.cloud.google.com/artifact-registry/docs/docker/store-docker-container-images)
-    to initialize your artifact registry to store this new container image for use
-    in GKE (skip if one already exists).
-
-    ### [Optional] Build TorchTPU docker
-    
-    If you want to build the docker image yourself because you have changed torchtpu or its examples, follow these instructions.
-    Otherwise skip this section and use the pre-built docker image that we defaulted to in the environment variables above.
-    
-    Check out the repo and build it and upload it as follows:
-
-    ```bash
-    export DOCKER_IMAGE=torch-tpu-local-$USER
-    cd $TORCH_TPU_SRC/docker
-    ./build_image_multistage.sh
-    docker tag torch-tpu:latest ${ARTIFACT_REGISTRY_URL}/${DOCKER_IMAGE}
-    docker push ${ARTIFACT_REGISTRY_URL}/${DOCKER_IMAGE}
-    ```
-
-    ### Submitting Workloads via Kubectl
-
-    Workloads are submitted to GKE and managed via Kueue queue admission using
-    standard Kubernetes `Job` or `JobSet` manifests. We generally recommend Kueue for queueing. TPU jobs because it maps well to the multi-slice structure of TPU deployments.
-
-    Reference manifests are located in the TorchTPU examples `third_party/py/torch_tpu/examples/`.
-    
-    ### Kueue Cohort Setup
-
-    Before submitting workloads to Kueue queues, ensure Kueue ClusterQueues and
-    LocalQueues are applied. First we patch the node pool name into the manifest and then apply the kueue manifest:
-
-    ```bash
-    sed -i "s|<NODEPOOL_NAME>|${NODEPOOL_NAME}|g" examples/simple_pytorch/torchtpu_kueue_cohort_setup.yaml
-    kubectl apply -f examples/simple_pytorch/torchtpu_kueue_cohort_setup.yaml
-    ```
-    
-    #### Universal Queue `lq` and Automatic Topology Routing
-
-    For seamless compatibility with XPK tools and standard Kubernetes jobs, our
-    setup provides a universal default queue named `LocalQueue: lq`.
-
-    When you specify `kueue.x-k8s.io/queue-name: lq` in your workload labels:
-
-    1.  **Universal Queue**: Workloads are admitted through `LocalQueue lq` into
-        `ClusterQueue tpu-cluster-queue` within `cohort: tpu-shared-reservation`.
-    2.  **Automatic Flavor Routing**: Kueue automatically matches your workload's
-        `nodeSelector` topology labels (`cloud.google.com/gke-tpu-topology`) and
-        assigns the correct `ResourceFlavor` (`rf-4chip`, `rf-8chip`, `rf-16chip`,
-        `rf-32chip`, or `rf-64chip`).
-    3.  **Automatic Suspension**: Kueue injects `spec.suspend: true` upon submission
-        and removes it (`spec.suspend: false`) once shared cohort quota is reserved.
-
-
-    ## Single-Host Workload Execution (1-chip / 1-device slice)
-
-    Submit a single-host Kubernetes Job by first updating the manifest with your
-    docker image and node pool name and then launching the job using kubectl.
-    
-    This manifest is interesting in a couple of ways. It applies to a single host of 4 v7 TPUs (or 8 cores) so the topology is described as 2x2x1:
     ```yaml
         cloud.google.com/gke-tpu-slice-topology: 2x2x1
         ...
         cloud.google.com/gke-tpu-topology: 2x2x1
     ```
-    
-    and where TorchTPU interprets this as a 1x1x1x1 topology because we will launch with a single process for a single TPU core. We will ignore the other TPU devices on the host:
+
+    The example runs a single process on a single TPU device (one TensorCore)
+    and leaves the other 7 devices on the host idle. This is expressed as a
+    `1x1x1x1` TorchTPU topology, where the fourth number is the number of
+    TensorCores per chip that the job uses:
+
     ```yaml
         - name: TORCH_TPU_TOPOLOGY
           value: "1,1,1,1"
     ```
-  
 
-    and it runs the simple_pytorch manual code from the docker image:
-    
+    The container runs `simple_pytorch.py`, which ships in the image under
+    `/workspace/examples/`:
+
     ```yaml
       command:
         - /bin/bash
         - -c
         - |
+          set -ex
           export PYTHONUNBUFFERED=1
           export TPU_LAUNCH_BLOCKING=1
           export ABSL_LOGGING_MIN_LOG_LEVEL=0
@@ -199,15 +130,14 @@ def _(mo):
           python3 ./simple_pytorch.py
           echo "=== Single-Host single-device Workload Completed Successfully ==="
     ```
-    
-    This is a very simple single-device pytorch program, with nothing surprising:
 
+    This is the whole program:
     """)
   return
 
 
 @app.cell(hide_code=True)
-def _(mo):
+def _():
   import torch
 
   device = torch.device("tpu")  # Change from cuda to tpu
@@ -227,44 +157,224 @@ def _(mo):
   print(f"cpu_tensor is on: {cpu_tensor.device}")
   print(f"tpu_tensor is on: {tpu_tensor.device}")
   print(f"direct_tpu_tensor is on: {direct_tpu_tensor.device}")
+  return
 
 
 @app.cell(hide_code=True)
 def _(mo):
   mo.md(r"""
-    and is in `examples/simple_pytorch/simple_pytorch.py`
-    
-    As kubectl consumes a manifest file off disk, we patch in the environment
-    variables here for convenience, and then apply the manifest.
+    Patch the image and node pool into the manifest and apply it:
 
     ```bash
-    sed -i "s|<DOCKER_IMAGE>|${ARTIFACT_REGISTRY_URL}/${DOCKER_IMAGE}|g" examples/simple_pytorch/torchtpu_singledevice_slice_job.yaml
+    sed -i "s|<DOCKER_IMAGE>|${DOCKER_IMAGE}|g" examples/simple_pytorch/torchtpu_singledevice_slice_job.yaml
     sed -i "s|<NODEPOOL_NAME>|${NODEPOOL_NAME}|g" examples/simple_pytorch/torchtpu_singledevice_slice_job.yaml
     kubectl apply -f examples/simple_pytorch/torchtpu_singledevice_slice_job.yaml
     ```
 
-    Check workload and pod status:
+    Check job and pod status, then read the logs:
 
     ```bash
-    kubectl get job -n default
-    kubectl get pods -n default
+    kubectl get job,pods -n default
+    kubectl logs -n default -l job-name=torchtpu-singledevice-1chip-job -f
     ```
-    
-    and you can query the logs for the pod based on the job name:
-    ```bash
-    kubectl logs -n default -l job-name=torchtpu-singledevice-1chip-job
-    ```
-    
-    We should be able to see the job and pod running and eventually complete with the expected output logged.
 
+    The job runs to completion and prints the four lines shown above.
+
+    ## Run distributed workloads on GKE
+
+    ### Single host, multiple chips (4 chips / 8 devices on one host)
+
+    The first step up from the single-device example is to use every TPU
+    device on one host. Submit a single-host Kubernetes `Job` by first updating
+    the manifest with your Docker image and node pool name and then launching
+    the job using `kubectl`.
+
+    The manifest `examples/tensor_parallel/torchtpu_singlehost_slice_job.yaml`
+    applies to a single host of 4 v7x TPUs (8 TensorCores), so the slice
+    topology is `2x2x1`:
+
+    ```yaml
+        cloud.google.com/gke-tpu-slice-topology: 2x2x1
+    ```
+
+    TorchTPU interprets this as a `2x2x1x2` topology because it launches one
+    process per TPU TensorCore:
+
+    ```yaml
+        - name: TORCH_TPU_TOPOLOGY
+          value: "2,2,1,2"
+    ```
+
+    It runs the manual tensor-parallel example from the Docker image:
+
+    ```yaml
+      command:
+        - /bin/bash
+        - -c
+        - |
+          set -ex
+          export PYTHONUNBUFFERED=1
+          export TPU_LAUNCH_BLOCKING=1
+          export ABSL_LOGGING_MIN_LOG_LEVEL=0
+          echo "=== Starting Single-Host 4-Chip (8-Device) TPU v7x Workload ==="
+          cd /workspace/examples/tensor_parallel/manual/
+          bash ./launch_singlehost.sh
+          echo "=== Single-Host 4-Chip Workload Completed Successfully ==="
+    ```
+
+    `examples/tensor_parallel/manual/launch_singlehost.sh` detects the TPU
+    topology, exports it, and starts one process per TPU device with
+    `torch.distributed.run` (`torchrun`) running
+    `examples/tensor_parallel/manual/tp_worker.py`:
+
+    ```bash
+    # Detect and export TPU configuration dynamically.
+    eval "$(python3 -m torch.tpu.distributed)"
+    export TORCH_TPU_TOPOLOGY TORCH_TPU_SLICEBUILDER_ADDRESSES
+
+    python3 -m torch.distributed.run --nnodes=1 --node_rank=0 \
+        --master_addr=localhost --master_port=29500 \
+        --nproc_per_node=8 ./tp_worker.py
+    ```
+
+    The worker and launch scripts are in `examples/tensor_parallel/manual/`.
+
+    Patch the image and node pool into the manifest and apply it:
+
+    ```bash
+    sed -i "s|<DOCKER_IMAGE>|${DOCKER_IMAGE}|g" examples/tensor_parallel/torchtpu_singlehost_slice_job.yaml
+    sed -i "s|<NODEPOOL_NAME>|${NODEPOOL_NAME}|g" examples/tensor_parallel/torchtpu_singlehost_slice_job.yaml
+    kubectl apply -f examples/tensor_parallel/torchtpu_singlehost_slice_job.yaml
+    ```
+
+    Check job and pod status:
+
+    ```bash
+    kubectl get job,pods -n default
+    ```
+
+    ### Multiple hosts (64 chips / 128 devices across 16 hosts)
+
+    To scale past one host, the same example runs as a Kubernetes `JobSet`:
+    one pod per host, 16 hosts for a `4x4x4` slice, with
+    `examples/tensor_parallel/manual/launch_multihost.sh` deriving each host's
+    rank from its position in the slice. Update the manifest with your Docker
+    image and 64-chip node pool name and apply it with `kubectl`:
+
+    ```bash
+    sed -i "s|<DOCKER_IMAGE>|${DOCKER_IMAGE}|g" examples/tensor_parallel/torchtpu_multihost_slice_jobset.yaml
+    sed -i "s|<NODEPOOL_NAME>|${NODEPOOL_NAME}|g" examples/tensor_parallel/torchtpu_multihost_slice_jobset.yaml
+    kubectl apply -f examples/tensor_parallel/torchtpu_multihost_slice_jobset.yaml
+    ```
+
+    Check `JobSet` and pod status:
+
+    ```bash
+    kubectl get jobset,pods -n default
+    ```
+
+    ## Run an upstream PyTorch example
+
+    Because TorchTPU is a native PyTorch backend (`device="tpu"`,
+    `torch.accelerator`, distributed `backend="tpu_dist"`), you can pull and
+    run standard scripts from the upstream
+    [`pytorch/examples`](https://github.com/pytorch/examples) repository
+    directly on GKE.
+
+    ### Example: Running upstream MNIST on GKE
+
+    The upstream [`pytorch/examples/mnist`](https://github.com/pytorch/examples/tree/main/mnist)
+    training script (`mnist/main.py`) uses PyTorch's device-agnostic
+    `torch.accelerator` API:
+
+    ```python
+    if use_accel:
+        device = torch.accelerator.current_accelerator()
+    else:
+        device = torch.device("cpu")
+    ```
+
+    When `torch_tpu` is installed in the container,
+    `torch.accelerator.current_accelerator()` automatically selects the `"tpu"`
+    device, requiring **zero code changes** to `mnist/main.py`.
+
+    To run `mnist/main.py` on a single TPU device on GKE starting from
+    `examples/simple_pytorch/torchtpu_singledevice_slice_job.yaml`:
+
+    1.  **Update the container `command:` block** in
+        `examples/simple_pytorch/torchtpu_singledevice_slice_job.yaml` to install
+        `git`, clone
+        [`https://github.com/pytorch/examples.git`](https://github.com/pytorch/examples),
+        keep `DataLoader` `num_workers` at its default (`0`) so it does not fork
+        a worker subprocess that attempts to re-acquire the `libtpu` device
+        lockfile, and run `mnist/main.py`:
+
+        ```yaml
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -ex
+              export PYTHONUNBUFFERED=1
+              apt-get update && apt-get install -y git
+              git clone --depth 1 https://github.com/pytorch/examples.git /tmp/pytorch_examples
+              cd /tmp/pytorch_examples/mnist
+              sed -i "/'num_workers': 1,/d; /'persistent_workers': True,/d" main.py
+              python3 main.py --epochs=1 --dry-run
+        ```
+
+    2.  **Delete any previous run of the job** (since Kubernetes `Job` specs are
+        immutable once created), patch the placeholders if needed, apply the
+        updated manifest, and stream the MNIST training logs:
+
+        ```bash
+        kubectl delete -f examples/simple_pytorch/torchtpu_singledevice_slice_job.yaml --ignore-not-found
+        sed -i "s|<DOCKER_IMAGE>|${DOCKER_IMAGE}|g" examples/simple_pytorch/torchtpu_singledevice_slice_job.yaml
+        sed -i "s|<NODEPOOL_NAME>|${NODEPOOL_NAME}|g" examples/simple_pytorch/torchtpu_singledevice_slice_job.yaml
+        kubectl apply -f examples/simple_pytorch/torchtpu_singledevice_slice_job.yaml
+        kubectl logs -n default -l job-name=torchtpu-singledevice-1chip-job -f
+        ```
+
+    ### Choosing a manifest template for other upstream examples
+
+    To run other single-device or distributed upstream examples, pick the
+    reference manifest template matching your target topology:
+
+    | Workload Type | Manifest Path | TPU Topology (`gke-tpu-topology`) | `TORCH_TPU_TOPOLOGY` | Description |
+    | :--- | :--- | :--- | :--- | :--- |
+    | **Single-Device** (1 TensorCore on a 4-chip host) | `examples/simple_pytorch/torchtpu_singledevice_slice_job.yaml` | `2x2x1` | `"1,1,1,1"` | Runs a single Python process on 1 TPU device. |
+    | **Single-Host Distributed** (4 chips / 8 cores) | `examples/tensor_parallel/torchtpu_singlehost_slice_job.yaml` | `2x2x1` | `"2,2,1,2"` | Runs 8 distributed ranks (`WORLD_SIZE=8`) on a single 4-chip host via `torchrun`. |
+    | **Multi-Host Distributed** (64 chips / 128 cores) | `examples/tensor_parallel/torchtpu_multihost_slice_jobset.yaml` | `4x4x4` | `"4,4,4,2"` | Kubernetes `JobSet` coordinating 16 worker pods across a 64-chip slice. |
+
+    To target other TPU slice topologies, update
+    `cloud.google.com/gke-tpu-slice-topology`,
+    `cloud.google.com/gke-tpu-topology`, and `TORCH_TPU_TOPOLOGY` in the
+    manifest (see
+    [TPU VM system architecture](https://docs.cloud.google.com/tpu/docs/system-architecture-tpu-vm)
+    and
+    [TPU machine types and topologies](https://docs.cloud.google.com/compute/docs/tpus/tpu-machines)).
+
+    ### Porting an upstream PyTorch example to run on GKE
+
+    Because TorchTPU is a native PyTorch backend, getting an upstream PyTorch
+    example or test running on GKE is a minimal process:
+
+    *   **No code changes needed for non-distributed examples**: Non-distributed
+        examples written for standard PyTorch devices (via `torch.accelerator`
+        or `torch.device`) work with TorchTPU without code changes.
+    *   **Non-deprecated examples are expected to work**: Actively maintained,
+        non-deprecated upstream PyTorch examples and modern APIs work out of
+        the box (see
+        [Supported feature set](6_reference_1_supported_feature_set.py) for
+        details).
+    *   **Distributed examples may need minor modifications**: Some upstream
+        distributed examples are overtuned to other devices (such as GPU- or
+        NCCL-specific backends, flags, or sharding assumptions) and may require
+        minor modifications to run on TPU (see the distributed sections above
+        and [FSDP best practices](3_practical_examples_3_fsdp_best_practices.py)).
     """)
   return
 
-@app.cell(hide_code=True)
-def _(mo):
-  mo.md(r"""
-    """)
-  return
 
 if __name__ == "__main__":
   app.run()

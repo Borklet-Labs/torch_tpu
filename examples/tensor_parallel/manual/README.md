@@ -44,7 +44,7 @@ bash ./launch_multihost.sh
 
 ### 2. Running on GKE
 
-If you haven't set up your cluster yet, first complete the **One-time setup**
+If you haven't set up your cluster yet, first complete the **Before we begin**
 section in
 [Get started with TorchTPU on GKE](../../../docs/markdown/1_basics_3_get_started_on_gke.md).
 
@@ -58,9 +58,9 @@ cd /workspace/examples/tensor_parallel/manual/
 bash ./launch_singlehost.sh
 ```
 
-To submit it, follow the **Single-Host Workload Execution (4-chip / 8-device
-slice)** section in
-[Running distributed workloads on GKE](../../../docs/markdown/1_basics_5_distributed_on_gke.md).
+To submit it, follow the **Single host, multiple chips (4 chips / 8 devices on
+one host)** section in
+[Get started with TorchTPU on GKE](../../../docs/markdown/1_basics_3_get_started_on_gke.md).
 
 #### Multi-Host (64 Chips / 128 TPU Cores)
 
@@ -73,9 +73,9 @@ cd /workspace/examples/tensor_parallel/manual/
 bash ./launch_multihost.sh
 ```
 
-To submit it, follow the **Multi-Host Workload Execution (64-chip / 128-device
-slice)** section in
-[Running distributed workloads on GKE](../../../docs/markdown/1_basics_5_distributed_on_gke.md).
+To submit it, follow the **Multiple hosts (64 chips / 128 devices across 16
+hosts)** section in
+[Get started with TorchTPU on GKE](../../../docs/markdown/1_basics_3_get_started_on_gke.md).
 
 ## Files in This Directory
 

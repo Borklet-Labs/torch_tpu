@@ -58,12 +58,12 @@ bash ./launch.sh
 
 Then:
 
-1.  If you haven't set up your cluster yet, complete the **One-time setup**
+1.  If you haven't set up your cluster yet, complete the **Before we begin**
     section in
     [Get started with TorchTPU on GKE](../../../docs/markdown/1_basics_3_get_started_on_gke.md).
-2.  Submit the job by following the **Single-Host Workload Execution (4-chip /
-    8-device slice)** section in
-    [Running distributed workloads on GKE](../../../docs/markdown/1_basics_5_distributed_on_gke.md).
+2.  Submit the job by following the **Single host, multiple chips (4 chips / 8
+    devices on one host)** section in
+    [Get started with TorchTPU on GKE](../../../docs/markdown/1_basics_3_get_started_on_gke.md).
 
 ## Files in This Directory
 

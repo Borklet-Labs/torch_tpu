@@ -20,6 +20,13 @@ pip install xprof tensorboard
 ```
 ````
 
+!!! note
+
+```
+**PyTorch version:** the native `torch.profiler` TPU integration requires
+PyTorch 2.12 or newer.
+```
+
 ## 1. The TPU profiler
 
 Standard `torch.profiler` (integrated with `torch_tpu`) provides a **context
@@ -165,7 +172,7 @@ tensorboard --logdir=/tmp/profiler_output --port=6006
 XProf can also be run as a standalone server.
 
 ```shell
-xprof --logdir=profiler/demo --port=6006
+xprof --logdir=/tmp/profiler_output --port=6006
 ```
 
 **Step 3:** Open `http://localhost:6006` in your browser and select the
@@ -177,6 +184,11 @@ xprof --logdir=profiler/demo --port=6006
 You must run TensorBoard from the VS Code integrated terminal so that port
 forwarding works automatically.
 ```
+
+**On GKE:** write the trace directory to a Cloud Storage bucket mounted with the
+[Cloud Storage FUSE CSI driver](https://docs.cloud.google.com/kubernetes-engine/docs/how-to/persistent-volumes/cloud-storage-fuse-csi-driver)
+so the traces outlive the pod, then open them with `xprof
+--logdir=gs://<bucket>/profiler_output`.
 
 <!-- mdformat off(reason: standard GFM table rendering in Critique and Code Search) -->
 | View               | What it shows                                          |

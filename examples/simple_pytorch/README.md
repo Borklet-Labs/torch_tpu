@@ -2,8 +2,8 @@
 
 This directory provides a minimal single-device PyTorch example
 (`simple_pytorch.py`) demonstrating TPU initialization and tensor placement
-(`device="tpu"`), along with the reference Kueue cohort setup and single-device
-Kubernetes `Job` manifest for running on Google Kubernetes Engine (GKE).
+(`device="tpu"`), along with the reference single-device Kubernetes `Job`
+manifest for running on Google Kubernetes Engine (GKE).
 
 ## Overview
 
@@ -41,17 +41,15 @@ python3 ./simple_pytorch.py
 
 To run it:
 
-1.  If you haven't set up your cluster yet, complete the **One-time setup**
+1.  If you haven't set up your cluster yet, complete the **Before we begin**
     section in
     [Get started with TorchTPU on GKE](../../docs/markdown/1_basics_3_get_started_on_gke.md).
-2.  Submit the job by following the **Single-Host Workload Execution (1-chip /
-    1-device slice)** section in the same guide. It uses this manifest.
+2.  Submit the job by following the **Run a single-device workload (one
+    TensorCore of a 4-chip host)** section in the same guide. It uses this
+    manifest.
 
 ## Files in This Directory
 
 -   `simple_pytorch.py`: Minimal single-device PyTorch script on TPU.
--   `torchtpu_kueue_cohort_setup.yaml`: One-time Kueue `ClusterQueue`,
-    `LocalQueue` (`multislice-queue`), and `ResourceFlavor` configuration for
-    GKE.
 -   `torchtpu_singledevice_slice_job.yaml`: Reference Kubernetes `Job` manifest
     for single-device workloads on TPU v7x.

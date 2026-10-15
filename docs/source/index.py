@@ -40,10 +40,6 @@ def _(mo):
         Setup TorchTPU on a TPU VM.
     *   [Get started with TorchTPU on GKE](1_basics_3_get_started_on_gke.py):
         Use TorchTPU through GKE.
-    *   [Run PyTorch examples and tests](1_basics_4_run_upstream_pytorch_examples.py): 
-        TorchTPU is native PyTorch: how to run upstream PyTorch examples and tests with TorchTPU.
-    *   [Running distributed workloads on GKE](1_basics_5_distributed_on_gke.py):
-        Run distributed workloads on GKE.
     *   [How TorchTPU works](2_in_depth_1_how_torchtpu_works.py): The basic design top to bottom.
     *   [The TorchTPU memory model](2_in_depth_2_torchtpu_and_tpu_memory_model.py): Using views effectively on TPU.
     *   [The TorchTPU execution model](2_in_depth_3_torchtpu_execution_modes.py): In depth detail of the execution modes TorchTPU supports. 

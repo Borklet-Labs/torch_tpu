@@ -12,13 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Public Reference JobSet manifest for multi-host PyTorch Tensor Parallel execution on TPU v7x (Trillium)
+# Public Reference JobSet manifest for multi-host PyTorch Tensor Parallel execution on TPU v7x
 # Dynamic slice topology: 4x4x4 (16 physical VMs / 64 TPU chips / 128 PjRt addressable devices)
 #
 # Purpose:
-# 1. Demonstrates multi-host Tensor Parallel execution across 16 TPU VMs (64 chips) using multihost_wrapper.
-# 2. Uses label kueue.x-k8s.io/queue-name: lq to admit the workload via universal LocalQueue lq, where Kueue
-#    automatically routes to ResourceFlavor rf-64chip based on the nodeSelector topology label (4x4x4).
+# Demonstrates multi-host Tensor Parallel execution across 16 TPU VMs (64 chips) using multihost_wrapper.
 #
 # Placeholder variables to customize:
 # - <NODEPOOL_NAME>: Name of your GKE 64-chip TPU node pool (e.g. your-v7x-64chip-nodepool).
@@ -29,16 +27,12 @@ kind: JobSet
 metadata:
   name: torchtpu-multihost-64chip-jobset
   namespace: default
-  labels:
-    kueue.x-k8s.io/queue-name: multislice-queue
 spec:
   replicatedJobs:
     - name: slice-job
       replicas: 1
       template:
         metadata:
-          labels:
-            kueue.x-k8s.io/queue-name: multislice-queue
           annotations:
             cloud.google.com/gke-tpu-slice-topology: 4x4x4
         spec:

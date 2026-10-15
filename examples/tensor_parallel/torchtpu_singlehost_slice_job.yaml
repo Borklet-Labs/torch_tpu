@@ -12,13 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Public Reference Kubernetes Job manifest for single-host PyTorch Tensor Parallel execution on TPU v7x (Trillium)
+# Public Reference Kubernetes Job manifest for single-host PyTorch Tensor Parallel execution on TPU v7x
 # Slice topology: 2x2x1 (1 physical VM / 4 TPU chips / 8 addressable TPU devices)
 #
 # Purpose:
-# 1. Demonstrates single-host Tensor Parallel execution on a 4-chip TPU v7x slice using singlehost_wrapper.
-# 2. Uses label kueue.x-k8s.io/queue-name: lq to admit the workload via universal LocalQueue lq, where Kueue
-#    automatically routes to ResourceFlavor rf-4chip based on the nodeSelector topology label (2x2x1).
+# Demonstrates single-host Tensor Parallel execution on a 4-chip TPU v7x slice using singlehost_wrapper.
 #
 # Placeholder variables to customize:
 # - <NODEPOOL_NAME>: Name of your GKE 4-chip TPU node pool (e.g. your-v7x-4chip-nodepool).
@@ -29,14 +27,11 @@ kind: Job
 metadata:
   name: torchtpu-singlehost-4chip-job
   namespace: default
-  labels:
-    kueue.x-k8s.io/queue-name: multislice-queue
 spec:
   template:
     metadata:
       labels:
         google.com/tpu: "Exists"
-        kueue.x-k8s.io/queue-name: multislice-queue
       annotations:
         cloud.google.com/gke-tpu-slice-topology: 2x2x1
     spec:
