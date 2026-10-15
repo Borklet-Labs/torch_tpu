@@ -137,8 +137,8 @@ absl::StatusOr<at::Tensor> CreateDeviceRngStateTensor(c10::Device device,
   // Ensure H2D allocation and memory copy target the intended TPU device
   // rather than the calling thread's currently active device.
   c10::DeviceGuard guard(device);
-  ABSL_CHECK_NE(  // CRASH_OK=transfers require active stream
-      GetEagerMode(), EagerMode::kInternalCompileFxGraph)
+  TT_RET_CHECK(GetEagerMode() != EagerMode::kInternalCompileFxGraph,
+               error::kFailedPrecondition)
       << "cannot initialize an eager mode generator during an FX graph trace";
   const uint64_t host_data[2] = {seed, offset};
   std::vector<uint8_t> host_data_bytes(

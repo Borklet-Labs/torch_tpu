@@ -4903,6 +4903,15 @@ module {
       with execution_mode.set_eager_mode(EagerMode._INTERNAL_COMPILE_FX_GRAPH):
         torch.rand(1, device="tpu")
 
+  @et.why_tpu_only("TorchTPU specific eager mode generator error.")
+  def test_eager_generator_seed_during_fx_trace(self):
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""manual_seed_all(): cannot initialize an eager mode generator during an FX graph trace""",
+    ):
+      with execution_mode.set_eager_mode(EagerMode._INTERNAL_COMPILE_FX_GRAPH):
+        torch.manual_seed(42)
+
   @et.why_tpu_only("TorchTPU specific eager mode")
   def test_record_event_during_fx_trace(self):
     with et.assert_raises_message(
