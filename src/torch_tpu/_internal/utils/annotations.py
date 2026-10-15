@@ -210,6 +210,19 @@ def _attach_stage_metadata(
       _safe_setattr(t, TT_API_PREFER, prefer)
 
 
+def _get_caller_frame() -> tuple[Any, int]:
+  """Unwinds internal annotation frames to return caller frame and stacklevel."""
+  try:
+    frame = sys._getframe(2)
+    stacklevel = 2
+    while frame is not None and frame.f_globals.get("__name__") == __name__:
+      frame = frame.f_back
+      stacklevel += 1
+    return frame, stacklevel
+  except (AttributeError, ValueError):
+    return None, 2
+
+
 def _create_warning_wrapper(
     fn_to_wrap: Callable[..., Any],
     display_target: Any,
@@ -252,17 +265,7 @@ def _create_warning_wrapper(
     # True. Dynamo can't trace `sys._getframe()`, so this needs a trace-time
     # caller check.
     if (raises or not _warned) and not torch.compiler.is_compiling():
-      try:
-        frame = sys._getframe(1)
-        frames_skipped = 0
-        while frame is not None and frame.f_globals.get("__name__") == __name__:
-          frame = frame.f_back
-          frames_skipped += 1
-        caller_frame = frame
-      except (AttributeError, ValueError):
-        caller_frame = None
-        frames_skipped = 0
-
+      caller_frame, stacklevel = _get_caller_frame()
       if not _is_framework_caller_frame(caller_frame):
         name = getattr(display_target, "__name__", str(display_target))
         if raises:
@@ -274,9 +277,7 @@ def _create_warning_wrapper(
         msg = stage.format_warning_message(name, reason, version)
         cat = stage.warning_category
         if cat is not None:
-          _warned = tt_warnings.warn(
-              msg, category=cat, stacklevel=2 + frames_skipped
-          )
+          _warned = tt_warnings.warn(msg, category=cat, stacklevel=stacklevel)
     return fn_to_wrap(*args, **kwargs)
 
   return wrapper
@@ -304,16 +305,17 @@ def _wrap_class_getattribute_for_stages(target: type[Any]) -> None:
         (info := unwarned.get(name))
         and (cat := info.stage.warning_category)
         and not torch.compiler.is_compiling()
-        and not _is_framework_caller_frame(sys._getframe(1))
     ):
-      msg = info.stage.format_warning_message(name, info.reason, info.version)
-      if tt_warnings.warn(msg, category=cat, stacklevel=2):
-        unwarned.pop(name, None)
-        if not unwarned:
-          if orig_getattribute is not None:
-            target.__getattribute__ = orig_getattribute  # type: ignore[method-assign]
-          else:
-            delattr(target, "__getattribute__")
+      caller_frame, stacklevel = _get_caller_frame()
+      if not _is_framework_caller_frame(caller_frame):
+        msg = info.stage.format_warning_message(name, info.reason, info.version)
+        if tt_warnings.warn(msg, category=cat, stacklevel=stacklevel):
+          unwarned.pop(name, None)
+          if not unwarned:
+            if orig_getattribute is not None:
+              target.__getattribute__ = orig_getattribute  # type: ignore[method-assign]
+            else:
+              delattr(target, "__getattribute__")
     return value
 
   target.__getattribute__ = __getattribute__  # type: ignore[method-assign]
