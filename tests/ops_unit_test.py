@@ -3383,6 +3383,98 @@ class OpsUnitTest(TorchTpuVsCpuTestBase):
     self.assert_close_tpu_vs_cpu(compute, rtol=5e-1, atol=5e-1)
 
   @parameterized.product(
+      scale_kind=["tensorwise", "rowwise"],
+      dtypes=[
+          # dgrad: grad_output (E5M2) @ weight.T (E4M3)
+          (torch.float8_e5m2, torch.float8_e4m3fn),
+          # wgrad: input.T (E4M3) @ grad_output (E5M2)
+          (torch.float8_e4m3fn, torch.float8_e5m2),
+          (torch.float8_e5m2, torch.float8_e5m2),  # pure e5m2 matmul
+      ],
+      shape=[(16, 32, 16), (32, 64, 48)],
+      out_dtype=[torch.bfloat16, torch.float32],
+  )
+  def test_scaled_mm_mixed_fp8_dtypes(
+      self, scale_kind, dtypes, shape, out_dtype
+  ):
+    """Tests torch._scaled_mm with mixed float8 dtypes and e5m2 matmuls.
+
+    Covers forward and backward gradient combinations:
+    - a=e5m2, b=e4m3fn (dgrad: grad_output @ weight.T)
+    - a=e4m3fn, b=e5m2 (wgrad: input.T @ grad_output)
+    - a=e5m2, b=e5m2 (not supported in CUDA cuBLASLt, supported natively on TPU)
+    Tested with both tensorwise (1D/scalar) and rowwise ((M,1) x (1,N)) scaling,
+    contiguous and non-contiguous column-major mat2 layouts, the .out overload
+    for tensorwise scaling, and out_dtype in (bfloat16, float32) against CPU
+    FP32 reference.
+
+    Args:
+      scale_kind: Scaling configuration ("tensorwise" or "rowwise").
+      dtypes: Tuple of (dtype_a, dtype_b) for the two input matrices.
+      shape: Tuple of (m, k, n) matrix dimensions.
+      out_dtype: Output tensor data type.
+    """
+    m, k, n = shape
+    dtype_a, dtype_b = dtypes
+    self_fp8 = torch.randn(m, k, dtype=torch.float32).to(dtype_a)
+    mat2_fp8 = torch.randn(k, n, dtype=torch.float32).to(dtype_b)
+    mat2_t_fp8 = torch.randn(n, k, dtype=torch.float32).to(dtype_b)
+
+    if scale_kind == "rowwise":
+      scale_a = torch.rand(m, 1, dtype=torch.float32) + 0.5
+      scale_b = torch.rand(1, n, dtype=torch.float32) + 0.5
+    else:
+      scale_a = torch.tensor([1.2], dtype=torch.float32)
+      scale_b = torch.tensor([0.8], dtype=torch.float32)
+
+    def compute(device):
+      if device == "cpu":
+        res = (self_fp8.float() * scale_a) @ (mat2_fp8.float() * scale_b)
+        return res.to(out_dtype)
+      return torch._scaled_mm(
+          self_fp8.to(device),
+          mat2_fp8.to(device),
+          scale_a.to(device),
+          scale_b.to(device),
+          out_dtype=out_dtype,
+      )
+
+    self.assert_close_tpu_vs_cpu(compute, rtol=1.6e-2, atol=5e-2)
+
+    def compute_col_major(device):
+      mat2_nt = mat2_t_fp8.to(device).t()
+      if device == "cpu":
+        res = (self_fp8.float() * scale_a) @ (mat2_nt.float() * scale_b)
+        return res.to(out_dtype)
+      return torch._scaled_mm(
+          self_fp8.to(device),
+          mat2_nt,
+          scale_a.to(device),
+          scale_b.to(device),
+          out_dtype=out_dtype,
+      )
+
+    self.assert_close_tpu_vs_cpu(compute_col_major, rtol=1.6e-2, atol=5e-2)
+
+    if scale_kind == "tensorwise":
+
+      def compute_out(device):
+        if device == "cpu":
+          res = (self_fp8.float() * scale_a) @ (mat2_fp8.float() * scale_b)
+          return res.to(out_dtype)
+        out = torch.empty((m, n), dtype=out_dtype, device=device)
+        return torch.ops.aten._scaled_mm.out(  # pylint: disable=protected-access
+            self_fp8.to(device),
+            mat2_fp8.to(device),
+            scale_a.to(device),
+            scale_b.to(device),
+            out_dtype=out_dtype,
+            out=out,
+        )
+
+      self.assert_close_tpu_vs_cpu(compute_out, rtol=1.6e-2, atol=5e-2)
+
+  @parameterized.product(
       m=[16, 32],
       n=[16, 32],
       k=[16, 32],
