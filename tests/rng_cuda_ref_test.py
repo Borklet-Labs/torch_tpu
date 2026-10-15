@@ -13,12 +13,10 @@
 # limitations under the License.
 
 import functools
-import os
 import struct
 import threading
 from typing import Any, Callable
 import unittest
-from unittest import mock
 
 from absl import flags
 from absl import logging
@@ -1117,12 +1115,10 @@ class MultiThreadRngTest(_BaseRngTest):
         torch.equal(generators[0].get_state(), generators[1].get_state())
     )
 
-  @mock.patch.dict(os.environ, {"TORCHINDUCTOR_COMPILE_THREADS": "0"})
   @torch._inductor.config.patch(compile_threads=1)
   def test_concurrent_compile_tracing_and_eager_rng(self):
     """Verifies concurrent eager RNG operations during torch.compile tracing."""
-    # Force single-threaded compilation: the env var prevents subprocess
-    # spawning in hermetic test runners, while compile_threads=1 enforces
+    # Force single-threaded compilation: compile_threads=1 enforces
     # single-threaded compilation in this thread's ContextVar scope.
     stop_event = threading.Event()
     errors = []
