@@ -50,6 +50,7 @@
 #endif
 #include "csrc/common/to_string.h"
 #include "csrc/distributed/types.h"
+#include "csrc/eager/device_assignment.h"
 #include "csrc/eager/device_buffer.h"
 #include "csrc/ops/op_names.h"
 #include "csrc/pjrt/pjrt_state.h"
@@ -67,10 +68,6 @@ const std::vector<int64_t>& GetGlobalRankToDeviceId();  // INT_VEC_OK
 // ranks in rank order, or of every device in device id order before the world
 // process group exists. Empty on a single device.
 absl::StatusOr<std::vector<int64_t>> GetWorldDeviceAssignment();  // INT_VEC_OK
-
-// Returns, for each world rank r, its position in the physical-topology order
-// computed by `ComputeRankToTopologyOrder` over `GetGlobalDeviceAttributes()`.
-const std::vector<int64_t>& GetGlobalRankToTopologyOrder();  // INT_VEC_OK
 
 // Returns `order` such that `order[r]` is world rank r's position when all
 // ranks are sorted by `(slice_index, x, y, z, core_on_chip, id)`, where
@@ -167,13 +164,13 @@ class ProcessGroupTpu : public c10d::Backend {
     return member_device_ids_;
   }
 
-  const std::vector<int64_t>& device_assignment() const {  // INT_VEC_OK
+  const DeviceAssignment& device_assignment() const {
     return device_assignment_;
   }
 
   // Returns the replica groups emitted as StableHLO replica_groups: positions
-  // into device_assignment_ (one list per subgroup; group i is
-  // {offset_i, ..., offset_i+K-1}). These are NOT world ranks.
+  // into device_assignment_, a single group {0, ..., K-1}. These are NOT world
+  // ranks.
   const DeviceGroupList& GetReplicaGroups() const;
 
   c10::intrusive_ptr<c10d::Work> allreduce(
@@ -422,24 +419,21 @@ class ProcessGroupTpu : public c10d::Backend {
 
   int64_t addressable_device_id_;  // The TPU 'assigned' to this process.
 
-  // World rank of each member of this process's subgroup, indexed by PG rank,
-  // in the caller's order (sort_ranks=False order is preserved); never
-  // re-sorted.
+  // World rank of each member of this process group, indexed by PG rank, in
+  // the caller's order (sort_ranks=False order is preserved); never re-sorted.
   DeviceGroup member_world_ranks_;
 
   // Device id of each member, indexed by PG rank
   // (member_device_ids_[i] == device of world rank member_world_ranks_[i]).
-  // Equals this subgroup's slice of device_assignment_.
   DeviceGroup member_device_ids_;
 
-  // World-sized device assignment permuted to match the flattened order of all
-  // subgroups (device_assignment_[p] == device of
-  // flattened_subgroup_member_world_ranks[p]).
-  std::vector<int64_t> device_assignment_;  // INT_VEC_OK
+  // Device assignment of this group's executables: this group's devices only,
+  // in PG-rank order (device_assignment_.local[p] == member_device_ids_[p]).
+  DeviceAssignment device_assignment_;
 
-  // Positions into device_assignment_, one list per subgroup (group i is
-  // {offset_i, ..., offset_i+K-1}). Emitted as the replica_groups attribute of
-  // StableHLO collectives. These are NOT world ranks.
+  // Positions into device_assignment_: a single group {0, ..., K-1}. Emitted as
+  // the replica_groups attribute of StableHLO collectives. These are NOT world
+  // ranks.
   DeviceGroupList replica_groups_;
 
   // Monotonic sequence counter for uneven all_to_all and all_to_all_single

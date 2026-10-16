@@ -47,6 +47,7 @@
 #include "csrc/common/to_string.h"
 #include "csrc/common/utils.h"
 #include "csrc/eager/current_stream.h"
+#include "csrc/eager/device_assignment.h"
 #include "csrc/ops/op_builder_utils.h"
 #include "csrc/ops/op_names.h"
 #include "csrc/ops/python_context.h"
@@ -424,7 +425,7 @@ class DeferredOp {
              std::vector<Shape> output_shapes,
              OpSplitMode split_mode = OpSplitMode::kNone,
              Indices donated_indices = {},
-             std::vector<int64_t> device_assignment = {})  // INT_VEC_OK
+             DeviceAssignment device_assignment = {})
       : op_name_(op_name),
         op_builder_(std::move(op_builder)),
         inputs_(std::move(inputs)),
@@ -478,7 +479,13 @@ class DeferredOp {
 
   [[nodiscard]] const std::vector<int64_t>&  // INT_VEC_OK
   device_assignment() const {
-    return device_assignment_;
+    return device_assignment_.local;
+  }
+
+  // See DeviceAssignment::global.
+  [[nodiscard]] const std::vector<int64_t>&  // INT_VEC_OK
+  global_device_assignment() const {
+    return device_assignment_.global;
   }
 
  private:
@@ -498,7 +505,7 @@ class DeferredOp {
 
   // Custom device assignment (e.g. rank-to-device mapping for collectives or
   // Pallas kernels). Empty indicates default device assignment.
-  std::vector<int64_t> device_assignment_;  // INT_VEC_OK
+  DeviceAssignment device_assignment_;
 
   // The shapes of the outputs of the deferred op.
   std::vector<Shape> output_shapes_;
@@ -582,7 +589,7 @@ class DeviceBufferList {
       std::vector<DeviceBufferRef> inputs, OpParamCacheKeys op_param_cache_keys,
       std::vector<Shape> output_shapes,
       OpSplitMode split_mode = OpSplitMode::kNone, Indices donated_indices = {},
-      std::vector<int64_t> device_assignment = {});  // INT_VEC_OK
+      DeviceAssignment device_assignment = {});
 
   // Creates a DeviceBufferList that represents a compiled-mode placeholder.
   // This is a buffer that is not backed by any data, but is used to represent

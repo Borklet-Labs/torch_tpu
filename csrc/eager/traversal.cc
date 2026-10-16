@@ -381,6 +381,15 @@ GraphKey Traversal::BuildGraphKey() const {
         ABSL_CHECK_OK(  // CRASH_OK
             cloned_param_keys->SetParam("device_assignment",
                                         deferred_op.device_assignment()));
+        // A program that combines process groups tiles the op's collectives
+        // over the groups of its layout.
+        if (deferred_op.global_device_assignment() !=
+            deferred_op.device_assignment()) {
+          ABSL_CHECK_OK(  // CRASH_OK
+              cloned_param_keys->SetParam(
+                  "global_device_assignment",
+                  deferred_op.global_device_assignment()));
+        }
       }
     }
     const OpParamCacheKeys& op_param_keys =

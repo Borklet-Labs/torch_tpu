@@ -821,7 +821,6 @@ enum class OpName {
   kTopkValues,
   kTorchTpuInternalConstant,
   kTorchTpuInternalDataDependency,
-  kTorchTpuInternalGatherAllSubgroups,
   kTorchTpuInternalZeroSize,
   kTorchTpuOptimizationBarrier,
   kTorchTpuStorageAllocate,
@@ -2489,8 +2488,6 @@ ToString(  // NOLINT(google-readability-function-size)
       return "_torchtpu_internal_constant";
     case OpName::kTorchTpuInternalDataDependency:
       return "_torchtpu_internal_data_dependency";
-    case OpName::kTorchTpuInternalGatherAllSubgroups:
-      return "_torchtpu_internal_gather_all_subgroups";
     case OpName::kTorchTpuInternalZeroSize:
       return "_torchtpu_internal_zero_size";
     case OpName::kTorchTpuOptimizationBarrier:

@@ -27,6 +27,7 @@
 #include "csrc/common/dimension_types.h"
 #include "csrc/common/layout_utils.h"
 #include "csrc/common/shape.h"
+#include "csrc/eager/device_assignment.h"
 #include "csrc/eager/device_buffer.h"
 #include "csrc/ops/op_builder_utils.h"
 #include "csrc/ops/op_names.h"
@@ -61,7 +62,7 @@ struct DeferredOpParams {
   // (such as Pallas ops).
   Indices donated_indices = {};
   // Device assignment for the operation (e.g. rank-to-device mapping).
-  std::vector<int64_t> device_assignment = {};  // INT_VEC_OK
+  DeviceAssignment device_assignment = {};
   // Whether to allow materialization of the operation.
   bool allow_materialization = true;
 };

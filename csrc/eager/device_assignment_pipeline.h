@@ -34,6 +34,10 @@ namespace torch_tpu {
 struct OpDeviceAssignment {
   OpName op_name;
   absl::Span<const int64_t> device_assignment;
+  // The devices of every group of the layout of the op's process group (see
+  // DeviceAssignment::global); empty if unknown. Used when the program's ops
+  // run on different device sets.
+  absl::Span<const int64_t> global_device_assignment = {};
 };
 
 struct PallasDeviceAssignment {
@@ -42,8 +46,10 @@ struct PallasDeviceAssignment {
 
 // Resolves a single target device assignment across `ops` and `pallas_ops`.
 // If `pallas_ops` is non-empty, its device assignment serves as the
-// authoritative anchor. Differing device assignments emit an explicit
-// diagnostic warning and return an error (or throw if Pallas DAs conflict).
+// authoritative anchor. If the ops run on different device sets, resolves to
+// their global device assignments when those share one device set. Otherwise,
+// differing device assignments emit an explicit diagnostic warning and return
+// an error (or throw if Pallas DAs conflict).
 absl::StatusOr<std::vector<int64_t>>  // INT_VEC_OK
 ResolveDeviceAssignment(
     absl::Span<const OpDeviceAssignment> ops,
@@ -59,10 +65,14 @@ ResolveDeviceAssignmentForTraversal(
 // Rewrites rank-local collective attributes (`replica_groups`,
 // `source_target_pairs`, and CustomCall `backend_config` replica groups) from
 // `op_da` into partition indices of `resolved_da` using 1-to-1 index
-// permutation.
+// permutation. If `op_da` is not a permutation of `resolved_da`, instead tiles
+// the attributes over every group of the op's layout, `global_da` (the devices
+// of every group, group by group), which must be a permutation of
+// `resolved_da`.
 absl::Status RewriteAndTileOperationForSubgroup(
     mlir::Operation* absl_nonnull root_op, absl::Span<const int64_t> op_da,
-    absl::Span<const int64_t> resolved_da);
+    absl::Span<const int64_t> resolved_da,
+    absl::Span<const int64_t> global_da = {});
 
 // Applies partition-index replica rewriting to all MLIR operations emitted for
 // `deferred_op` (starting at `first_new_op` in the current block, plus any

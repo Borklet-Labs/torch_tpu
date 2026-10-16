@@ -228,6 +228,11 @@ torch_tpu_cc_test(
 )
 
 torch_tpu_cc_library(
+    name = "device_assignment",
+    hdrs = ["device_assignment.h"],
+)
+
+torch_tpu_cc_library(
     name = "device_buffer",
     srcs = [
         "device_buffer.cc",
@@ -237,6 +242,7 @@ torch_tpu_cc_library(
     ],
     deps = [
         ":current_stream",
+        ":device_assignment",
         ":eager_mode",
         "//csrc/common:cache_key",
         "//csrc/common:dimension_types",
@@ -618,6 +624,7 @@ torch_tpu_cc_library(
         "op_dispatcher.h",
     ],
     deps = [
+        ":device_assignment",
         ":device_buffer",
         ":device_buffer_utils",
         ":eager_mode",
@@ -1076,6 +1083,7 @@ torch_tpu_cc_library(
     # otherwise, remote linking fails with DISTRIBUTOR(OUT_OF_MEMORY).
     tags = ["requires-mem:16g"],
     deps = [
+        ":device_assignment",
         ":device_buffer",
         ":eager_mode",
         ":events_queue",

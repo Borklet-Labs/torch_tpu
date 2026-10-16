@@ -786,10 +786,6 @@ absl::StatusOr<std::vector<int64_t>> GetWorldDeviceAssignment() {  // INT_VEC_OK
   return device_assignment;
 }
 
-const std::vector<int64_t>& GetGlobalRankToTopologyOrder() {  // INT_VEC_OK
-  return WorldTopology().rank_to_topo_order;
-}
-
 std::vector<int64_t> ComputeRankToTopologyOrder(  // INT_VEC_OK
     absl::Span<const PjRtDeviceAttributes> device_attrs) {
   // (slice_index, x, y, z, core_on_chip, id); defaults match
@@ -1767,9 +1763,21 @@ ProcessGroupTpu::ProcessGroupTpu(c10::intrusive_ptr<c10d::Store> store,
   for (int64_t i = 0; i < size_; ++i) {
     member_device_ids_[i] = topo.rank_to_device_id[member_world_ranks_[i]];
   }
-  PermuteDeviceAssignmentForSubgroups(subgroup_member_world_ranks,
-                                      topo.rank_to_device_id,
-                                      device_assignment_, replica_groups_);
+  // A program that combines this group's collectives with other groups' runs
+  // on every subgroup's devices, with the collectives tiled over the
+  // subgroups.
+  DeviceGroupList tiled_replica_groups;
+  PermuteDeviceAssignmentForSubgroups(
+      subgroup_member_world_ranks, topo.rank_to_device_id,
+      device_assignment_.global, tiled_replica_groups);
+  // Compile this group's collectives for its own devices only: partition p is
+  // the device of PG rank p. Each process group thus runs independent
+  // executables, and XLA's start-of-program barrier spans only these devices.
+  device_assignment_.local.assign(member_device_ids_.begin(),
+                                  member_device_ids_.end());
+  DeviceGroup local_partitions(size_);
+  std::iota(local_partitions.begin(), local_partitions.end(), 0);
+  replica_groups_ = DeviceGroupList({std::move(local_partitions)});
   ABSL_VLOG(1) << "[ProcessGroupTpu] ctor done: pg_id=" << pg_id
                << ", elapsed=" << NowMs() - ctor_t0
                << " ms, num_subgroups=" << subgroup_member_world_ranks.size();
@@ -1782,7 +1790,7 @@ ProcessGroupTpu::ProcessGroupTpu(c10::intrusive_ptr<c10d::Store> store,
                << ", group size: " << getSize()
                << ", device id: " << addressable_device_id_
                << ", group device ids: " << ToString(member_device_ids_)
-               << ", all subgroups: " << ToString(replica_groups_);
+               << ", replica groups: " << ToString(replica_groups_);
 }
 
 void ProcessGroupTpu::shutdown() {}

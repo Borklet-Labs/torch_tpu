@@ -296,6 +296,241 @@ TEST(DeviceAssignmentPipelineTest,
                          "world-sized device assignment"));
 }
 
+TEST(DeviceAssignmentPipelineTest, MixedGroupsResolveToTheGlobalDevices) {
+  const std::vector<int64_t> pair = {0, 1};              // INT_VEC_OK
+  const std::vector<int64_t> pair_layout = {0, 1, 2, 3,  // INT_VEC_OK
+                                            4, 5, 6, 7};
+  const std::vector<int64_t> stride = {0, 2, 4, 6};        // INT_VEC_OK
+  const std::vector<int64_t> stride_layout = {0, 2, 4, 6,  // INT_VEC_OK
+                                              1, 3, 5, 7};
+
+  TT_ASSERT_OK_AND_ASSIGN(
+      const std::vector<int64_t> resolved,  // INT_VEC_OK
+      ResolveDeviceAssignment({
+          OpDeviceAssignment{OpName::kDistributedAllReduce, pair, pair_layout},
+          OpDeviceAssignment{OpName::kDistributedAllReduce, stride,
+                             stride_layout},
+      }));
+
+  EXPECT_THAT(resolved, testing::ElementsAre(0, 1, 2, 3, 4, 5, 6, 7));
+}
+
+TEST(DeviceAssignmentPipelineTest, MixedGroupsWithoutGlobalDevicesAreRejected) {
+  const std::vector<int64_t> world = {0, 1, 2, 3, 4, 5, 6, 7};  // INT_VEC_OK
+  const std::vector<int64_t> half = {0, 1, 2, 3};               // INT_VEC_OK
+
+  const absl::StatusOr<std::vector<int64_t>> resolved =  // INT_VEC_OK
+      ResolveDeviceAssignment({
+          OpDeviceAssignment{OpName::kDistributedAllReduce, world},
+          OpDeviceAssignment{OpName::kDistributedAllReduce, half},
+      });
+
+  EXPECT_FALSE(resolved.ok());
+  EXPECT_EQ(resolved.status().code(), error::kInvalidArgument);
+  EXPECT_THAT(
+      resolved.status().message(),
+      testing::HasSubstr("device assignment mismatch across operations"));
+}
+
+TEST(DeviceAssignmentPipelineTest,
+     RewriteAndTileOperationForSubgroupTilesAGroupOverItsLayout) {
+  mlir::MLIRContext mlir_context;
+  mlir_context.loadDialect<mlir::stablehlo::StablehloDialect>();
+  mlir_context.loadDialect<mlir::func::FuncDialect>();
+  mlir::ModuleBuilder mb(mlir_context, "test_module");
+  mlir::func::FunctionBuilder fb(mb, "main");
+  auto tensor_type =
+      mlir::makeTensorType(mlir_context, {8}, mlir::ElementType::F32);
+  mlir::MlirOp arg = mlir::func::Argument(fb, tensor_type);
+  mlir::MlirOp reduce_op = mlir::stablehlo::Neg(arg);
+  reduce_op.getValue().getDefiningOp()->setAttr(
+      "replica_groups",
+      mlir::DenseIntElementsAttr::get(
+          mlir::RankedTensorType::get(
+              {1, 2}, mlir::IntegerType::get(&mlir_context, 64)),
+          llvm::ArrayRef<int64_t>({0, 1})));
+  mlir::MlirOp permute_op = mlir::stablehlo::Abs(reduce_op);
+  permute_op.getValue().getDefiningOp()->setAttr(
+      "source_target_pairs",
+      mlir::DenseIntElementsAttr::get(
+          mlir::RankedTensorType::get(
+              {2, 2}, mlir::IntegerType::get(&mlir_context, 64)),
+          llvm::ArrayRef<int64_t>({0, 1, 1, 0})));
+  mlir::func::Return(fb, {permute_op});
+  auto module = mb.build();
+
+  const std::vector<int64_t> op_da = {2, 3};  // INT_VEC_OK
+  const std::vector<int64_t>                  // INT_VEC_OK
+      resolved_da = {7, 6, 5, 4, 3, 2, 1, 0};
+  const std::vector<int64_t>  // INT_VEC_OK
+      global_da = {0, 1, 2, 3, 4, 5, 6, 7};
+  EXPECT_TRUE(
+      RewriteAndTileOperationForSubgroup(reduce_op.getValue().getDefiningOp(),
+                                         op_da, resolved_da, global_da)
+          .ok());
+  EXPECT_TRUE(
+      RewriteAndTileOperationForSubgroup(permute_op.getValue().getDefiningOp(),
+                                         op_da, resolved_da, global_da)
+          .ok());
+
+  // Pair {d0, d1} sits at positions {7 - d0, 7 - d1} of `resolved_da`. The
+  // replica groups are sorted by their first element; the source-target pairs
+  // keep the group order.
+  EXPECT_THAT(ExtractDenseIntAttrValues(reduce_op.getValue().getDefiningOp(),
+                                        "replica_groups"),
+              testing::ElementsAre(1, 0, 3, 2, 5, 4, 7, 6));
+  EXPECT_THAT(
+      ExtractDenseIntAttrValues(permute_op.getValue().getDefiningOp(),
+                                "source_target_pairs"),
+      testing::ElementsAre(7, 6, 6, 7, 5, 4, 4, 5, 3, 2, 2, 3, 1, 0, 0, 1));
+}
+
+TEST(DeviceAssignmentPipelineTest,
+     RewriteAndTileOperationForSubgroupTilesMultiSliceLayout) {
+  // 2 slices x 4 devices: devices 0-3 on slice 0 and 4-7 on slice 1, with
+  // topology order equal to device id order. Launcher world ranks are
+  // permuted relative to the devices: world rank r runs on device
+  // `rank_to_device_id[r]`.
+  constexpr int64_t kDevicesPerSlice = 4;
+  const std::vector<int64_t>  // INT_VEC_OK
+      rank_to_device_id = {5, 4, 7, 6, 1, 0, 3, 2};
+  // The TP groups are the device pairs {0, 1}, {2, 3}, {4, 5}, {6, 7}, i.e.
+  // world ranks {5, 4}, {7, 6}, {1, 0}, {3, 2}. new_group sorts its ranks, so
+  // in PG-rank order they are {4, 5}, {6, 7}, {0, 1}, {2, 3}, whose leaders
+  // (PG rank 0) have topology orders 1, 3, 5, 7.
+  // PermuteDeviceAssignmentForSubgroups (csrc/distributed, which this target
+  // does not depend on) sorts the pairs by their leader's topology order and
+  // flattens them, each in PG-rank order.
+  const std::vector<int64_t>  // INT_VEC_OK
+      flattened_pair_world_ranks = {4, 5, 6, 7, 0, 1, 2, 3};
+  std::vector<int64_t> global_da;  // INT_VEC_OK
+  for (int64_t world_rank : flattened_pair_world_ranks) {
+    global_da.push_back(rank_to_device_id[world_rank]);
+  }
+  ASSERT_THAT(global_da, testing::ElementsAre(1, 0, 3, 2, 5, 4, 7, 6));
+  // The op is a collective of the pair of world ranks {0, 1}, which sits at
+  // positions 4 and 5 of `global_da`.
+  const std::vector<int64_t> op_da = {5, 4};  // INT_VEC_OK
+
+  mlir::MLIRContext mlir_context;
+  mlir_context.loadDialect<mlir::stablehlo::StablehloDialect>();
+  mlir_context.loadDialect<mlir::func::FuncDialect>();
+  mlir::ModuleBuilder mb(mlir_context, "test_multislice_tiling_module");
+  mlir::func::FunctionBuilder fb(mb, "main");
+  auto tensor_type =
+      mlir::makeTensorType(mlir_context, {8}, mlir::ElementType::F32);
+  mlir::MlirOp arg = mlir::func::Argument(fb, tensor_type);
+  auto i64_type = mlir::IntegerType::get(&mlir_context, 64);
+  // The pair's collectives use local positions: replica_groups {{0, 1}} and
+  // source_target_pairs {{0, 1}, {1, 0}}. Each case below rewrites its own
+  // copy of both ops.
+  const auto pair_replica_groups = mlir::DenseIntElementsAttr::get(
+      mlir::RankedTensorType::get({1, 2}, i64_type),
+      llvm::ArrayRef<int64_t>({0, 1}));
+  const auto pair_source_target_pairs = mlir::DenseIntElementsAttr::get(
+      mlir::RankedTensorType::get({2, 2}, i64_type),
+      llvm::ArrayRef<int64_t>({0, 1, 1, 0}));
+  mlir::MlirOp rg_op = mlir::stablehlo::Neg(arg);
+  mlir::Operation* raw_rg_op = rg_op.getValue().getDefiningOp();
+  raw_rg_op->setAttr("replica_groups", pair_replica_groups);
+  mlir::MlirOp st_op = mlir::stablehlo::Abs(rg_op);
+  mlir::Operation* raw_st_op = st_op.getValue().getDefiningOp();
+  raw_st_op->setAttr("source_target_pairs", pair_source_target_pairs);
+  mlir::MlirOp rg_op_2 = mlir::stablehlo::Neg(st_op);
+  mlir::Operation* raw_rg_op_2 = rg_op_2.getValue().getDefiningOp();
+  raw_rg_op_2->setAttr("replica_groups", pair_replica_groups);
+  mlir::MlirOp st_op_2 = mlir::stablehlo::Abs(rg_op_2);
+  mlir::Operation* raw_st_op_2 = st_op_2.getValue().getDefiningOp();
+  raw_st_op_2->setAttr("source_target_pairs", pair_source_target_pairs);
+  mlir::func::Return(fb, {st_op_2});
+  auto module = mb.build();
+
+  // Returns the members of the rows of `rg` (positions into `resolved`) that
+  // run on `slice`, in row order, relative to the slice's first position.
+  // Both slices occupy a contiguous block of positions in the cases below.
+  const auto slice_local_rows = [](absl::Span<const int64_t> rg,
+                                   absl::Span<const int64_t> resolved,
+                                   int64_t slice) {
+    const int64_t size = static_cast<int64_t>(resolved.size());
+    int64_t first = size;
+    for (int64_t p = 0; p < size; ++p) {
+      if (resolved[p] / kDevicesPerSlice == slice) {
+        first = std::min(first, p);
+      }
+    }
+    std::vector<int64_t> local;  // INT_VEC_OK
+    for (int64_t p : rg) {
+      if (resolved[p] / kDevicesPerSlice == slice) {
+        local.push_back(p - first);
+      }
+    }
+    return local;
+  };
+
+  // Case 1: the program runs on the global devices. Every device sits at its
+  // own position in `global_da`, so pair g is tiled onto positions
+  // {2g, 2g + 1}: IOTA rows into the topology-ordered assignment, not the
+  // pairs' world ranks ({4, 5}, {6, 7}, {0, 1}, {2, 3}) or device ids
+  // ({1, 0}, {3, 2}, {5, 4}, {7, 6}).
+  const std::vector<int64_t>& resolved_da = global_da;  // INT_VEC_OK
+  ASSERT_TRUE(RewriteAndTileOperationForSubgroup(raw_rg_op, op_da, resolved_da,
+                                                 global_da)
+                  .ok());
+  ASSERT_TRUE(RewriteAndTileOperationForSubgroup(raw_st_op, op_da, resolved_da,
+                                                 global_da)
+                  .ok());
+  const std::vector<int64_t> rg =  // INT_VEC_OK
+      ExtractDenseIntAttrValues(raw_rg_op, "replica_groups");
+  EXPECT_THAT(rg, testing::ElementsAre(0, 1, 2, 3, 4, 5, 6, 7));
+  EXPECT_THAT(
+      PhysicalGroups(rg, /*group_size=*/2, resolved_da),
+      testing::ElementsAreArray(IntendedGroups(global_da, /*group_size=*/2)));
+  // Slice 0 holds positions 0-3 and slice 1 positions 4-7; both localize to
+  // rows {0, 1}, {2, 3}.
+  EXPECT_THAT(slice_local_rows(rg, resolved_da, /*slice=*/0),
+              testing::ElementsAre(0, 1, 2, 3));
+  EXPECT_EQ(slice_local_rows(rg, resolved_da, /*slice=*/0),
+            slice_local_rows(rg, resolved_da, /*slice=*/1));
+  // Source-target pairs are tiled pair by pair and not sorted, as in
+  // RewriteSourceTargetPairsAttr.
+  EXPECT_THAT(
+      ExtractDenseIntAttrValues(raw_st_op, "source_target_pairs"),
+      testing::ElementsAre(0, 1, 1, 0, 2, 3, 3, 2, 4, 5, 5, 4, 6, 7, 7, 6));
+
+  // Case 2: the program runs on a different permutation of the same devices,
+  // e.g. another op's world assignment listing slice 1 first, in device id
+  // order. Device d sits at position (d + 4) % 8, so `global_da`
+  // {1, 0, 3, 2, 5, 4, 7, 6} maps to positions {5, 4, 7, 6, 1, 0, 3, 2}: the
+  // tiles are {5, 4}, {7, 6}, {1, 0}, {3, 2}. The replica groups are sorted
+  // by their first element, {1, 0}, {3, 2}, {5, 4}, {7, 6}, each keeping its
+  // PG-rank order; the source-target pairs keep the tile order.
+  const std::vector<int64_t>  // INT_VEC_OK
+      resolved_da_2 = {4, 5, 6, 7, 0, 1, 2, 3};
+  ASSERT_TRUE(RewriteAndTileOperationForSubgroup(raw_rg_op_2, op_da,
+                                                 resolved_da_2, global_da)
+                  .ok());
+  ASSERT_TRUE(RewriteAndTileOperationForSubgroup(raw_st_op_2, op_da,
+                                                 resolved_da_2, global_da)
+                  .ok());
+  const std::vector<int64_t> rg_2 =  // INT_VEC_OK
+      ExtractDenseIntAttrValues(raw_rg_op_2, "replica_groups");
+  EXPECT_THAT(rg_2, testing::ElementsAre(1, 0, 3, 2, 5, 4, 7, 6));
+  // Each row still selects one pair, in PG-rank order: e.g. row {5, 4} is
+  // devices {resolved_da_2[5], resolved_da_2[4]} = {1, 0}, world ranks {4, 5}.
+  EXPECT_THAT(PhysicalGroups(rg_2, /*group_size=*/2, resolved_da_2),
+              testing::UnorderedElementsAreArray(
+                  IntendedGroups(global_da, /*group_size=*/2)));
+  // Slice 1 holds positions 0-3 and slice 0 positions 4-7; both localize to
+  // rows {1, 0}, {3, 2}.
+  EXPECT_THAT(slice_local_rows(rg_2, resolved_da_2, /*slice=*/0),
+              testing::ElementsAre(1, 0, 3, 2));
+  EXPECT_EQ(slice_local_rows(rg_2, resolved_da_2, /*slice=*/0),
+            slice_local_rows(rg_2, resolved_da_2, /*slice=*/1));
+  EXPECT_THAT(
+      ExtractDenseIntAttrValues(raw_st_op_2, "source_target_pairs"),
+      testing::ElementsAre(5, 4, 4, 5, 7, 6, 6, 7, 1, 0, 0, 1, 3, 2, 2, 3));
+}
+
 TEST(DeviceAssignmentPipelineTest,
      RewriteAndTileOperationForSubgroupRewritesOrthogonalReplicaGroups) {
   mlir::MLIRContext mlir_context;
@@ -687,6 +922,41 @@ TEST(DeviceAssignmentPipelineTest,
   EXPECT_THAT(ExtractDenseIntAttrValues(replicate_op.getValue().getDefiningOp(),
                                         "replica_groups"),
               testing::ElementsAre(0, 2, 1, 3));
+}
+
+TEST(DeviceAssignmentPipelineTest,
+     RewriteAndTileOperationForSubgroupRejectsSmallerOpDeviceAssignment) {
+  // An op over a subset of the resolved devices runs on a different device
+  // set, so it cannot be remapped into the resolved assignment.
+  mlir::MLIRContext mlir_context;
+  mlir_context.loadDialect<mlir::stablehlo::StablehloDialect>();
+  mlir_context.loadDialect<mlir::func::FuncDialect>();
+
+  mlir::ModuleBuilder mb(mlir_context, "test_reject_subset_module");
+  mlir::func::FunctionBuilder fb(mb, "main");
+  auto tensor_type =
+      mlir::makeTensorType(mlir_context, {4}, mlir::ElementType::F32);
+  mlir::MlirOp arg = mlir::func::Argument(fb, tensor_type);
+
+  mlir::MlirOp op = mlir::stablehlo::Abs(arg);
+  mlir::Operation* raw_op = op.getValue().getDefiningOp();
+  raw_op->setAttr("replica_groups",
+                  mlir::DenseIntElementsAttr::get(
+                      mlir::RankedTensorType::get(
+                          {1, 2}, mlir::IntegerType::get(&mlir_context, 64)),
+                      llvm::ArrayRef<int64_t>({0, 1})));
+
+  mlir::func::Return(fb, {op});
+  auto module = mb.build();
+
+  const std::vector<int64_t> op_da = {2, 3};              // INT_VEC_OK
+  const std::vector<int64_t> resolved_da = {0, 1, 2, 3};  // INT_VEC_OK
+  const absl::Status status =
+      RewriteAndTileOperationForSubgroup(raw_op, op_da, resolved_da);
+  EXPECT_EQ(status.code(), error::kInvalidArgument);
+  EXPECT_THAT(status.message(), testing::HasSubstr("is not a permutation"));
+  EXPECT_THAT(ExtractDenseIntAttrValues(raw_op, "replica_groups"),
+              testing::ElementsAre(0, 1));
 }
 
 TEST(DeviceAssignmentPipelineTest,

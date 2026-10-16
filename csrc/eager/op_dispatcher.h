@@ -39,6 +39,7 @@
 #include "csrc/common/fixed_size_span.h"
 #include "csrc/common/op_name_stack.h"
 #include "csrc/common/shape.h"
+#include "csrc/eager/device_assignment.h"
 #include "csrc/eager/device_buffer.h"
 #include "csrc/eager/device_buffer_utils.h"
 #include "csrc/eager/eager_mode.h"
@@ -129,7 +130,7 @@ struct DispatchOpOptions {
   OpParamCacheKeys op_param_cache_keys;
   OpSplitMode split_mode = OpSplitMode::kNone;
   Indices donated_indices = {};
-  std::vector<int64_t> device_assignment = {};  // INT_VEC_OK
+  DeviceAssignment device_assignment = {};
   bool autodonated = false;
 };
 
@@ -146,7 +147,7 @@ struct DispatchOpOptions<kDynamicSize> {
   OpParamCacheKeys op_param_cache_keys;
   OpSplitMode split_mode = OpSplitMode::kNone;
   Indices donated_indices = {};
-  std::vector<int64_t> device_assignment = {};  // INT_VEC_OK
+  DeviceAssignment device_assignment = {};
   bool autodonated = false;
 };
 
@@ -162,7 +163,7 @@ struct DispatchOpOptions<1> {
   OpParamCacheKeys op_param_cache_keys;
   OpSplitMode split_mode = OpSplitMode::kNone;
   Indices donated_indices = {};
-  std::vector<int64_t> device_assignment = {};  // INT_VEC_OK
+  DeviceAssignment device_assignment = {};
   bool autodonated = false;
 };
 
