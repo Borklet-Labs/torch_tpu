@@ -59,7 +59,7 @@ def _(mo):
     *   [Write custom communicating kernels with Pallas](3_practical_examples_5_distributed_pallas_kernels.py): As above, but adding distributed functionality and showing how to map between Pytorch and Pallas.
     *   [Reduce recompilation from dynamic shapes](3_practical_examples_6_bounded_dynamism.py): Hands-on walkthrough applying bounded dynamism to an end-to-end LLM inference decode loop with a dynamic KV cache.
     *   [Case study: FLUX Optimization](5_case_studies_1_flux_optimization.py): Example demonstrating how to identify and apply multiple optimizations on FLUX.
-    *   Case study: Muse Glimmer Optimization: Example demonstrating how to identify and apply multiple optimizations on Muse Glimmer.
+    *   [Case study: Muse Glimmer 30B](5_case_studies_2_muse_glimmer_30b.py): Example of a simple training loop for pure-PyTorch implementation of Muse Glimmer 30B model using FSDP, torch.compile, and activation checkpointing.
 
     ## Troubleshoot your workload
     *   [Troubleshoot error messages](4_debugging_and_performance_analysis_3_getting_better_error_information.py):
