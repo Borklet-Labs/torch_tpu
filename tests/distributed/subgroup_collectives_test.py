@@ -22,26 +22,21 @@ can run independently "along rows/columns" of the device mesh.
 """
 
 import inspect
-import os
 
 from absl import logging
 from absl.testing import absltest
 import torch
 from torch import distributed as dist
-import torch.multiprocessing as mp
 from torch_tpu._internal.distributed import device_mesh
 from torch_tpu._internal.utils import test_utils as utils
 from torch_tpu._internal.distributed import multiprocessing
-from tests import seed_test_utils
-from tests.distributed import distributed_utils
+from tests.distributed import continuous_test_utils
 
 
 def run_manual_2d_mesh() -> None:
   """Test parallel all-reduce on a simple [2, 4] device mesh."""
-  dist.init_process_group(backend="tpu_dist")
-
-  rank = int(os.environ["RANK"])
-  world_size = int(os.environ["WORLD_SIZE"])
+  rank = dist.get_rank()
+  world_size = dist.get_world_size()
   assert world_size == 8
   rank_to_dev = device_mesh.get_device_assignment()
   dev_to_rank = {dev: r for r, dev in enumerate(rank_to_dev)}
@@ -86,10 +81,8 @@ def run_manual_2d_mesh() -> None:
 
 def run_manual_1d_as_2d_mesh() -> None:
   """Test special (redundant) case of [1, n] device mesh. Used in fairscale."""
-  dist.init_process_group(backend="tpu_dist")
-
-  rank = int(os.environ["RANK"])
-  world_size = int(os.environ["WORLD_SIZE"])
+  rank = dist.get_rank()
+  world_size = dist.get_world_size()
   assert world_size == 8
   mesh_axis_1 = [[0, 1, 2, 3, 4, 5, 6, 7]]
   mesh_axis_2 = [[0], [1], [2], [3], [4], [5], [6], [7]]
@@ -124,10 +117,8 @@ def run_manual_1d_as_2d_mesh() -> None:
 
 def run_manual_2d_all_gather_reduce_scatter() -> None:
   """Test 2D device mesh of [all-gather dim, reduce-scatter dim] shape."""
-  dist.init_process_group(backend="tpu_dist")
-
-  rank = int(os.environ["RANK"])
-  world_size = int(os.environ["WORLD_SIZE"])
+  rank = dist.get_rank()
+  world_size = dist.get_world_size()
   assert world_size == 8
   rank_to_dev = device_mesh.get_device_assignment()
   dev_to_rank = {dev: r for r, dev in enumerate(rank_to_dev)}
@@ -192,7 +183,7 @@ def _check_group_rank_order(
     group: dist.ProcessGroup, ranks: list[int], world_rank_to_dev: list[int]
 ) -> None:
   """Checks that `group` follows the (unsorted) order of world `ranks`."""
-  rank = int(os.environ["RANK"])
+  rank = dist.get_rank()
   assert dist.get_rank(group=group) == ranks.index(rank)
 
   # Group rank 0 is world rank ranks[0].
@@ -213,10 +204,8 @@ def _check_group_rank_order(
 
 def run_unsorted_subgroups() -> None:
   """Test process groups created with sort_ranks=False."""
-  dist.init_process_group(backend="tpu_dist")
-
-  rank = int(os.environ["RANK"])
-  world_size = int(os.environ["WORLD_SIZE"])
+  rank = dist.get_rank()
+  world_size = dist.get_world_size()
   assert world_size == 8
   world_rank_to_dev = device_mesh.get_device_assignment()
 
@@ -238,7 +227,6 @@ def run_unsorted_subgroups() -> None:
 
 def run_unaligned_subgroups() -> None:
   """Test unaligned subgroup partitioning across devices."""
-  dist.init_process_group("tpu")
   rank = dist.get_rank()
   world_size = dist.get_world_size()
   half = world_size // 2
@@ -263,65 +251,29 @@ def run_unaligned_subgroups() -> None:
   utils.assert_close(res, expected)
 
 
-def _run_with_cleanup(test_fn) -> None:
-  """Runs `test_fn` and cleanly tears down the default process group on exit.
+class SubgroupCollectivesTest(continuous_test_utils.TpuMultiProcContinuousTest):
 
-  On normal completion, synchronizes all workers via `dist.barrier()` before
-  destroying the process group so no worker exits while peers are still
-  executing collectives. On exception, destroys the process group without a
-  barrier to avoid deadlocking when only a subset of workers fail.
-  """
-  try:
-    test_fn()
-  except BaseException:
-    if dist.is_initialized():
-      dist.destroy_process_group()
-    raise
-  if dist.is_initialized():
-    dist.barrier()
-    dist.destroy_process_group()
+  world_size = 8
 
+  def test_manual_2d_mesh(self) -> None:
+    run_manual_2d_mesh()
 
-class SubgroupCollectivesTest(seed_test_utils.MultiProcessRepeatableTest):
+  def test_manual_1d_as_2d_mesh(self) -> None:
+    run_manual_1d_as_2d_mesh()
 
-  def test_manual_2d_mesh(self):
-    distributed_utils.dist_run(
-        nproc_per_node=8,
-        fn=_run_with_cleanup,
-        test_fn=run_manual_2d_mesh,
-    )
+  def test_manual_2d_all_gather_reduce_scatter(self) -> None:
+    run_manual_2d_all_gather_reduce_scatter()
 
-  def test_manual_1d_as_2d_mesh(self):
-    distributed_utils.dist_run(
-        nproc_per_node=8,
-        fn=_run_with_cleanup,
-        test_fn=run_manual_1d_as_2d_mesh,
-    )
+  @absltest.skipIf(
+      "sort_ranks" not in inspect.signature(dist.new_group).parameters,
+      "dist.new_group() does not support sort_ranks",
+  )
+  def test_unsorted_subgroups(self) -> None:
+    run_unsorted_subgroups()
 
-  def test_manual_2d_all_gather_reduce_scatter(self):
-    distributed_utils.dist_run(
-        nproc_per_node=8,
-        fn=_run_with_cleanup,
-        test_fn=run_manual_2d_all_gather_reduce_scatter,
-    )
-
-  def test_unsorted_subgroups(self):
-    if "sort_ranks" not in inspect.signature(dist.new_group).parameters:
-      self.skipTest("dist.new_group() does not support sort_ranks")
-    distributed_utils.dist_run(
-        nproc_per_node=8,
-        fn=_run_with_cleanup,
-        test_fn=run_unsorted_subgroups,
-    )
-
-  def test_unaligned_subgroups(self):
-    distributed_utils.dist_run(
-        nproc_per_node=8,
-        fn=_run_with_cleanup,
-        test_fn=run_unaligned_subgroups,
-    )
+  def test_unaligned_subgroups(self) -> None:
+    run_unaligned_subgroups()
 
 
 if __name__ == "__main__":
-  mp.set_start_method("spawn")
   multiprocessing.handle_test_main(absltest.main)

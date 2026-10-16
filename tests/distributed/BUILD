@@ -792,7 +792,6 @@ torch_tpu_py_test(
         "v7",
         reason = "Only multi-core-per-chip TPU v7x has a non-identity rank-to-device mapping",
     ),
-    shard_count = 4,
     tags = if_oss(
         ["exclusive"],
         [],
@@ -804,7 +803,7 @@ torch_tpu_py_test(
         "requires-tpu-v7x:4",
     ],
     deps = [
-        ":distributed_utils",
+        ":continuous_test_utils",
         "//shims/absl_py/logging",
         "//shims/absl_py/testing:absltest",
         "//shims/torch:pytorch",
@@ -812,7 +811,6 @@ torch_tpu_py_test(
         "//src/torch_tpu/_internal/distributed:device_mesh",
         "//src/torch_tpu/_internal/distributed:multiprocessing",
         "//src/torch_tpu/_internal/utils:test_utils",
-        "//tests:seed_test_utils",
     ],
 )
 
