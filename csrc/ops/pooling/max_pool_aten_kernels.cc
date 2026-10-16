@@ -149,7 +149,7 @@ absl::StatusOr<std::vector<mlir::MlirOp>> ComputeMaxPoolWithIndices(
 
   // Create initial values for values and indices
   mlir::Attribute val_attr =
-      GetMinFiniteValueAttr(element_type, builder.getOpBuilder());
+      GetMaxPoolInitValueAttr(element_type, builder.getOpBuilder());
   mlir::DenseElementsAttr init_value_attr = mlir::DenseElementsAttr::get(
       mlir::RankedTensorType::get({}, element_type), val_attr);
   mlir::MlirOp init_value = mlir::stablehlo::Constant(builder, init_value_attr);
@@ -206,7 +206,7 @@ absl::StatusOr<mlir::MlirOp> ComputeMaxPool(
   const mlir::Type element_type = input_shape.getElementType();
 
   mlir::Attribute val_attr =
-      GetMinFiniteValueAttr(element_type, builder.getOpBuilder());
+      GetMaxPoolInitValueAttr(element_type, builder.getOpBuilder());
   mlir::DenseElementsAttr init_value_attr = mlir::DenseElementsAttr::get(
       mlir::RankedTensorType::get({}, element_type), val_attr);
   mlir::MlirOp init_value = mlir::stablehlo::Constant(builder, init_value_attr);
@@ -374,6 +374,86 @@ absl::StatusOr<mlir::MlirOp> BuildMaxPoolShlo(
                         spatial_dim_count);
 }
 
+// Tracks spatial tail slicing applied before `SelectAndScatter` in `max_pool`
+// backward when `ceil_mode=false` leaves trailing input elements uncovered by
+// any pooling window, along with the high-end padding needed to restore the
+// original spatial dimensions afterward.
+struct UncoveredTailSliceInfo {
+  // The (potentially sliced) input operand to pass to `SelectAndScatter`.
+  mlir::MlirOp operand;
+  // Number of elements sliced off at the high end of each dimension (size
+  // equals the rank of `operand`; non-zero only on sliced spatial dimensions).
+  Dimensions pad_high;
+  // True if at least one spatial dimension had an uncovered tail sliced off.
+  bool has_uncovered_tail = false;
+};
+
+// Slices off spatial tail elements of `batch_input` that are not covered by any
+// pooling window (i.e., indices in `[covered_end, input_size)`), so that
+// `SelectAndScatter` only operates on the window-covered region and does not
+// leave uncovered tail elements with uninitialized buffer values.
+//
+// Mutates `ceil_padding_pairs` in place: when dimension `i` is sliced down to
+// `covered_end`, the sliced operand's right boundary aligns with the end of the
+// last pooling window, so `ceil_padding_pairs[i].right` is set to 0 because
+// right padding is no longer needed during `SelectAndScatter`.
+UncoveredTailSliceInfo SliceUncoveredSpatialTail(
+    mlir::MlirOp batch_input, mlir::MlirOp batch_grad_output,
+    int64_t spatial_dim_count, const Dimensions& kernel_size_attr,
+    const Dimensions& stride_attr,
+    std::vector<PaddingParams>& ceil_padding_pairs) {
+  const mlir::RankedTensorType input_shape = GetTensorTypeOrDie(batch_input);
+  const mlir::RankedTensorType grad_output_shape =
+      GetTensorTypeOrDie(batch_grad_output);
+  const int64_t total_num_dims = input_shape.getRank();
+
+  UncoveredTailSliceInfo info{
+      .operand = batch_input,
+      .pad_high = Dimensions(total_num_dims, 0),
+      .has_uncovered_tail = false,
+  };
+
+  Dimensions slice_starts(total_num_dims, 0);
+  Dimensions slice_limits(input_shape.getShape().begin(),
+                          input_shape.getShape().end());
+  Dimensions slice_strides(total_num_dims, 1);
+
+  for (int64_t i = 0; i < spatial_dim_count; ++i) {
+    const int64_t input_size = input_shape.getDimSize(2 + i);
+    const int64_t out_size = grad_output_shape.getDimSize(2 + i);
+    if (out_size <= 0) continue;
+    const int64_t covered_end = std::min(
+        input_size, (out_size - 1) * stride_attr[i] -
+                        ceil_padding_pairs[i].left + kernel_size_attr[i]);
+    if (covered_end > 0 && covered_end < input_size) {
+      info.has_uncovered_tail = true;
+      slice_limits[2 + i] = covered_end;
+      info.pad_high[2 + i] = input_size - covered_end;
+      ceil_padding_pairs[i].right = 0;
+    }
+  }
+
+  if (info.has_uncovered_tail) {
+    info.operand = mlir::stablehlo::Slice(batch_input, slice_starts,
+                                          slice_limits, slice_strides);
+  }
+  return info;
+}
+
+// Pads the `SelectAndScatter` output back to the original `batch_input` shape
+// using `init_value` (0) for any spatial tail regions sliced off by
+// `SliceUncoveredSpatialTail`.
+mlir::MlirOp PadUncoveredSpatialTail(mlir::MlirOp result,
+                                     mlir::MlirOp init_value,
+                                     const UncoveredTailSliceInfo& info) {
+  if (!info.has_uncovered_tail) {
+    return result;
+  }
+  const Dimensions zero_pad(info.pad_high.size(), 0);
+  return mlir::stablehlo::Pad(result, init_value, zero_pad, info.pad_high,
+                              zero_pad);
+}
+
 absl::StatusOr<mlir::MlirOp> BuildMaxPoolBackwardShlo(
     mlir::MlirOp grad_output, mlir::MlirOp input,
     const int64_t spatial_dim_count, Dimensions kernel_size, Dimensions stride,
@@ -425,6 +505,10 @@ absl::StatusOr<mlir::MlirOp> BuildMaxPoolBackwardShlo(
   auto ceil_padding_pairs =
       CeilModePadding(input_shape, kernel_size_attr, stride_attr, padding_attr,
                       dilation_attr, ceil_mode);
+
+  UncoveredTailSliceInfo tail_info = SliceUncoveredSpatialTail(
+      batch_input, batch_grad_output, spatial_dim_count, kernel_size_attr,
+      stride_attr, ceil_padding_pairs);
 
   // STEP 4. ReduceWindow Attributes
   ReduceWindowAttributes reduce_window_attributes = GetReduceWindowAttributes(
@@ -486,14 +570,15 @@ absl::StatusOr<mlir::MlirOp> BuildMaxPoolBackwardShlo(
 
   // STEP 7. Perform SelectAndScatter
   auto select_results = mlir::stablehlo::SelectAndScatter(
-      /*operand=*/batch_input,
+      /*operand=*/tail_info.operand,
       /*source=*/batch_grad_output,
       /*init_value=*/init_value, select_body, scatter_body,
       reduce_window_attributes.window_dimensions,
       reduce_window_attributes.window_strides,
       reduce_window_attributes.padding);
 
-  mlir::MlirOp batch_result = select_results;
+  mlir::MlirOp batch_result =
+      PadUncoveredSpatialTail(select_results, init_value, tail_info);
 
   mlir::MlirOp final_output = RemoveTrivialBatch(
       batch_result, batch_input_info.original_dim_size, spatial_dim_count);

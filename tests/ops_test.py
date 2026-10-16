@@ -1028,9 +1028,6 @@ ACCURACY_OVERRIDES_GRAD_VS_GPU: dict[
             torch.float16: {"rtol": 3.6e-3, "atol": 5.9e-3},
             torch.float32: {"rtol": 4.1e-3, "atol": 2.5e-3},
         },
-        "nn.functional.max_pool2d": {
-            torch.float32: {"atol": 11},
-        },
         "nn.functional.pdist": {
             torch.float32: {"rtol": 1.5e-5, "atol": 2.6e-5},
         },
@@ -2917,15 +2914,6 @@ class TestOps(op_testing.OpInfoTestBase):
   def test_max_pool2d(self):
     self.do_test_op(
         "nn.functional.max_pool2d",
-        # TODO(b/544855426): Fix gradient accuracy mismatch on float16/bfloat16:
-        # TPU gradient kernel outputs NaN where GPU reference outputs 0.0.
-        # Greatest absolute difference: 8.472208023071289 at index (0, 1, 2, 1)
-        # (up to 8.1 allowed). Expected (GPU): 0.0, Actual (TPU): -8.472208023071289.
-        skip_if=lambda device, variant, op_input: (
-            op_testing._torch_tpu_vs_gpu_mode()
-            and op_testing._COMPUTE_GRAD.value
-            and op_input.input_value.dtype in (torch.float16, torch.bfloat16)
-        ),
         # TODO: complex64, float64, and int64 dtypes are not supported on TPU.
         exclude_dtypes={
             "cpu": (

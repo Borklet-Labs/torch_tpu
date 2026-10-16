@@ -16238,6 +16238,109 @@ class OpsGradUnitTest(TorchTpuVsCpuTestBase):
 
     self.assert_close_tpu_vs_cpu(get_grad)
 
+  def test_max_pool2d_backward_uncovered_spatial_tail(self):
+    """Tests max_pool2d backward zeroes uncovered spatial tail elements."""
+    torch.manual_seed(0)
+    for dtype in (torch.float32, torch.float16, torch.bfloat16):
+      # Case 1: H=W=5, kernel_size=2, stride=3, padding=1, ceil_mode=False.
+      # Windows cover indices [-1, 1) and [2, 4), leaving index 4 uncovered.
+      base_5x5 = torch.randn(1, 2, 5, 5, dtype=torch.float32)
+      grad_out_5x5 = torch.randn(1, 2, 2, 2, dtype=torch.float32)
+
+      def run_padded_tail(
+          device, dtype=dtype, base=base_5x5, grad_out=grad_out_5x5
+      ):
+        x = (
+            base.detach()
+            .clone()
+            .to(device=device, dtype=dtype)
+            .requires_grad_(True)
+        )
+        g = grad_out.detach().clone().to(device=device, dtype=dtype)
+        out = torch.nn.functional.max_pool2d(
+            x, kernel_size=2, stride=3, padding=1, ceil_mode=False
+        )
+        out.backward(g)
+        return x.grad
+
+      self.assert_close_tpu_vs_cpu(run_padded_tail)
+      tpu_grad_5x5 = run_padded_tail("tpu").cpu()
+      self.assertTrue(torch.all(tpu_grad_5x5[:, :, 4:, :] == 0))
+      self.assertTrue(torch.all(tpu_grad_5x5[:, :, :, 4:] == 0))
+
+      # Case 2: H=W=3, kernel_size=2, stride=2, padding=0, ceil_mode=False.
+      # Window covers [0, 2), leaving index 2 uncovered.
+      base_3x3 = torch.randn(1, 2, 3, 3, dtype=torch.float32)
+      grad_out_3x3 = torch.randn(1, 2, 1, 1, dtype=torch.float32)
+
+      def run_unpadded_tail(
+          device, dtype=dtype, base=base_3x3, grad_out=grad_out_3x3
+      ):
+        x = (
+            base.detach()
+            .clone()
+            .to(device=device, dtype=dtype)
+            .requires_grad_(True)
+        )
+        g = grad_out.detach().clone().to(device=device, dtype=dtype)
+        out = torch.nn.functional.max_pool2d(
+            x, kernel_size=2, stride=2, padding=0, ceil_mode=False
+        )
+        out.backward(g)
+        return x.grad
+
+      self.assert_close_tpu_vs_cpu(run_unpadded_tail)
+      tpu_grad_3x3 = run_unpadded_tail("tpu").cpu()
+      self.assertTrue(torch.all(tpu_grad_3x3[:, :, 2:, :] == 0))
+      self.assertTrue(torch.all(tpu_grad_3x3[:, :, :, 2:] == 0))
+
+  def test_max_pool2d_neg_inf_input(self):
+    """Tests max_pool2d forward, indices, and backward with -inf inputs."""
+    neg_inf = float("-inf")
+    for dtype in (torch.float32, torch.float16, torch.bfloat16):
+      base = torch.tensor(
+          [[[
+              [neg_inf, neg_inf, neg_inf, -2.0],
+              [neg_inf, neg_inf, -5.0, neg_inf],
+              [neg_inf, -1.0, neg_inf, neg_inf],
+              [neg_inf, neg_inf, neg_inf, neg_inf],
+          ]]],
+          dtype=dtype,
+      )
+      grad_out = torch.tensor([[[[1.0, 2.0], [3.0, 4.0]]]], dtype=dtype)
+
+      def run_with_indices(device, dtype=dtype, base=base, grad_out=grad_out):
+        x = (
+            base.detach()
+            .clone()
+            .to(device=device, dtype=dtype)
+            .requires_grad_(True)
+        )
+        g = grad_out.detach().clone().to(device=device, dtype=dtype)
+        out, indices = torch.nn.functional.max_pool2d(
+            x, kernel_size=2, stride=2, return_indices=True
+        )
+        out.backward(g)
+        return out, indices, x.grad
+
+      self.assert_close_tpu_vs_cpu(run_with_indices)
+
+      def run_no_indices(device, dtype=dtype, base=base, grad_out=grad_out):
+        x = (
+            base.detach()
+            .clone()
+            .to(device=device, dtype=dtype)
+            .requires_grad_(True)
+        )
+        g = grad_out.detach().clone().to(device=device, dtype=dtype)
+        out = torch.nn.functional.max_pool2d(
+            x, kernel_size=2, stride=2, return_indices=False
+        )
+        out.backward(g)
+        return out, x.grad
+
+      self.assert_close_tpu_vs_cpu(run_no_indices)
+
   def test_max_pool1d_grad(self):
     """Tests nn.functional.max_pool1d backward without indices."""
 

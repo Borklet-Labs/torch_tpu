@@ -41,13 +41,10 @@
 #include "csrc/ops/op_names.h"
 #include "csrc/ops/pooling/pooling.h"
 #include "csrc/ops/resize/resize_aten_kernels.h"
-#include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/Support/Casting.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/BuiltinAttributes.h"
-#include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Types.h"
 #include "mlir/Support/LLVM.h"
@@ -130,14 +127,8 @@ absl::StatusOr<GatherMaxPool1DResult> BuildGatherMaxPool1D(
   pad_sizes[dim] = intervals.max_k;
   const Dimensions zero_pad(dim_size, 0);
 
-  mlir::Attribute val_min_attr;
-  if (const auto float_type = llvm::dyn_cast<mlir::FloatType>(element_type)) {
-    val_min_attr = mlir::FloatAttr::get(
-        element_type, llvm::APFloat::getInf(float_type.getFloatSemantics(),
-                                            /*Negative=*/true));
-  } else {
-    val_min_attr = GetMinFiniteValueAttr(element_type, builder.getOpBuilder());
-  }
+  const mlir::Attribute val_min_attr =
+      GetMaxPoolInitValueAttr(element_type, builder.getOpBuilder());
   const mlir::DenseElementsAttr val_min_dense = mlir::DenseElementsAttr::get(
       mlir::RankedTensorType::get({}, element_type), val_min_attr);
   mlir::MlirOp val_min_scalar =
@@ -297,14 +288,8 @@ absl::StatusOr<MlirOpResults<2>> BuildAdaptiveMaxPool2dShlo(
     const mlir::MlirOp iota_broadcast =
         mlir::stablehlo::BroadcastInDim(target_tensor_type, iota_2d, {2, 3});
 
-    mlir::Attribute val_attr;
-    if (const auto float_type = llvm::dyn_cast<mlir::FloatType>(element_type)) {
-      val_attr = mlir::FloatAttr::get(
-          element_type, llvm::APFloat::getInf(float_type.getFloatSemantics(),
-                                              /*Negative=*/true));
-    } else {
-      val_attr = GetMinFiniteValueAttr(element_type, builder.getOpBuilder());
-    }
+    const mlir::Attribute val_attr =
+        GetMaxPoolInitValueAttr(element_type, builder.getOpBuilder());
     const mlir::DenseElementsAttr init_value_attr =
         mlir::DenseElementsAttr::get(
             mlir::RankedTensorType::get({}, element_type), val_attr);
