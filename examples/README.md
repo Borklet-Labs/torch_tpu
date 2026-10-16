@@ -32,9 +32,6 @@ For distributed training examples, refer to `examples/tensor_parallel/` and
 
 -   [simple_pytorch](simple_pytorch/README.md): Minimal single-device PyTorch
     example on TPU, plus a reference single-device GKE manifest.
--   [classical_ml](classical_ml/README.md): Classical ML (MLP) training and
-    full-stack profiling (TensorBoard + XProf) with eager vs. `torch.compile`
-    execution.
 -   [tensor_parallel/manual](tensor_parallel/manual/README.md): Manual
     Megatron-LM style Tensor Parallelism using explicit collective operations,
     with single-host and multi-host GKE manifests.
