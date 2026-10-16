@@ -446,7 +446,7 @@ torch_tpu_py_test(
         "requires-tpu-v7x:4",
     ],
     deps = [
-        ":distributed_utils",
+        ":continuous_test_utils",
         "//shims/absl_py/logging",
         "//shims/absl_py/testing:absltest",
         "//shims/absl_py/testing:parameterized",
@@ -458,7 +458,6 @@ torch_tpu_py_test(
         "//src/torch_tpu/_internal/distributed:multiprocessing",
         "//src/torch_tpu/_internal/distributed:tpu_distributed",
         "//src/torch_tpu/_internal/pallas",
-        "//tests:seed_test_utils",
         "@pypi//jax",
     ],
 )

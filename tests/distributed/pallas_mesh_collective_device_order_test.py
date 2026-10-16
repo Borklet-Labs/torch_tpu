@@ -38,13 +38,11 @@ from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 import torch
 from torch import distributed as dist
-import torch.multiprocessing as mp
 from torch_tpu._internal import pallas
 from torch_tpu._internal.distributed import device_mesh
 from torch_tpu._internal.distributed import tpu_distributed
 from torch_tpu._internal.distributed import multiprocessing
-from tests import seed_test_utils
-from tests.distributed import distributed_utils
+from tests.distributed import continuous_test_utils
 
 P = jax.sharding.PartitionSpec
 
@@ -525,26 +523,6 @@ def _run_fused(
 # ==============================================================================
 
 
-def _in_process_group(body: Callable[[], None]) -> None:
-  """Runs `body` inside a `tpu_dist` process group.
-
-  The failure path deliberately does NOT barrier: a rank that failed an
-  assertion must not wait for peers that may have passed, or a clean failure
-  becomes a slice-wide hang.
-
-  Args:
-    body: The worker logic.
-  """
-  dist.init_process_group(backend="tpu_dist")
-  try:
-    body()
-  except BaseException:
-    dist.destroy_process_group()
-    raise
-  dist.barrier()
-  dist.destroy_process_group()
-
-
 def _rank_ordered_kernel_op(
     op_name: str,
 ) -> Callable[[torch.Tensor], torch.Tensor]:
@@ -561,35 +539,31 @@ def run_kernel_report_check(check: str) -> None:
   Args:
     check: One of `axis_index`, `sent`, `received`.
   """
+  rank = dist.get_rank()
+  world_size = dist.get_world_size()
+  op = _rank_ordered_kernel_op("pallas_mesh_order::ring")
 
-  def body() -> None:
-    rank = dist.get_rank()
-    world_size = dist.get_world_size()
-    op = _rank_ordered_kernel_op("pallas_mesh_order::ring")
+  x = torch.full((1, _ROWS, _COLS), rank, dtype=torch.int32, device="tpu")
+  report = _read_kernel_output(op(x))
+  logging.info("[kernel] rank=%d %s", rank, report)
 
-    x = torch.full((1, _ROWS, _COLS), rank, dtype=torch.int32, device="tpu")
-    report = _read_kernel_output(op(x))
-    logging.info("[kernel] rank=%d %s", rank, report)
-
-    expected = {
-        "axis_index": rank,
-        "sent": rank,
-        "received": (rank - 1) % world_size,
-    }[check]
-    observed = getattr(report, check)
-    if observed != expected:
-      # The competing hypothesis is that the kernel's identity follows the
-      # device enumeration, so report that index alongside the rank.
-      device_order_index = _pjrt_device_ids().index(
-          int(tpu_distributed.global_device_id())
-      )
-      raise AssertionError(
-          f"kernel {check}: rank {rank} expected {expected}, observed "
-          f"{observed}. Full report: {report}. This device's index in "
-          f"pjrt_client->devices() is {device_order_index}."
-      )
-
-  _in_process_group(body)
+  expected = {
+      "axis_index": rank,
+      "sent": rank,
+      "received": (rank - 1) % world_size,
+  }[check]
+  observed = getattr(report, check)
+  if observed != expected:
+    # The competing hypothesis is that the kernel's identity follows the
+    # device enumeration, so report that index alongside the rank.
+    device_order_index = _pjrt_device_ids().index(
+        int(tpu_distributed.global_device_id())
+    )
+    raise AssertionError(
+        f"kernel {check}: rank {rank} expected {expected}, observed "
+        f"{observed}. Full report: {report}. This device's index in "
+        f"pjrt_client->devices() is {device_order_index}."
+    )
 
 
 def run_collective_solo(case_name: str) -> None:
@@ -598,27 +572,23 @@ def run_collective_solo(case_name: str) -> None:
   Args:
     case_name: The `_CollectiveCase.name` to run.
   """
+  rank = dist.get_rank()
+  world_size = dist.get_world_size()
+  op = _rank_ordered_kernel_op("pallas_mesh_order::ring_solo")
 
-  def body() -> None:
-    rank = dist.get_rank()
-    world_size = dist.get_world_size()
-    op = _rank_ordered_kernel_op("pallas_mesh_order::ring_solo")
+  x = torch.full((1, _ROWS, _COLS), rank, dtype=torch.int32, device="tpu")
+  # Materialized here so the collective below gets a traversal to itself.
+  logging.info("[kernel] rank=%d %s", rank, _read_kernel_output(op(x)))
 
-    x = torch.full((1, _ROWS, _COLS), rank, dtype=torch.int32, device="tpu")
-    # Materialized here so the collective below gets a traversal to itself.
-    logging.info("[kernel] rank=%d %s", rank, _read_kernel_output(op(x)))
-
-    case = _select_case(case_name, rank, world_size)
-    payload = torch.tensor(case.payload, dtype=torch.int32, device="tpu")
-    ballast = torch.zeros((), dtype=torch.int32, device="tpu")
-    observed = _run_solo(case, payload, ballast)
-    if observed != case.expected:
-      raise AssertionError(
-          f"solo {case.name} ({case.kind}): rank {rank} expected "
-          f"{case.expected}, observed {observed}"
-      )
-
-  _in_process_group(body)
+  case = _select_case(case_name, rank, world_size)
+  payload = torch.tensor(case.payload, dtype=torch.int32, device="tpu")
+  ballast = torch.zeros((), dtype=torch.int32, device="tpu")
+  observed = _run_solo(case, payload, ballast)
+  if observed != case.expected:
+    raise AssertionError(
+        f"solo {case.name} ({case.kind}): rank {rank} expected "
+        f"{case.expected}, observed {observed}"
+    )
 
 
 def run_collective_fused(case_name: str) -> None:
@@ -627,25 +597,21 @@ def run_collective_fused(case_name: str) -> None:
   Args:
     case_name: The `_CollectiveCase.name` to run.
   """
+  rank = dist.get_rank()
+  world_size = dist.get_world_size()
+  op = _rank_ordered_kernel_op("pallas_mesh_order::ring_fused")
 
-  def body() -> None:
-    rank = dist.get_rank()
-    world_size = dist.get_world_size()
-    op = _rank_ordered_kernel_op("pallas_mesh_order::ring_fused")
-
-    x = torch.full((1, _ROWS, _COLS), rank, dtype=torch.int32, device="tpu")
-    case = _select_case(case_name, rank, world_size)
-    payload = torch.tensor(case.payload, dtype=torch.int32, device="tpu")
-    observed = _run_fused(case, payload, op, x)
-    if observed != case.expected:
-      raise AssertionError(
-          f"fused {case.name} ({case.kind}): rank {rank} expected "
-          f"{case.expected}, observed {observed}. The solo case of the same "
-          "name is the baseline; if it is green and this is not, the "
-          "collective changed answer once it shared the kernel's module."
-      )
-
-  _in_process_group(body)
+  x = torch.full((1, _ROWS, _COLS), rank, dtype=torch.int32, device="tpu")
+  case = _select_case(case_name, rank, world_size)
+  payload = torch.tensor(case.payload, dtype=torch.int32, device="tpu")
+  observed = _run_fused(case, payload, op, x)
+  if observed != case.expected:
+    raise AssertionError(
+        f"fused {case.name} ({case.kind}): rank {rank} expected "
+        f"{case.expected}, observed {observed}. The solo case of the same "
+        "name is the baseline; if it is green and this is not, the "
+        "collective changed answer once it shared the kernel's module."
+    )
 
 
 def run_two_mesh_probe(probe_id: str) -> None:
@@ -656,86 +622,72 @@ def run_two_mesh_probe(probe_id: str) -> None:
       `two_same_mesh_kernels_compile_cleanly`, or
       `two_conflicting_mesh_kernels_are_rejected`.
   """
+  rank = dist.get_rank()
+  world_size = dist.get_world_size()
+  forward_mesh = torch.tpu.pallas.get_pallas_mesh(axis_names=(_AXIS,))
+  _log_placement(forward_mesh)
+  _require_non_identity_device_order(forward_mesh)
 
-  def body() -> None:
-    rank = dist.get_rank()
-    world_size = dist.get_world_size()
-    forward_mesh = torch.tpu.pallas.get_pallas_mesh(axis_names=(_AXIS,))
-    _log_placement(forward_mesh)
-    _require_non_identity_device_order(forward_mesh)
-
-    if probe_id == "two_conflicting_mesh_kernels_are_rejected":
-      second_mesh = jax.sharding.Mesh(
-          forward_mesh.devices[::-1], axis_names=forward_mesh.axis_names
+  if probe_id == "two_conflicting_mesh_kernels_are_rejected":
+    second_mesh = jax.sharding.Mesh(
+        forward_mesh.devices[::-1], axis_names=forward_mesh.axis_names
+    )
+    if _mesh_device_ids(second_mesh) == _mesh_device_ids(forward_mesh):
+      raise RuntimeError(
+          "rank->device map is a palindrome"
+          f" ({_mesh_device_ids(forward_mesh)}), so the reversed mesh equals"
+          " the forward one and there is no conflict for the compiler to"
+          " resolve."
       )
-      if _mesh_device_ids(second_mesh) == _mesh_device_ids(forward_mesh):
-        raise RuntimeError(
-            "rank->device map is a palindrome"
-            f" ({_mesh_device_ids(forward_mesh)}), so the reversed mesh equals"
-            " the forward one and there is no conflict for the compiler to"
-            " resolve."
-        )
-    else:
-      second_mesh = forward_mesh
-    logging.info(
-        "[two-mesh] rank=%d probe_id=%s mesh_a=%s mesh_b=%s",
-        rank,
-        probe_id,
-        _mesh_device_ids(forward_mesh),
-        _mesh_device_ids(second_mesh),
-    )
+  else:
+    second_mesh = forward_mesh
+  logging.info(
+      "[two-mesh] rank=%d probe_id=%s mesh_a=%s mesh_b=%s",
+      rank,
+      probe_id,
+      _mesh_device_ids(forward_mesh),
+      _mesh_device_ids(second_mesh),
+  )
 
-    first = _build_ring_op(
-        forward_mesh, world_size, "pallas_mesh_order::ring_a"
-    )
-    second = _build_ring_op(
-        second_mesh, world_size, "pallas_mesh_order::ring_b"
-    )
-    x = torch.full((1, _ROWS, _COLS), rank, dtype=torch.int32, device="tpu")
+  first = _build_ring_op(forward_mesh, world_size, "pallas_mesh_order::ring_a")
+  second = _build_ring_op(second_mesh, world_size, "pallas_mesh_order::ring_b")
+  x = torch.full((1, _ROWS, _COLS), rank, dtype=torch.int32, device="tpu")
 
-    @torch.tpu.distributed.spmd_safe
-    def region(t: torch.Tensor) -> torch.Tensor:
-      return second(first(t))
+  @torch.tpu.distributed.spmd_safe
+  def region(t: torch.Tensor) -> torch.Tensor:
+    return second(first(t))
 
-    debugs = []
-    compiled = torch.compile(
-        region,
-        backend="tpu",
-        fullgraph=True,
-        dynamic=False,
-        options={"serializable": False, "debug_callback": debugs.append},
-    )
+  debugs = []
+  compiled = torch.compile(
+      region,
+      backend="tpu",
+      fullgraph=True,
+      dynamic=False,
+      options={"serializable": False, "debug_callback": debugs.append},
+  )
 
-    if probe_id == "two_same_mesh_kernels_share_one_traversal":
+  if probe_id == "two_same_mesh_kernels_share_one_traversal":
+    _ = compiled(x)
+    modules = [m for d in debugs for m in d.stablehlo_forward_text]
+    if not any(len(_KERNEL_CALL_SITE_RE.findall(m)) == 2 for m in modules):
+      counts = [len(_KERNEL_CALL_SITE_RE.findall(m)) for m in modules]
+      raise AssertionError(
+          f"{probe_id} (rank {rank}): expected at least one compiled module "
+          f"with 2 Pallas kernel call sites, observed counts={counts} across "
+          f"{len(modules)} module(s)."
+      )
+  elif probe_id == "two_same_mesh_kernels_compile_cleanly":
+    _ = compiled(x).cpu()
+    torch.accelerator.synchronize()
+  elif probe_id == "two_conflicting_mesh_kernels_are_rejected":
+    with absltest.TestCase().assertRaisesRegex(  # ABSLTEST_OK=helper only ASSERT_RAISES_OK=Requires multi-device hardware to test mesh conflict rejection in traversal
+        (RuntimeError, torch._dynamo.exc.BackendCompilerFailed),
+        r"expected Pallas kernels and scans in the same program to have the"
+        r" same device assignment",
+    ):
       _ = compiled(x)
-      modules = [m for d in debugs for m in d.stablehlo_forward_text]
-      if not any(len(_KERNEL_CALL_SITE_RE.findall(m)) == 2 for m in modules):
-        counts = [len(_KERNEL_CALL_SITE_RE.findall(m)) for m in modules]
-        raise AssertionError(
-            f"{probe_id} (rank {rank}): expected at least one compiled module "
-            f"with 2 Pallas kernel call sites, observed counts={counts} across "
-            f"{len(modules)} module(s)."
-        )
-    elif probe_id == "two_same_mesh_kernels_compile_cleanly":
-      _ = compiled(x).cpu()
-      torch.accelerator.synchronize()
-    elif probe_id == "two_conflicting_mesh_kernels_are_rejected":
-      with absltest.TestCase().assertRaisesRegex(  # ABSLTEST_OK=helper only ASSERT_RAISES_OK=Requires multi-device hardware to test mesh conflict rejection in traversal
-          (RuntimeError, torch._dynamo.exc.BackendCompilerFailed),
-          r"expected Pallas kernels and scans in the same program to have the"
-          r" same device assignment",
-      ):
-        _ = compiled(x)
-    else:
-      raise ValueError(f"unknown probe_id {probe_id!r}")
-
-  # No success barrier: on the conflicting path compilation fails before any
-  # device program executes.
-  dist.init_process_group(backend="tpu_dist")
-  try:
-    body()
-  finally:
-    dist.destroy_process_group()
+  else:
+    raise ValueError(f"unknown probe_id {probe_id!r}")
 
 
 _KERNEL_CHECKS = (
@@ -770,36 +722,28 @@ _TWO_MESH_PROBES = (
 
 
 class PallasMeshCollectiveDeviceOrderTest(
-    seed_test_utils.MultiProcessRepeatableTest
+    continuous_test_utils.TpuMultiProcContinuousTest
 ):
-  _world_size = 8
-
-  def _dist_run(self, fn: Callable[..., None], **kwargs) -> None:
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=fn,
-        **kwargs,
-    )
+  world_size = 8
 
   @parameterized.named_parameters(*_KERNEL_CHECKS)
   def test_kernel(self, check: str):
-    self._dist_run(run_kernel_report_check, check=check)
+    run_kernel_report_check(check=check)
 
   @parameterized.named_parameters(*_COLLECTIVE_CASES)
   def test_solo(self, case_name: str):
-    self._dist_run(run_collective_solo, case_name=case_name)
+    run_collective_solo(case_name=case_name)
 
   @parameterized.named_parameters(*_COLLECTIVE_CASES)
   def test_fused(self, case_name: str):
     if case_name == "broadcast":
       self.skipTest(_FUSED_BROADCAST_SKIP)
-    self._dist_run(run_collective_fused, case_name=case_name)
+    run_collective_fused(case_name=case_name)
 
   @parameterized.named_parameters(*_TWO_MESH_PROBES)
   def test_two(self, probe_id: str):
-    self._dist_run(run_two_mesh_probe, probe_id=probe_id)
+    run_two_mesh_probe(probe_id=probe_id)
 
 
 if __name__ == "__main__":  # We are in the parent process.
-  mp.set_start_method("spawn")
   multiprocessing.handle_test_main(absltest.main)
