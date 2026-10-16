@@ -2361,6 +2361,47 @@ class ModuleRegistryTest(seed_test_utils.RepeatableTest):
         model_cls_remap, module_registry.diffusers.PixArtTransformer2DModel
     )
 
+  def test_transformers_composite_model_constructed_in_target_dtype(self):
+    # Qwen3.5-397B-A17B's root config has no dtype while its text_config is
+    # bfloat16. The model must be constructed in bfloat16 rather than in float32
+    # and cast afterwards, which doubles peak memory during initialization.
+    def modify_config(config):
+      text_config = config.get_text_config()
+      text_config.num_hidden_layers = 1
+      text_config.layer_types = text_config.layer_types[:1]
+      return config
+
+    module_spec = self.module_registry.get_module_spec(
+        "transformers",
+        "Qwen/Qwen3.5-397B-A17B",
+        load_weights=False,
+        modify_config_hook=modify_config,
+    )
+    self.assertIsNone(module_spec.config.get("dtype"))
+    self.assertEqual(module_spec.config.get_text_config().dtype, torch.bfloat16)
+
+    # Records the dtype of each parameter as it is registered, so that a cast
+    # after construction does not hide a float32 construction.
+    registered_dtypes = set()
+
+    def record_dtype(unused_module, unused_name, param):
+      if param is not None and param.is_floating_point():
+        registered_dtypes.add(param.dtype)
+
+    handle = (
+        torch.nn.modules.module.register_module_parameter_registration_hook(
+            record_dtype
+        )
+    )
+    self.addCleanup(handle.remove)
+    with torch.device("meta"):
+      model = module_spec.module_factory()
+    handle.remove()
+
+    self.assertEqual(registered_dtypes, {torch.bfloat16})
+    for param in model.parameters():
+      self.assertEqual(param.dtype, torch.bfloat16)
+
 
 if __name__ == "__main__":
   absltest.main()

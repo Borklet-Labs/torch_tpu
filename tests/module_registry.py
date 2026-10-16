@@ -2967,8 +2967,9 @@ def _instantiate_transformers_model(
   What this stage does:
     Unwraps the sanitized `config` (and extracts `config.get_text_config()` when
     `model_cls` expects the inner text sub-config of a composite multimodal
-    config), constructs the model via `model_cls._from_config(target_cfg)`,
-    casts floating-point parameters/buffers to `target_dtype`, and applies
+    config), constructs the model in `target_dtype` via
+    `model_cls._from_config(target_cfg, dtype=target_dtype)`, casts any
+    remaining floating-point parameters/buffers to `target_dtype`, and applies
     post-instantiation runtime hooks via `_apply_model_patches`.
 
   Why this is needed as a separate stage:
@@ -3019,8 +3020,16 @@ def _instantiate_transformers_model(
   if hasattr(model_cls, "_from_config") and callable(
       getattr(model_cls, "_from_config")
   ):
+    # Build the model directly in `target_dtype`. Without an explicit dtype,
+    # `_from_config` uses the root config's dtype for the whole model. Some
+    # configs set a dtype only on a sub-config (e.g. Qwen3.5-397B-A17B sets it
+    # only on `text_config`), so the root dtype is None and the model is built
+    # in float32 and then cast, which doubles peak memory.
+    from_config_kwargs = (
+        {"dtype": target_dtype} if target_dtype != torch.float32 else {}
+    )
     # pyrefly: ignore[missing-attribute]
-    model = model_cls._from_config(target_cfg)
+    model = model_cls._from_config(target_cfg, **from_config_kwargs)
   elif hasattr(model_cls, "from_config") and callable(
       getattr(model_cls, "from_config")
   ):
