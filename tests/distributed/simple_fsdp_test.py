@@ -16,21 +16,17 @@
 
 from collections.abc import Callable
 import copy
-import os
 
 from absl.testing import absltest
 import torch
-from torch import distributed as dist
 from torch import nn
 from torch import optim
 from torch.distributed import fsdp
 import torch.distributed.tensor as dt
-import torch.multiprocessing as mp
 from torch_tpu._internal.utils import test_utils as utils
 from examples.fsdp import simple_fsdp
 from torch_tpu._internal.distributed import multiprocessing
-from tests import seed_test_utils
-from tests.distributed import distributed_utils
+from tests.distributed import continuous_test_utils
 
 BATCH_SIZE = 4
 DIM = 32
@@ -117,22 +113,26 @@ def _simple_fsdp_step(
   return loss.detach(), y_pred.detach()
 
 
-def run_simple_fsdp_fully_shard_parity() -> None:
-  """Verifies compiled SimpleFSDP matches FSDPv2 across training steps."""
-  # 1. Initialize distributed process group and 1D FSDP device mesh across TPUs.
-  dist.init_process_group(backend="tpu_dist")
-  try:
-    rank = int(os.environ["RANK"])
-    world_size = int(os.environ["WORLD_SIZE"])
-    mesh = dt.init_device_mesh("tpu", (world_size,), mesh_dim_names=("fsdp",))
+class SimpleFSDPTest(continuous_test_utils.TpuMultiProcContinuousTest):
+
+  @property
+  def world_size(self) -> int:
+    return 8
+
+  def test_fully_shard_parity(self) -> None:
+    """Verifies compiled SimpleFSDP matches FSDPv2 across training steps."""
+    # 1. Initialize 1D FSDP device mesh across TPUs.
+    mesh = dt.init_device_mesh(
+        "tpu", (self.world_size,), mesh_dim_names=("fsdp",)
+    )
 
     # 2. Create deterministic base model weights and per-rank training data.
     torch.manual_seed(RANDOM_SEED)
     base_model = ToyMLP(DIM).to("tpu")
-    x_all = torch.randn(world_size, BATCH_SIZE, DIM)
-    y_all = torch.randn(world_size, BATCH_SIZE, DIM)
-    x = x_all[rank].to("tpu")
-    y = y_all[rank].to("tpu")
+    x_all = torch.randn(self.world_size, BATCH_SIZE, DIM)
+    y_all = torch.randn(self.world_size, BATCH_SIZE, DIM)
+    x = x_all[self.rank].to("tpu")
+    y = y_all[self.rank].to("tpu")
 
     # 3. Build FSDPv2 reference model and optimizer from the base model.
     fsdp2_model = _build_fsdp2_model(base_model, mesh)
@@ -153,7 +153,7 @@ def run_simple_fsdp_fully_shard_parity() -> None:
 
       simple_opt.zero_grad()
       simple_loss, simple_pred = _simple_fsdp_step(
-          compiled_simple_model, x, y, world_size
+          compiled_simple_model, x, y, self.world_size
       )
       simple_opt.step()
 
@@ -169,19 +169,13 @@ def run_simple_fsdp_fully_shard_parity() -> None:
           rtol=1e-2,
           atol=1e-2,
       )
-  finally:
-    if dist.is_initialized():
-      dist.barrier()
-      dist.destroy_process_group()
 
-
-def run_simple_fsdp_options() -> None:
-  """Verifies shard_dim, ignored_params, small-param replication, and context manager."""
-  # 1. Initialize distributed process group and 1D FSDP device mesh.
-  dist.init_process_group(backend="tpu_dist")
-  try:
-    world_size = int(os.environ["WORLD_SIZE"])
-    mesh = dt.init_device_mesh("tpu", (world_size,), mesh_dim_names=("fsdp",))
+  def test_options(self) -> None:
+    """Verifies shard_dim, ignored_params, small-param replication, and context manager."""
+    # 1. Initialize 1D FSDP device mesh.
+    mesh = dt.init_device_mesh(
+        "tpu", (self.world_size,), mesh_dim_names=("fsdp",)
+    )
 
     # 2. Define a module exercising custom sharding options:
     #    - `weight`: sharded along dimension 1 via per-parameter `shard_dim` dict.
@@ -226,27 +220,7 @@ def run_simple_fsdp_options() -> None:
     out.sum().backward()
     with simple_fsdp.disable_active_parametrization():
       assert mod.weight.grad is not None
-  finally:
-    if dist.is_initialized():
-      dist.barrier()
-      dist.destroy_process_group()
-
-
-class SimpleFSDPTest(seed_test_utils.MultiProcessRepeatableTest):
-
-  def test_fully_shard_parity(self):
-    distributed_utils.dist_run(
-        nproc_per_node=8,
-        fn=run_simple_fsdp_fully_shard_parity,
-    )
-
-  def test_options(self):
-    distributed_utils.dist_run(
-        nproc_per_node=8,
-        fn=run_simple_fsdp_options,
-    )
 
 
 if __name__ == "__main__":
-  mp.set_start_method("spawn")
   multiprocessing.handle_test_main(absltest.main)
