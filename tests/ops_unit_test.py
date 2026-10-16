@@ -4295,6 +4295,88 @@ class OpsUnitTest(TorchTpuVsCpuTestBase):
     expected_tensor = torch.tensor(expected, dtype=dtype, device="tpu")
     self.assertEqual(tpu_result, expected_tensor)
 
+  def test_lerp_complex128(self):
+    # Regression test for b/451684563: lerp() supports complex128.
+    # TODO(b/451684563): Switch to testing TPU-vs-GPU in ops_test.py once GPU
+    # goldens are regenerated with complex128 for lerp.
+    device = torch.device("tpu")
+    start = torch.tensor(
+        [1.0 + 2.0j, 3.0 + 4.0j], dtype=torch.complex128, device=device
+    )
+    end = torch.tensor(
+        [5.0 + 6.0j, 7.0 + 8.0j], dtype=torch.complex128, device=device
+    )
+    weight = torch.tensor(
+        [0.5 + 0.0j, 0.25 + 0.0j], dtype=torch.complex128, device=device
+    )
+    expected = torch.tensor(
+        [3.0 + 4.0j, 4.0 + 5.0j], dtype=torch.complex128, device=device
+    )
+    self.assertEqual(torch.lerp(start, end, weight), expected)
+
+    # Test in-place variant with complex128 weight.
+    start_inplace = start.clone()
+    start_inplace.lerp_(end, weight)
+    self.assertEqual(start_inplace, expected)
+
+    # Test with 0D float64 tensor weight (f64[] -> c128[]).
+    weight_f64_0d = torch.tensor(0.5, dtype=torch.float64, device=device)
+    expected_scalar = torch.tensor(
+        [3.0 + 4.0j, 5.0 + 6.0j], dtype=torch.complex128, device=device
+    )
+    self.assertEqual(torch.lerp(start, end, weight_f64_0d), expected_scalar)
+
+    # Test in-place variant with 0D float64 tensor weight.
+    start_inplace_0d = start.clone()
+    start_inplace_0d.lerp_(end, weight_f64_0d)
+    self.assertEqual(start_inplace_0d, expected_scalar)
+
+    # Test with scalar weight (eager and compiled).
+    self.assertEqual(torch.lerp(start, end, 0.5), expected_scalar)
+    compiled_fn = torch.compile(lambda a, b: torch.lerp(a, b, 0.5))
+    self.assertEqual(compiled_fn(start, end), expected_scalar)
+
+    # Test in-place variant with scalar weight.
+    start_inplace_scalar = start.clone()
+    start_inplace_scalar.lerp_(end, 0.5)
+    self.assertEqual(start_inplace_scalar, expected_scalar)
+
+    # Compare TPU vs CPU execution.
+    self.assert_close_tpu_vs_cpu(
+        lambda dev: torch.lerp(
+            torch.tensor(
+                [1.0 + 2.0j, 3.0 + 4.0j],
+                dtype=torch.complex128,
+                device=dev,
+            ),
+            torch.tensor(
+                [5.0 + 6.0j, 7.0 + 8.0j],
+                dtype=torch.complex128,
+                device=dev,
+            ),
+            torch.tensor(
+                [0.5 + 0.0j, 0.25 + 0.0j],
+                dtype=torch.complex128,
+                device=dev,
+            ),
+        )
+    )
+    self.assert_close_tpu_vs_cpu(
+        lambda dev: torch.lerp(
+            torch.tensor(
+                [1.0 + 2.0j, 3.0 + 4.0j],
+                dtype=torch.complex128,
+                device=dev,
+            ),
+            torch.tensor(
+                [5.0 + 6.0j, 7.0 + 8.0j],
+                dtype=torch.complex128,
+                device=dev,
+            ),
+            torch.tensor(0.5, dtype=torch.float64, device=dev),
+        )
+    )
+
   def test_conj_physical(self):
     def test_out(device):
       x = torch.tensor([[1 + 1j, 2 - 2j], [3 + 3j, 4 - 4j]]).to(device=device)

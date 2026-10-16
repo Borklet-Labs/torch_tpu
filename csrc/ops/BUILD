@@ -71,7 +71,6 @@ torch_tpu_cc_library(
     hdrs = ["op_builder_utils.h"],
     deps = [
         ":python_context",
-        "//csrc/common:context_states",
         "//csrc/common:dimension_types",
         "//csrc/common:dtype",
         "//csrc/common:error_utils",

@@ -1048,16 +1048,6 @@ Please use clone() or contiguous() to copy the tensor before writing""",
     ):
       torch.gather(inp, dim, index, sparse_grad=True)
 
-  @et.why_tpu_only("TODO: support complex128 in lerp() on TPU.")
-  def test_lerp_complex_double(self):
-    t = torch.tensor([1.0], dtype=torch.complex128, device=et.device())
-
-    with et.assert_raises_message(
-        NotImplementedError,
-        tpu="""lerp(): complex128 dtype is not yet supported""",
-    ):
-      torch.lerp(t, t, t)
-
   @et.why_tpu_only("Can only test device mismatch on TPU.")
   def test_copy_from_other_device_inputs(self):
     dk = torch._C._parse_dispatch_key("PrivateUse1")

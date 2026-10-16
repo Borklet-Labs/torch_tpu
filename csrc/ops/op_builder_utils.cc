@@ -1118,6 +1118,35 @@ absl::StatusOr<mlir::MlirOp> ConvertIfInteger(mlir::MlirOp op,
   return op;
 }
 
+absl::StatusOr<mlir::MlirOp> ComplexSafeConvertElementType(
+    mlir::MlirOp op, mlir::ElementType target_type) {
+  const mlir::RankedTensorType tensor_type = GetTensorTypeOrDie(op);
+  TT_ASSIGN_OR_RETURN(
+      const mlir::ElementType current_type,
+      ConvertTo<mlir::ElementType>(tensor_type.getElementType()));
+  if (current_type == target_type) {
+    return op;
+  }
+  if (target_type == mlir::ElementType::COMPLEXF32 ||
+      target_type == mlir::ElementType::COMPLEXF64) {
+    const mlir::ElementType component_type =
+        (target_type == mlir::ElementType::COMPLEXF64) ? mlir::ElementType::F64
+                                                       : mlir::ElementType::F32;
+    if (current_type == mlir::ElementType::COMPLEXF32 ||
+        current_type == mlir::ElementType::COMPLEXF64) {
+      mlir::MlirOp real = mlir::stablehlo::Real(op);
+      mlir::MlirOp imag = mlir::stablehlo::Imag(op);
+      real = mlir::stablehlo::ConvertElementType(real, component_type);
+      imag = mlir::stablehlo::ConvertElementType(imag, component_type);
+      return mlir::stablehlo::Complex(real, imag);
+    }
+    mlir::MlirOp real = mlir::stablehlo::ConvertElementType(op, component_type);
+    mlir::MlirOp zero = MakeConstantLike(real, 0.0);
+    return mlir::stablehlo::Complex(real, zero);
+  }
+  return mlir::stablehlo::ConvertElementType(op, target_type);
+}
+
 absl::StatusOr<mlir::MlirOp> Iota(mlir::MlirOp reference_op,
                                   int64_t iota_dimension,
                                   mlir::Type element_type) {

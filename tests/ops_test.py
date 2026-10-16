@@ -2577,11 +2577,7 @@ class TestOps(op_testing.OpInfoTestBase):
     self.do_test_op("nn.functional.leaky_relu")
 
   def test_lerp(self):
-    self.do_test_op(
-        "lerp",
-        exclude_dtypes=(torch.complex64,),
-        exclude_inplace_dtypes=(torch.complex64,),
-    )
+    self.do_test_op("lerp")
 
   def test_lgamma(self):
     self.do_test_op(

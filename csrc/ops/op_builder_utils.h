@@ -38,7 +38,6 @@
 #include "c10/util/ArrayRef.h"  // IWYU pragma: keep for at::IntArrayRef
 #include "c10/util/Exception.h"
 #include "c10/util/Optional.h"
-#include "csrc/common/context_states.h"
 #include "csrc/common/dimension_types.h"  // IWYU pragma: export
 #include "csrc/common/error_utils.h"
 #include "csrc/common/fixed_size_span.h"
@@ -626,6 +625,15 @@ absl::StatusOr<ConvertedOps> ConvertIfIntegers(mlir::MlirOp op1,
 // no conversion is performed.
 absl::StatusOr<mlir::MlirOp> ConvertIfInteger(mlir::MlirOp op,
                                               mlir::ElementType target_dtype);
+
+// Converts an operand to `target_type`. Unlike
+// `mlir::stablehlo::ConvertElementType`, when converting a non-complex operand
+// to a complex target type (`COMPLEXF32` or `COMPLEXF64`), this casts the input
+// to the real component type and constructs the complex value explicitly with a
+// zero imaginary component. This avoids emitting direct `Convert(f64 -> c128)`
+// instructions that fail in `XPrecisionRewriter`.
+absl::StatusOr<mlir::MlirOp> ComplexSafeConvertElementType(
+    mlir::MlirOp op, mlir::ElementType target_type);
 
 // Aliases for op builders with varying numbers of inputs.
 

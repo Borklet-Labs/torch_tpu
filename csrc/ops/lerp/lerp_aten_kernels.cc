@@ -49,10 +49,6 @@ absl::Status ValidateLerpSelfInput(const at::Tensor& self) {
       << "expected the first argument's dtype to be non-integral, got "
       << ToString(self.scalar_type());
 
-  TT_RET_CHECK(self.scalar_type() != at::ScalarType::ComplexDouble,
-               error::kPythonNotImplementedError)
-      << "complex128 dtype is not yet supported";
-
   return absl::OkStatus();
 }
 
@@ -60,6 +56,11 @@ absl::StatusOr<MlirOpResults<1>> BuildLerpShlo(mlir::MlirOp self,
                                                mlir::MlirOp end,
                                                mlir::MlirOp weight,
                                                mlir::ElementType common_type) {
+  TT_ASSIGN_OR_RETURN(self, ComplexSafeConvertElementType(self, common_type));
+  TT_ASSIGN_OR_RETURN(end, ComplexSafeConvertElementType(end, common_type));
+  TT_ASSIGN_OR_RETURN(weight,
+                      ComplexSafeConvertElementType(weight, common_type));
+
   // Apply broadcast if needed - unclear if there is a better way to unpack
   // the return array, std::tie fails in OSS CI.
   TT_ASSIGN_OR_RETURN((auto [self_bcast, end_bcast, weight_bcast]),
@@ -67,9 +68,6 @@ absl::StatusOr<MlirOpResults<1>> BuildLerpShlo(mlir::MlirOp self,
   self = self_bcast;
   end = end_bcast;
   weight = weight_bcast;
-  self = mlir::stablehlo::ConvertElementType(self, common_type);
-  end = mlir::stablehlo::ConvertElementType(end, common_type);
-  weight = mlir::stablehlo::ConvertElementType(weight, common_type);
 
   // Compute result = self + weight * (end - self)
   auto diff_op = mlir::stablehlo::Subtract(end, self);
@@ -131,6 +129,14 @@ at::Tensor& AtenLerpScalarOut(const at::Tensor& self, const at::Tensor& end,
     at::ScalarType weight_dtype =
         at::result_type(self, promoted_weight.scalar());
     weight_dtype = c10::promoteTypes(weight_dtype, at::ScalarType::Float);
+    // If the promoted weight dtype is complex but the scalar argument is real,
+    // demote to the matching real dtype so that ComplexSafeConvertElementType
+    // in BuildLerpShlo can construct the complex operand without host
+    // downcasts.
+    if (c10::isComplexType(weight_dtype) &&
+        !promoted_weight.scalar().isComplex()) {
+      weight_dtype = c10::toRealValueType(weight_dtype);
+    }
     TT_ASSIGN_OR_THROW(auto weight_tensor,
                        promoted_weight.GetTensor(weight_dtype));
     return AtenLerpTensorOut(self, end, weight_tensor, out);
