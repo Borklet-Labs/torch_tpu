@@ -36,7 +36,7 @@ def _(mo):
  <img src="images/logo.png#gh-light-mode-only" alt="TorchTPU" style="width: 10%;">
 </p>
 <p align="center">
-<a href="https://github.com/google-project/torch_tpu"><b>GitHub</b></a> | <a href="https://discuss.pytorch.org/c/tpu/45"><b>Discussion Forum</b></a> | <a href="https://docs.cloud.google.com/tpu/docs/pytorch-stack"><b>PyTorch on TPU</b></a>
+<a href="https://github.com/google-pytorch/torch_tpu"><b>GitHub</b></a> | <a href="https://discuss.pytorch.org/c/tpu/45"><b>Discussion Forum</b></a> | <a href="https://docs.cloud.google.com/tpu/docs/pytorch-stack"><b>PyTorch on TPU</b></a>
 </p>
 
 ## About
@@ -48,41 +48,33 @@ TorchTPU is an open-source, native PyTorch backend for Google Cloud TPUs, develo
 <div class="grid cards two-columns" markdown>
 - :material-rocket-launch:{ .lg .middle } **__Get Started__**
    Provision environments, understand fundamental architectures, and run your first workloads.
-   [:octicons-arrow-right-24: Introduction to TorchTPU](markdown/1_basics_1_intro_to_torchtpu.md)
-   [:octicons-arrow-right-24: Get started on a VM](markdown/1_basics_2_get_started_on_vm.md)
-   [:octicons-arrow-right-24: Get started on GKE](markdown/1_basics_3_get_started_on_gke.md)
-   [:octicons-arrow-right-24: How TorchTPU works](markdown/2_in_depth_1_how_torchtpu_works.md)
-- :material-sine-wave:{ .lg .middle } **__In-Depth Architecture__**
-   Deep-dive into the mechanics of memory layouts, execution engines, and distributed compilation.
-   [:octicons-arrow-right-24: The TorchTPU memory model](markdown/2_in_depth_2_torchtpu_and_tpu_memory_model.md)
-   [:octicons-arrow-right-24: The TorchTPU execution model](markdown/2_in_depth_3_torchtpu_execution_modes.md)
-   [:octicons-arrow-right-24: Distributed support](markdown/2_in_depth_5_distributed.md)
-   [:octicons-arrow-right-24: Dynamic shapes support](markdown/2_in_depth_6_dynamic_shapes.md)
-- :material-book-open-blank-variant:{ .lg .middle } **__Specifications & API References__**
-   Explore the formal API surface mappings, environment flags, and features.
-   [:octicons-arrow-right-24: Supported feature set](markdown/6_reference_1_supported_feature_set.md)
-   [:octicons-arrow-right-24: torch.tpu API specifications](markdown/6_reference_2_torchtpu_api.md)
-- :material-code-brackets:{ .lg .middle } **__Practical Examples__**
-   Run end-to-end models, leverage advanced scaling APIs, and develop high-performance kernels.
-   [:octicons-arrow-right-24: LLM inference end-to-end](markdown/3_practical_examples_1_llm_inference_end_to_end.md)
-   [:octicons-arrow-right-24: LLM training end-to-end](markdown/3_practical_examples_2_llm_training_end_to_end.md)
-   [:octicons-arrow-right-24: Scaling with FSDP](markdown/3_practical_examples_3_fsdp_best_practices.md)
-   [:octicons-arrow-right-24: Reduce recompilation / Dynamism](markdown/3_practical_examples_6_bounded_dynamism.md)
-- :octicons-cpu-16:{ .lg .middle } **__Custom Pallas Kernels__**
-   Write hardware-specific TPU kernels directly in Python using Triton-like Pallas abstractions.
-   [:octicons-arrow-right-24: Custom kernel support (Concept)](markdown/2_in_depth_4_custom_kernels.md)
-   [:octicons-arrow-right-24: Write custom kernels with Pallas](markdown/3_practical_examples_4_adding_custom_kernels_using_pallas.md)
-   [:octicons-arrow-right-24: Write communicating distributed kernels](markdown/3_practical_examples_5_distributed_pallas_kernels.md)
-- :material-tools:{ .lg .middle } **__Troubleshooting & Debugging__**
-   Diagnose compilation crashes, locate execution bottlenecks, and inspect compiled graph artifacts.
-   [:octicons-arrow-right-24: Troubleshoot error messages](markdown/4_debugging_and_performance_analysis_3_getting_better_error_information.md)
-   [:octicons-arrow-right-24: View compilation artifacts](markdown/4_debugging_and_performance_analysis_4_viewing_compilation_artifacts.md)
-- :material-chart-timeline-variant:{ .lg .middle } **__Performance & Optimization__**
-   Profile trace timelines using XProf, optimize numerical parity, and review advanced case studies.
-   [:octicons-arrow-right-24: Numerical precision and parity](markdown/4_debugging_and_performance_analysis_1_numerical_precision.md)
-   [:octicons-arrow-right-24: Profile performance with XProf](markdown/4_debugging_and_performance_analysis_2_xprof_for_torchtpu.md)
-   [:octicons-arrow-right-24: Case study: FLUX Optimization](markdown/5_case_studies_1_flux_optimization.md)
 
+   [:octicons-arrow-right-24: Introduction to TorchTPU](./intro_to_torchtpu.py): Why TorchTPU was created, what it provides, and how it can help you.
+   [:octicons-arrow-right-24: Get started with TorchTPU on a VM](get_started_on_a_vm.py): Setup TorchTPU on a TPU VM.
+   [:octicons-arrow-right-24: Get started with TorchTPU on GKE](get_started_on_gke.py): Use TorchTPU through GKE.
+   [:octicons-arrow-right-24: Supported feature set and roadmap](feature_set.py): Currently supported features and plans for future releases.
+   [:octicons-arrow-right-24: API reference](api_reference.py): The TorchTPU API and environment variables for the current release.
+   [:octicons-arrow-right-24: TorchTPU FAQ](faq.py): Frequently asked questions about TorchTPU.
+   
+- :material-sine-wave:{ .lg .middle } **__In-Depth__**
+   Deep-dive into the mechanics of memory layouts, execution engines, and distributed execution.
+   [:octicons-arrow-right-24: How TorchTPU works](how_torchtpu_works.py): How TorchTPU integrates with PyTorch and the TPU hardware from top to bottom.
+   [:octicons-arrow-right-24: The TorchTPU execution model](torchtpu_execution_model.py): In depth detail of how TorchTPU executes PyTorch code and the different execution modes it supports.
+   [:octicons-arrow-right-24: The TorchTPU memory model](torchtpu_memory_model.py): How TorchTPU handles the way the TPU and XLA compiler deal with memory.
+   [:octicons-arrow-right-24: Distributed support](distributed_support.py): How TorchTPU supports distributed workloads.
+   [:octicons-arrow-right-24: Custom kernel support](custom_kernels.py): How to write custom kernels for TorchTPU.
+   [:octicons-arrow-right-24: Dynamic shapes](dynamic_shapes.py): Support for dynamic tensor shapes.
+
+- :material-book-open-variant:{ .lg .middle } **__Case Studies__**
+   Explore practical examples of how to use TorchTPU to solve real-world problems.
+   [:octicons-arrow-right-24: FLUX Optimization](case_studies_flux.py): Example demonstrating how to identify and apply multiple optimizations on FLUX.
+   [:octicons-arrow-right-24: Muse Glimmer 30B inference:](case_studies_muse_glimmer_30b_inference.py): Example of iterative decoding using real weights with static/dynamic KV cache.
+   [:octicons-arrow-right-24: Muse Glimmer 30B training](case_studies_muse_glimmer_30b_training.py): A training loop on a standalone implementation of Muse Glimmer 30B.
+   [:octicons-arrow-right-24: Using FSDP](case_studies_fsdp.py): The recommended approach to using FSDP for TorchTPU.
+
+- :material-book-open-variant:{ .lg .middle } **__Analyze your workload__**
+   [:octicons-arrow-right-24: Numerical precision and parity](numerical_precision.py): Controlling precision in TorchTPU.
+   [:octicons-arrow-right-24: Profile performance with XProf](performance_profiling_with_xprof.py): How to use XProf as a TorchTPU profiler.
 </div>
 
     """)

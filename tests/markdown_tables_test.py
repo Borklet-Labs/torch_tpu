@@ -32,7 +32,7 @@ from tests import repo_paths
 _INTERNAL_DIRS = ("google", "g3doc")
 
 # A file that must be scanned, to catch a test that silently scans nothing.
-_EXPECTED_FILE = "docs/markdown/6_reference_2_torchtpu_api.md"
+_EXPECTED_FILE = "docs/api_reference.md"
 
 _CODE_FENCE_RE = re.compile(r"^\s*(```|~~~)")
 _TABLE_CONTINUATION_ROW_RE = re.compile(r"^\s*:.*:\s*$")

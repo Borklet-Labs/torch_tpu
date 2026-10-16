@@ -29,7 +29,7 @@ TT_APIS_YAML_PATH = "tests/api/tt_apis.yaml"
 EXPOSED_INTERNAL_APIS_YAML_PATH = "tests/api/exposed_internal_apis.yaml"
 
 # The generated list of public APIs, relative to the repository root.
-PUBLIC_APIS_MD_PATH = "docs/markdown/public_apis.md"
+PUBLIC_APIS_MD_PATH = "docs/public_apis.md"
 
 # The path of the repository in a google3 workspace or Blaze runfiles tree,
 # which source file paths of Python objects in google3 contain.

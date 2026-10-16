@@ -64,28 +64,28 @@ exclude_docs: |
 nav:
   - Home: markdown/index.md
   - Get started with TorchTPU:
-    - markdown/1_basics_1_intro_to_torchtpu.md
-    - markdown/1_basics_2_get_started_on_vm.md
-    - markdown/1_basics_3_get_started_on_gke.md
-    - markdown/6_reference_1_supported_feature_set.md
-    - markdown/6_reference_2_torchtpu_api.md
-    - markdown/faq.md
+    - intro_to_torchtpu.md
+    - get_started_on_a_vm.md
+    - get_started_on_gke.md
+    - feature_set.md
+    - api_reference.md
+    - faq.md
   - Deep dives:
-    - markdown/2_in_depth_1_how_torchtpu_works.md
-    - markdown/2_in_depth_3_torchtpu_execution_modes.md
-    - markdown/2_in_depth_5_distributed.md
-    - markdown/2_in_depth_4_custom_kernels.md
-    - markdown/2_in_depth_2_torchtpu_and_tpu_memory_model.md
-    - markdown/2_in_depth_6_dynamic_shapes.md
+    - how_torchtpu_works.md
+    - torchtpu_execution_model.md
+    - torchtpu_memory_model.md
+    - distributed_support.md
+    - custom_kernels.md
+    - dynamic_shapes.md
   - Case studies:
-    - markdown/3_practical_examples_1_flux_optimization.md
-    - markdown/5_case_studies_2_muse_glimmer_30b.md
-    - markdown/3_practical_examples_1_llm_inference_end_to_end.md
-    - markdown/3_practical_examples_3_fsdp_best_practices.md
+    - case_studies_flux.md
+    - case_studies_muse_glimmer_30b_inference.md
+    - case_studies_muse_glimmer_30b_training.md
+    - case_studies_fsdp.md
   - Analyze your workload:
-    - markdown/4_debugging_and_performance_analysis_1_numerical_precision.md
-    - markdown/4_debugging_and_performance_analysis_2_xprof_for_torchtpu.md
-#    - markdown/tpu_monitoring.md
+    - numerical_precision.md
+    - performance_profiling_with_xprof.md
+#    - tpu_monitoring.md
 
 plugins:
   - search

@@ -89,7 +89,7 @@ def _(mo):
 
     ## What support does TorchTPU provide for kernel development?
 
-    Refer to [TorchTPU Custom Kernel support](./2_in_depth_5_custom_kernels.md).
+    Refer to [TorchTPU Custom Kernel support](./custom_kernels.md).
 
     ## Which TPU generations are actively supported? What's the plan for future hardware support?
 
@@ -99,7 +99,7 @@ def _(mo):
 
     ## Where can we find TorchTPU's supported features & future roadmap?
 
-    See [Supported features](./6_reference_1_supported_feature_set.md) for the current feature set and planned upcoming feature set.
+    See [Supported features](./feature_set.md) for the current feature set and planned upcoming feature set.
 
     ## Is there an agent to make my onboarding easier?
 

@@ -57,7 +57,7 @@ torch_tpu_py_library(
     ],
 )
 
-# Updates tt_apis.yaml and docs/markdown/public_apis.md in the workspace. Run it
+# Updates tt_apis.yaml and docs/public_apis.md in the workspace. Run it
 # on a TPU VM with `bazel run` and the newest supported dependencies in OSS.
 pytype_strict_binary(
     name = "scan_tt_apis",
@@ -95,7 +95,7 @@ oss_target(
     data = [
         "tt_apis.yaml",
         "//csrc:all_cpp_files_recursive",
-        "//docs/markdown:public_apis.md",
+        "//docs:public_apis.md",
     ],
     tags = [
         # Only the CI jobs with the newest supported dependencies run it.

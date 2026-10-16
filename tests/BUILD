@@ -2846,7 +2846,7 @@ torch_tpu_py_test(
     # they're outside the torch_tpu package, so the root filegroup doesn't
     # include them.
     data = [
-        "//docs/markdown:all_doc_files_recursive",
+        "//docs:all_doc_files_recursive",
         "//docs/notebooks:all_doc_files_recursive",
         "//examples:all_doc_files_recursive",
         "//src/torch_tpu:all_doc_files_recursive",
