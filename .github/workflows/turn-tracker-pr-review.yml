@@ -1,0 +1,35 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Review events on PRs from forks only get a read-only `GITHUB_TOKEN`, so
+# this workflow does nothing itself. Its completion fires `workflow_run` in
+# `turn-tracker.yml`, which runs on `main` with a write token and reads the
+# reviewer and PR head SHA from the `workflow_run` payload. Nothing from this
+# run is trusted, so a fork editing this file cannot forge events.
+name: Turn Tracker PR Review
+
+"on":
+  pull_request_review:
+    types: [submitted]
+  pull_request_review_comment:
+    types: [created]
+
+permissions: {}
+
+jobs:
+  relay:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Relay to Turn Tracker
+        run: echo "Relaying ${GITHUB_EVENT_NAME} to the Turn Tracker workflow."

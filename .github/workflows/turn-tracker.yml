@@ -19,23 +19,37 @@ name: Turn Tracker
     types: [opened, reopened, transferred]
   issue_comment:
     types: [created]
+  # `pull_request_target` grants a write token to label PRs from forks.
+  # Safe because `actions/checkout` checks out `main`, never PR code.
+  pull_request_target:  # zizmor: ignore[dangerous-triggers]
+    types: [opened, reopened, ready_for_review, review_requested]
+  # Review events on PRs from forks only get a read-only token, so
+  # `turn-tracker-pr-review.yml` runs on them as a no-op and this workflow
+  # handles its completion with a write token.
+  workflow_run:
+    workflows: [Turn Tracker PR Review]
+    types: [completed]
 
-permissions:
-  contents: read
-  issues: write
+permissions: {}
 
 concurrency:
-  group: turn-tracker-${{ github.event.issue.number }}
+  group: turn-tracker-${{ github.event.issue.number || github.event.pull_request.number || github.event.workflow_run.head_sha }}
   cancel-in-progress: false
 
 jobs:
   track-turn:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read       # Check out tools/turn_tracker.py.
+      issues: write        # Add and remove labels on issues.
+      pull-requests: write # Add and remove labels on PRs.
     steps:
       - name: Checkout tracker script
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
+          ref: main
           sparse-checkout: tools
+          persist-credentials: false
       - name: Process Turn State
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
