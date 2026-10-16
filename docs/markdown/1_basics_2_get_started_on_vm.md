@@ -6,7 +6,7 @@ torch_tpu_version: 0.1.1.dev20260922
 
 The simplest way to use TorchTPU is on a TPU VM. In this example we will run a
 simple tensor parallel example. We do not focus on the example, just the setup
-code to get running on a VM. In the following tutorial we will see how to
+code to get running on a VM. In the following tutorial, we will see how to
 achieve something similar through GKE, which is necessary to access recent TPU
 hardware.
 
@@ -31,13 +31,7 @@ source env/bin/activate
 ### Step 2: Install TorchTPU and dependencies
 
 ```bash
-# 1. Authenticate to get access to wheel files
-pip install keyrings.google-artifactregistry-auth
-gcloud auth login
-gcloud auth application-default login
-
-# 2. Install torch_tpu, PyTorch 2.11 CPU will install automatically, do not install manually.
-pip install --pre --index-url "https://oauth2accesstoken:$(gcloud auth print-access-token)@us-python.pkg.dev/ml-oss-artifacts-transient/torch-tpu-virtual-registry/simple/" torch_tpu
+pip install torch_tpu
 ```
 
 ## 2. Initialize the hardware
@@ -45,7 +39,7 @@ pip install --pre --index-url "https://oauth2accesstoken:$(gcloud auth print-acc
 Similar to a CPU or GPU, the TPU backend must be explicitly initialized. This
 registers the "tpu" device string with PyTorch.
 
-```python
+```python {.marimo}
 import torch
 
 device = torch.device("tpu")  # Change from cuda to tpu
@@ -64,7 +58,7 @@ You have two standard ways to specify the TPU device:
 1.  Using the `device` object returned by `torch.device()`.
 2.  Using the `"tpu"` string identifier.
 
-```python
+```python {.marimo}
 # 1. Create a tensor on the CPU
 cpu_tensor = torch.ones((5, 5))
 
@@ -88,7 +82,7 @@ tensors, the computation happens on the hardware. To retrieve the data back to
 the CPU for printing or interaction with standard Python libraries, use the
 `.cpu()` method.
 
-```python
+```python {.marimo}
 # Perform a simple operation on the TPU
 result_on_tpu = tpu_tensor + direct_tpu_tensor
 
