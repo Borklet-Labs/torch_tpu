@@ -1,7 +1,7 @@
 # SimpleFSDP on TorchTPU
 
 This directory provides a self-contained example and side-by-side migration
-guide for using **SimpleFSDP (`torch_tpu.examples.fsdp.simple_fsdp`)** on Cloud
+guide for using **SimpleFSDP ([`simple_fsdp.py`](simple_fsdp.py))** on Cloud
 TPUs.
 
 For the full side-by-side comparison between PyTorch FSDPv2 (`fully_shard`) and
@@ -13,8 +13,8 @@ SimpleFSDP (`data_parallel`), see
 `simple_fsdp` is a compile-first Fully Sharded Data Parallel (FSDP)
 implementation designed for compiler-optimized communication patterns. It was
 initially introduced in the TorchTitan repo and a specific commit was vendored
-into `torch_tpu.examples.fsdp.simple_fsdp`. `simple_fsdp` is one of the
-recommended approaches to implement FSDP (and HSDP) on TorchTPU:
+into [`simple_fsdp.py`](simple_fsdp.py). `simple_fsdp` is one of the recommended
+approaches to implement FSDP (and HSDP) on TorchTPU:
 
 -   **DTensor Parametrization**: Shards parameters as `DTensor`s at rest and
     expresses forward `all-gather` and backward `reduce-scatter` operations as
@@ -58,7 +58,7 @@ layer's forward pass and re-all-gathered during backward recomputation:
 ```python
 import functools
 from torch.utils import checkpoint as checkpoint_utils
-from examples.fsdp import simple_fsdp
+import simple_fsdp
 
 # 1. Configure mixed precision (optional)
 mp_policy = simple_fsdp.MixedPrecisionPolicy(

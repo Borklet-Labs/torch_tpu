@@ -16,6 +16,7 @@
 # A script to run the FSDPv2 to SimpleFSDP distributed tutorial.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export PYTHONPATH="${SCRIPT_DIR}/..${PYTHONPATH:+:${PYTHONPATH}}"
 
 eval "$(python3 -m torch.tpu.distributed)"
 export TORCH_TPU_TOPOLOGY TORCH_TPU_SLICEBUILDER_ADDRESSES WORLD_SIZE

@@ -56,8 +56,8 @@ from torch import optim
 from torch.distributed import fsdp
 from torch.distributed import tensor as dt
 from torch.utils import checkpoint as checkpoint_utils
-from examples.fsdp import simple_fsdp
-from examples.fsdp.fsdp_to_simple_fsdp import model as model_lib
+import simple_fsdp
+import model as model_lib
 
 BATCH_SIZE = 4  # Per-device batch size.
 HIDDEN_DIM = 128

@@ -17,7 +17,7 @@
 import torch
 from torch.distributed import launcher
 from torch.tpu import distributed  # pyrefly: ignore[missing-import]
-from examples.fsdp.manual import manual_fsdp_worker
+import manual_fsdp_worker
 
 
 def main():

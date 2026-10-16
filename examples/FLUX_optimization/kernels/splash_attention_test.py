@@ -22,7 +22,7 @@ from absl.testing import absltest
 import torch
 from torch.nn import attention
 import torch.nn.functional as F
-from examples.FLUX_optimization.kernels.splash_attention import splash_sdpa
+from splash_attention import splash_sdpa
 
 
 class SplashAttentionTest(absltest.TestCase):

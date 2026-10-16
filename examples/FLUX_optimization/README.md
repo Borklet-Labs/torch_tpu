@@ -363,7 +363,7 @@ attn = F.scaled_dot_product_attention(
 
 ```python
 # Custom Pallas SplashAttention kernel via torch_tpu Pallas bridge
-from examples.FLUX_optimization.kernels.splash_attention import splash_sdpa
+from kernels.splash_attention import splash_sdpa
 
 attn = splash_sdpa(q_sdpa, k_sdpa, v_sdpa, is_causal=False)
 ```

@@ -32,6 +32,11 @@ def _add_src_imports(kwargs):
         else:
             imports.append("src")
         kwargs["imports"] = imports
+    elif package == "examples" or package.startswith("examples/"):
+        imports = list(kwargs.get("imports", []))
+        if "." not in imports:
+            imports.append(".")
+        kwargs["imports"] = imports
 
 def pytype_strict_binary(**kwargs):
     _add_src_imports(kwargs)

@@ -96,7 +96,7 @@ for i, layer in enumerate(layers):
 ```python
 import functools
 from torch.utils import checkpoint as checkpoint_utils
-from examples.fsdp import simple_fsdp
+import simple_fsdp
 
 # 1. Configure MixedPrecisionPolicy from simple_fsdp
 mp_policy = simple_fsdp.MixedPrecisionPolicy(

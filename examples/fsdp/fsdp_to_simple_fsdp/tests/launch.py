@@ -22,7 +22,7 @@ automated test suites. To run this tutorial directly from the command line, use
 import os
 from torch.distributed import launcher
 from torch.tpu import distributed  # pyrefly: ignore[missing-import]
-from examples.fsdp.fsdp_to_simple_fsdp import fsdp_to_simple_fsdp_worker
+import fsdp_to_simple_fsdp_worker
 
 
 def main():

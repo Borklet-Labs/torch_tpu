@@ -30,7 +30,7 @@ from torch.distributed import tensor
 from torch.distributed.tensor import parallel
 # Direct all logs to stdout so kubectl logs can see them
 from torch.testing import assert_close
-from examples.tensor_parallel.dtensor_wrapped import model
+import model
 
 
 BATCH_SIZE = 64
