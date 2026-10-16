@@ -22,6 +22,7 @@
 #include <cstdint>
 #include <iterator>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -204,11 +205,12 @@ absl::StatusOr<std::vector<std::vector<uint8_t>>> ParseLhsSubscripts(
   return op_labels;
 }
 
-absl::Status CountSingleOperandLabels(size_t op_idx, const at::Tensor& operand,
+absl::Status CountSingleOperandLabels(size_t op_idx,
+                                      const Dimensions& operand_shape,
                                       const std::vector<uint8_t>& labels,
                                       Dimensions& label_count,
                                       int64_t& ell_num_dim) {
-  const int64_t ndims = operand.dim();
+  const int64_t ndims = static_cast<int64_t>(operand_shape.size());
   int64_t nlabels = static_cast<int64_t>(labels.size());
   bool has_ellipsis = false;
 
@@ -237,11 +239,12 @@ absl::Status CountSingleOperandLabels(size_t op_idx, const at::Tensor& operand,
 }
 
 absl::Status CountLabelsAndValidateDims(
-    at::TensorList operands, const std::vector<std::vector<uint8_t>>& op_labels,
-    Dimensions& label_count, int64_t& ell_num_dim) {
-  for (size_t i = 0; i < operands.size(); ++i) {
-    TT_RETURN_IF_ERROR(CountSingleOperandLabels(i, operands[i], op_labels[i],
-                                                label_count, ell_num_dim));
+    absl::Span<const Dimensions> operand_shapes,
+    const std::vector<std::vector<uint8_t>>& op_labels, Dimensions& label_count,
+    int64_t& ell_num_dim) {
+  for (size_t i = 0; i < operand_shapes.size(); ++i) {
+    TT_RETURN_IF_ERROR(CountSingleOperandLabels(
+        i, operand_shapes[i], op_labels[i], label_count, ell_num_dim));
   }
   return absl::OkStatus();
 }
@@ -344,14 +347,14 @@ absl::Status ResolveOperandEllipsisDims(size_t op_idx, int64_t ndim,
   return absl::OkStatus();
 }
 
-absl::Status ResolveSingleOperandSubscript(size_t op_idx, const at::Tensor& op,
+absl::Status ResolveSingleOperandSubscript(size_t op_idx, int64_t orig_ndim,
                                            uint8_t s, size_t num_op_labels,
                                            int64_t ell_num_dim,
                                            Dimensions& curr_shape, int64_t& dim,
                                            Dimensions& first_seen_dim,
                                            ParsedEinsum& parsed) {
   if (s == kEllipsis) {
-    const int64_t ndim = op.dim() - (static_cast<int64_t>(num_op_labels) - 1);
+    const int64_t ndim = orig_ndim - (static_cast<int64_t>(num_op_labels) - 1);
     return ResolveOperandEllipsisDims(op_idx, ndim, ell_num_dim, curr_shape,
                                       dim, first_seen_dim, parsed);
   }
@@ -387,23 +390,25 @@ absl::Status ResolveSingleOperandSubscript(size_t op_idx, const at::Tensor& op,
   return absl::OkStatus();
 }
 
-absl::Status ResolveSingleOperandDimensions(size_t op_idx, const at::Tensor& op,
+absl::Status ResolveSingleOperandDimensions(size_t op_idx,
+                                            const Dimensions& orig_shape,
                                             const std::vector<uint8_t>& labels,
                                             int64_t total_expanded_labels,
                                             int64_t ell_num_dim,
                                             ParsedEinsum& parsed) {
-  Dimensions curr_shape(op.sizes().begin(), op.sizes().end());
+  Dimensions curr_shape = orig_shape;
   parsed.orig_operand_shapes[op_idx] = curr_shape;
-  if (op.numel() == 0) {
+  if (absl::c_linear_search(curr_shape, 0)) {
     parsed.any_operand_zero_elements = true;
   }
 
+  const int64_t orig_ndim = static_cast<int64_t>(orig_shape.size());
   Dimensions first_seen_dim(total_expanded_labels, -1);
   int64_t dim = 0;
   for (const uint8_t s : labels) {
-    TT_RETURN_IF_ERROR(
-        ResolveSingleOperandSubscript(op_idx, op, s, labels.size(), ell_num_dim,
-                                      curr_shape, dim, first_seen_dim, parsed));
+    TT_RETURN_IF_ERROR(ResolveSingleOperandSubscript(
+        op_idx, orig_ndim, s, labels.size(), ell_num_dim, curr_shape, dim,
+        first_seen_dim, parsed));
   }
   parsed.dedup_operand_shapes[op_idx] = std::move(curr_shape);
   return absl::OkStatus();
@@ -477,14 +482,12 @@ void PopulateLabelToCharMap(const Dimensions& label_count, int64_t ell_num_dim,
   }
 }
 
-// Parses and validates the einsum equation, operand shapes/dtypes, and
-// optional contraction path.
-absl::StatusOr<ParsedEinsum> ParseEinsumEquation(c10::string_view equation,
-                                                 at::TensorList operands,
-                                                 at::OptionalIntArrayRef path) {
-  TT_RET_CHECK(!operands.empty(), error::kInvalidArgument)
+absl::StatusOr<ParsedEinsum> ParseEinsumEquationFromShapes(
+    c10::string_view equation, absl::Span<const Dimensions> operand_shapes,
+    at::OptionalIntArrayRef path) {
+  TT_RET_CHECK(!operand_shapes.empty(), error::kInvalidArgument)
       << "expected at least one operand, got 0";
-  const size_t num_ops = operands.size();
+  const size_t num_ops = operand_shapes.size();
 
   if (path.has_value()) {
     const size_t path_size = num_ops == 1 ? 1 : (num_ops - 1) * 2;
@@ -500,7 +503,7 @@ absl::StatusOr<ParsedEinsum> ParseEinsumEquation(c10::string_view equation,
 
   Dimensions label_count(kTotalLabels, 0);
   int64_t ell_num_dim = 0;
-  TT_RETURN_IF_ERROR(CountLabelsAndValidateDims(operands, op_labels,
+  TT_RETURN_IF_ERROR(CountLabelsAndValidateDims(operand_shapes, op_labels,
                                                 label_count, ell_num_dim));
 
   Indices rhs_labels;
@@ -526,13 +529,12 @@ absl::StatusOr<ParsedEinsum> ParseEinsumEquation(c10::string_view equation,
 
   for (size_t i = 0; i < num_ops; ++i) {
     TT_RETURN_IF_ERROR(ResolveSingleOperandDimensions(
-        i, operands[i], op_labels[i], total_expanded_labels, ell_num_dim,
+        i, operand_shapes[i], op_labels[i], total_expanded_labels, ell_num_dim,
         parsed));
   }
 
   TT_RETURN_IF_ERROR(
       BuildContractionSteps(num_ops, path, parsed.contraction_steps));
-  TT_RETURN_IF_ERROR(ValidateOperandDtypes(operands));
 
   parsed.output_dims.reserve(parsed.rhs_labels.size());
   parsed.output_num_elements = 1;
@@ -544,6 +546,22 @@ absl::StatusOr<ParsedEinsum> ParseEinsumEquation(c10::string_view equation,
 
   PopulateLabelToCharMap(label_count, ell_num_dim, total_expanded_labels,
                          parsed);
+  return parsed;
+}
+
+// Parses and validates the einsum equation, operand shapes/dtypes, and
+// optional contraction path.
+absl::StatusOr<ParsedEinsum> ParseEinsumEquation(c10::string_view equation,
+                                                 at::TensorList operands,
+                                                 at::OptionalIntArrayRef path) {
+  std::vector<Dimensions> operand_shapes;
+  operand_shapes.reserve(operands.size());
+  for (const at::Tensor& op : operands) {
+    operand_shapes.emplace_back(op.sizes().begin(), op.sizes().end());
+  }
+  TT_ASSIGN_OR_RETURN(ParsedEinsum parsed, ParseEinsumEquationFromShapes(
+                                               equation, operand_shapes, path));
+  TT_RETURN_IF_ERROR(ValidateOperandDtypes(operands));
   return parsed;
 }
 
@@ -875,7 +893,7 @@ mlir::MlirOp TransposeToOutputOrder(mlir::MlirOp result,
 // Note: Conjugation (`tensor.is_conj()`) is already materialized by
 // `GetBuffers` during view decomposition before `BuildEinsumShlo` is invoked.
 absl::StatusOr<mlir::MlirOp> BuildEinsumShlo(
-    absl::Span<mlir::MlirOp> inputs, mlir::MlirBuilder& builder,
+    absl::Span<const mlir::MlirOp> inputs, mlir::MlirBuilder& builder,
     const ParsedEinsum& parsed, mlir::ElementType out_dtype,
     mlir::stablehlo::Precision precision) {
   if (parsed.output_num_elements == 0) {
@@ -1143,6 +1161,27 @@ struct EinsumBackwardNode : public torch::autograd::Node {
 };
 
 }  // namespace
+
+absl::StatusOr<mlir::MlirOp> BuildEinsumShlo(
+    const absl::Span<const mlir::MlirOp> inputs,
+    const c10::string_view equation,
+    const mlir::stablehlo::Precision precision) {
+  std::vector<Dimensions> operand_shapes;
+  operand_shapes.reserve(inputs.size());
+  for (const mlir::MlirOp& op : inputs) {
+    const llvm::ArrayRef<int64_t> shape = GetTensorTypeOrDie(op).getShape();
+    operand_shapes.emplace_back(shape.begin(), shape.end());
+  }
+  TT_ASSIGN_OR_RETURN(const ParsedEinsum parsed,
+                      ParseEinsumEquationFromShapes(equation, operand_shapes,
+                                                    /*path=*/std::nullopt));
+  const mlir::Type elem_type = GetTensorTypeOrDie(inputs[0]).getElementType();
+  TT_ASSIGN_OR_RETURN(const mlir::ElementType out_dtype,
+                      ConvertTo<mlir::ElementType>(elem_type));
+  mlir::MlirOp first_input = inputs[0];
+  mlir::MlirBuilder& builder = first_input.getBuilder();
+  return BuildEinsumShlo(inputs, builder, parsed, out_dtype, precision);
+}
 
 at::Tensor AtenEinsumAutograd(c10::string_view equation, at::TensorList tensors,
                               at::OptionalIntArrayRef path) {
