@@ -42,9 +42,12 @@ void PyPushPrecision(mlir::stablehlo::Precision precision);
 void PyPopPrecision();
 
 // Returns the current python thread's precision and adds it to the param_keys
-// with the given parameter name. If no thread-local precision
-// has been set (e.g., via the `precision` context manager), this function falls
-// back to querying the global precision setting.
+// with the given parameter name. Precedence order:
+// 1. Thread-local `PrecisionContextState` (from `torch.tpu.precision` context
+//    manager)
+// 2. ATen `at::NoTF32Guard` (`HIGHEST` when active, e.g., in linalg ops and
+//    backward formulas)
+// 3. Global precision setting (`torch.set_float32_matmul_precision`)
 mlir::stablehlo::Precision GetAndAddPrecisionTo(
     OpParamCacheKeys& param_keys, std::string_view param_name = "precision");
 

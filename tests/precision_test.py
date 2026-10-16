@@ -608,6 +608,122 @@ class PrecisionTest(seed_test_utils.RepeatableTest):
     self.assertLess(default_err["highest"], default_err["high"])
     self.assertLess(default_err["high"], default_err["medium"])
 
+  def test_no_tf32_guard_shlo_and_precedence(self):
+    class MatrixPowerModule(torch.nn.Module):
+
+      def forward(self, x):
+        # at::linalg_matrix_power uses at::NoTF32Guard internally before
+        # dispatching to at::matmul.
+        return torch.linalg.matrix_power(x, 2)
+
+    def matmul_model(x):
+      return torch.matmul(x, x)
+
+    model = MatrixPowerModule()
+    x = torch.randn(16, 16, device="tpu", dtype=torch.float32)
+    torch.accelerator.synchronize()
+
+    try:
+      # 1. Default global precision ("medium" / DEFAULT): NoTF32Guard forces
+      # HIGHEST during the guarded op, and restores DEFAULT on guard exit.
+      torch.set_float32_matmul_precision("medium")
+      shlo = utils.format_model(model, x, shlo=True)
+      self.assertIn("precision = [HIGHEST, HIGHEST]", shlo)
+      shlo_after_guard = utils.format_model(matmul_model, x, shlo=True)
+      self.assertIn("precision = [DEFAULT, DEFAULT]", shlo_after_guard)
+      self.assertNotIn("precision = [HIGHEST, HIGHEST]", shlo_after_guard)
+
+      # 2. Global "high" precision: NoTF32Guard still forces HIGHEST, and
+      # restores HIGH on guard exit.
+      torch.set_float32_matmul_precision("high")
+      shlo_high_global = utils.format_model(model, x, shlo=True)
+      self.assertIn("precision = [HIGHEST, HIGHEST]", shlo_high_global)
+      shlo_after_high_guard = utils.format_model(matmul_model, x, shlo=True)
+      self.assertIn("precision = [HIGH, HIGH]", shlo_after_high_guard)
+      self.assertNotIn("precision = [HIGHEST, HIGHEST]", shlo_after_high_guard)
+
+      # 3. Explicit `with precision(...)` context manager overrides NoTF32Guard,
+      # and exiting the context manager restores NoTF32Guard -> HIGHEST for
+      # guarded ops and global precision for unguarded ops.
+      torch.set_float32_matmul_precision("medium")
+      with precision(Precision.DEFAULT):
+        shlo_scoped_default = utils.format_model(model, x, shlo=True)
+        self.assertIn("precision = [DEFAULT, DEFAULT]", shlo_scoped_default)
+
+      with precision(Precision.HIGH):
+        shlo_scoped_high = utils.format_model(model, x, shlo=True)
+        self.assertIn("precision = [HIGH, HIGH]", shlo_scoped_high)
+
+      shlo_restored = utils.format_model(model, x, shlo=True)
+      self.assertIn("precision = [HIGHEST, HIGHEST]", shlo_restored)
+      shlo_matmul_restored = utils.format_model(matmul_model, x, shlo=True)
+      self.assertIn("precision = [DEFAULT, DEFAULT]", shlo_matmul_restored)
+    finally:
+      torch.set_float32_matmul_precision("medium")
+
+  def test_no_tf32_guard_backward_precision(self):
+    torch.manual_seed(0)
+    a_cpu = torch.randn(32, 32, dtype=torch.float64).triu()
+    a_cpu.diagonal().add_(2.0)
+    b_cpu = torch.randn(32, 32, dtype=torch.float64)
+
+    a_ref = a_cpu.clone().requires_grad_(True)
+    b_ref = b_cpu.clone().requires_grad_(True)
+    torch.linalg.solve_triangular(a_ref, b_ref, upper=True).sum().backward()
+
+    def run_bwd(mode=None):
+      a = (
+          a_cpu.to(device="tpu", dtype=torch.float32)
+          .detach()
+          .requires_grad_(True)
+      )
+      b = (
+          b_cpu.to(device="tpu", dtype=torch.float32)
+          .detach()
+          .requires_grad_(True)
+      )
+      out = torch.linalg.solve_triangular(a, b, upper=True)
+      loss = out.sum()
+      if mode is None:
+        loss.backward()
+      else:
+        with precision(mode):
+          loss.backward()
+      return (
+          (a.grad.cpu().double() - a_ref.grad).norm() / a_ref.grad.norm()
+      ).item()
+
+    try:
+      # Without context manager, backward uses NoTF32Guard -> HIGHEST even under
+      # "medium" or "high".
+      torch.set_float32_matmul_precision("medium")
+      err_unscoped_medium = run_bwd(mode=None)
+
+      torch.set_float32_matmul_precision("high")
+      err_unscoped_high = run_bwd(mode=None)
+
+      torch.set_float32_matmul_precision("medium")
+      err_scoped_default = run_bwd(mode=Precision.DEFAULT)
+      err_scoped_high = run_bwd(mode=Precision.HIGH)
+      err_scoped_highest = run_bwd(mode=Precision.HIGHEST)
+    finally:
+      torch.set_float32_matmul_precision("medium")
+
+    self.assertAlmostEqual(err_unscoped_medium, err_scoped_highest, places=6)
+    self.assertAlmostEqual(err_unscoped_high, err_scoped_highest, places=6)
+    self.assertLess(err_scoped_highest, 1e-5)
+    self.assertLess(err_scoped_highest, err_scoped_high)
+    self.assertLess(err_scoped_high, err_scoped_default)
+
+  def test_no_tf32_guard_no_performance_warning(self):
+    x = torch.randn(16, 16, device="tpu", dtype=torch.float32)
+    torch.set_float32_matmul_precision("medium")
+    with warnings.catch_warnings(record=True) as w:
+      warnings.simplefilter("always")
+      torch.linalg.matrix_power(x, 2)
+      for warning in w:
+        self.assertNotIn("TPU is using", str(warning.message))
+
 
 if __name__ == "__main__":
   absltest.main()

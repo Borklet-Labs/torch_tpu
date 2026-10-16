@@ -967,7 +967,7 @@ ACCURACY_OVERRIDES_GRAD_VS_GPU: dict[
             torch.float64: {"rtol": 2.3e-5, "atol": 7.6e-6},
         },
         "linalg.lu_factor_ex": {
-            torch.float32: {"rtol": 8.4, "atol": 4.8e-1},
+            torch.float32: {"rtol": 2.3e-5, "atol": 4.8e-4},
             torch.float64: {"rtol": 2.1e-5, "atol": 2e-6},
         },
         "linalg.lu_solve": {
@@ -979,9 +979,6 @@ ACCURACY_OVERRIDES_GRAD_VS_GPU: dict[
         "linalg.solve_ex": {
             torch.float32: {"rtol": 1.2e-1, "atol": 6e-2},
             torch.float64: {"rtol": 2.6e-6, "atol": 5.2e-6},
-        },
-        "linalg.solve_triangular": {
-            torch.float32: {"rtol": 2e-2, "atol": 4.8},
         },
         "linalg.vector_norm": {
             torch.complex64: {"rtol": 1.3e-5, "atol": 1.3e-5},

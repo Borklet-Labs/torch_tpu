@@ -20,6 +20,7 @@
 #include <optional>
 #include <string_view>
 
+#include "ATen/Context.h"
 #include "absl/log/absl_check.h"
 #include "absl/strings/str_cat.h"
 #include "csrc/common/cache_key.h"
@@ -50,10 +51,23 @@ void PyPopPrecision() { PopContextState<PrecisionContextState>(); }
 
 // Returns the current python thread's precision. It's unsafe in the sense that
 // it doesn't ensure that the precision is included in an op's cache key.
+// Precedence order:
+// 1. Thread-local `PrecisionContextState` (`with torch.tpu.precision(...):`)
+// 2. ATen `at::NoTF32Guard` (`HIGHEST` when active, without triggering the
+//    global precision performance warning)
+// 3. Global precision setting (`PyGetGlobalPrecision()`)
 [[nodiscard]] mlir::stablehlo::Precision PyUnsafeGetPrecision() {
   const auto state = GetContextState<PrecisionContextState>();
   if (state.has_value()) {
     return state.value();
+  }
+  // Use `should_disable_tf32()` rather than
+  // `should_disable_fp32_reduced_precision()` for compatibility with the OSS
+  // pinned PyTorch release, where `should_disable_fp32_reduced_precision()` is
+  // not yet defined.
+  if (at::NoTF32Guard::should_disable_tf32()) {
+    return mlir::stablehlo::Precision::HIGHEST;  // EXPLICIT_PRECISION_OK=ATen
+                                                 // NoTF32Guard
   }
 
   const auto current_global_precision = PyGetGlobalPrecision();

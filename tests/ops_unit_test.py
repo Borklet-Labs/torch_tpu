@@ -21562,6 +21562,74 @@ class OpTestingFrameworkTest(op_testing.OpInfoTestBase):
           actual=k_tpu.grad.cpu(), expected=k_cpu.grad, rtol=1e-4, atol=1e-4
       )
 
+  def test_linalg_backward_no_tf32_guard_precision(self):
+    # Verify that linalg.solve_triangular and linalg.lu_factor_ex backward
+    # passes (which use at::NoTF32Guard in ATen) automatically run internal
+    # matmuls at HIGHEST precision when global precision is DEFAULT ("medium")
+    # and restore DEFAULT precision on guard exit.
+    torch.manual_seed(0)
+    a_cpu = torch.randn(32, 32, dtype=torch.float32)
+    a_cpu = a_cpu @ a_cpu.mT + 4.0 * torch.eye(32, dtype=torch.float32)
+    b_cpu = torch.randn(32, 16, dtype=torch.float32)
+
+    # 1. linalg.solve_triangular backward under default ("medium") precision
+    a_tri_cpu = a_cpu.triu().detach().requires_grad_(True)
+    b_tri_cpu = b_cpu.clone().detach().requires_grad_(True)
+    out_tri_cpu = torch.linalg.solve_triangular(
+        a_tri_cpu, b_tri_cpu, upper=True
+    )
+    grad_tri_out = torch.randn_like(out_tri_cpu)
+    out_tri_cpu.backward(grad_tri_out)
+
+    a_tri_tpu = a_tri_cpu.detach().to("tpu").requires_grad_(True)
+    b_tri_tpu = b_tri_cpu.detach().to("tpu").requires_grad_(True)
+    out_tri_tpu = torch.linalg.solve_triangular(
+        a_tri_tpu, b_tri_tpu, upper=True
+    )
+    out_tri_tpu.backward(grad_tri_out.to("tpu"))
+
+    utils.assert_close(
+        actual=a_tri_tpu.grad.cpu(),
+        expected=a_tri_cpu.grad,
+        rtol=1.3e-6,
+        atol=1e-5,
+    )
+    utils.assert_close(
+        actual=b_tri_tpu.grad.cpu(),
+        expected=b_tri_cpu.grad,
+        rtol=1.3e-6,
+        atol=1e-5,
+    )
+
+    # 2. linalg.lu_factor_ex backward under default ("medium") precision
+    a_lu_cpu = a_cpu.clone().detach().requires_grad_(True)
+    lu_cpu, _, _ = torch.linalg.lu_factor_ex(a_lu_cpu)
+    grad_lu_out = torch.randn_like(lu_cpu)
+    lu_cpu.backward(grad_lu_out)
+
+    a_lu_tpu = a_cpu.detach().to("tpu").requires_grad_(True)
+    lu_tpu, _, _ = torch.linalg.lu_factor_ex(a_lu_tpu)
+    lu_tpu.backward(grad_lu_out.to("tpu"))
+
+    utils.assert_close(
+        actual=a_lu_tpu.grad.cpu(),
+        expected=a_lu_cpu.grad,
+        rtol=2.3e-5,
+        atol=4.8e-4,
+    )
+
+    # 3. Verify prior precision (DEFAULT) is restored after NoTF32Guard exits
+    with execution_mode.set_eager_mode(
+        execution_mode.EagerMode._INTERNAL_COMPILE_FX_GRAPH
+    ):
+      mm_out = torch.matmul(a_lu_tpu.detach(), b_tri_tpu.detach())
+    mlir_module = tpu_torch_compile.build_mlir(
+        [mm_out], [a_lu_tpu.detach(), b_tri_tpu.detach()]
+    )
+    mlir_text = tpu_torch_compile.serialize_mlir_text(mlir_module)
+    self.assertIn("precision = [DEFAULT, DEFAULT]", mlir_text)
+    self.assertNotIn("precision = [HIGHEST, HIGHEST]", mlir_text)
+
 
 if __name__ == "__main__":
   absltest.main()

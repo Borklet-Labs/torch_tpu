@@ -270,6 +270,7 @@ torch_tpu_cc_library(
         "//csrc/common:to_string",
         "//csrc/common:warnings",
         "//shims/torch",
+        "//shims/torch:aten_headers",
         "//shims/torch:torch_headers",
         "//shims/torch/c10/util:base",
         "@com_google_absl//absl/log:absl_check",
