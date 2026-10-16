@@ -27,6 +27,8 @@ pip install xprof tensorboard
 PyTorch 2.12 or newer.
 ```
 
+<!---->
+
 ## 1. The TPU profiler
 
 Standard `torch.profiler` (integrated with `torch_tpu`) provides a **context
@@ -91,6 +93,8 @@ with torch.profiler.profile(
 ) as prof:
     model(inputs)
 ```
+
+<!---->
 
 ## 3. Capturing a profile
 
@@ -218,9 +222,8 @@ A well-optimized TPU workload shows:
 -   **Long, continuous TPU compute blocks** — the compiler fused many ops into
     one execution
 -   **Minimal CPU→TPU gaps** — data loading is overlapped with compute
--   **High MXU utilization (>60%)** — tensor shapes are hardware-aligned
-
-## 6. Verifying the traces were captured
+-   **High MXU utilization (>60%)** — tensor shapes are
+    hardware-aligned <!----> ## 6. Verifying the traces were captured
 
 The cell below checks that the profiler output directory contains trace files.
 
@@ -277,6 +280,7 @@ For the detailed list of configuration parameters (such as sampling intervals,
 scaling, and trigger modes) and instructions on how to determine counter
 indices, refer to the official
 [OpenXLA Kernel Profiling Guide](https://openxla.org/xprof/kernel-profiling).
+<!---->
 
 ## 8. Quick reference
 
@@ -287,10 +291,7 @@ Step        | Command / Code
 **Profile** | `with torch.profiler.profile(activities=[...], on_trace_ready=...):`
 **Save**    | `torch.profiler.tensorboard_trace_handler("/tmp/profiler_output")`
 **View**    | `tensorboard --logdir=/tmp/profiler_output`
-<!-- mdformat on -->
 
 !!! note
 
-```
-Profile only 100–1000 steps to keep trace files manageable. The profiler adds ~5–10% overhead per step.
-```
+    Profile only 100–1000 steps to keep trace files manageable. The profiler adds ~5–10% overhead per step.
