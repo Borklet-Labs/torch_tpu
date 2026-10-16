@@ -84,8 +84,9 @@ def _(mo):
   return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _():
+  # @title Imports and device setup
   from concurrent import futures
   import dataclasses
   import json
@@ -126,8 +127,9 @@ def _():
   )
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(F, dataclasses, nn, torch):
+  # @title KV caches and model implementation
   def rotate_half(x: torch.Tensor) -> torch.Tensor:
     dh = x.shape[-1]
     x1 = x[..., : dh // 2]
@@ -482,7 +484,7 @@ def _(mo):
   return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(
     MuseGlimmer30B,
     epath,
@@ -495,6 +497,7 @@ def _(
     torch,
     transformers,
 ):
+  # @title Checkpoint and tokenizer loading
   MODEL_NAME = "meta-models/Muse-Glimmer-30B"  # Hugging Face Hub repo ID.
   # Optional directory with a local copy of the checkpoint. If set, all files
   # are read from it (and it must exist); otherwise they are downloaded from

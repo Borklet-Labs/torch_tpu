@@ -37,6 +37,10 @@ If the cache grows with `torch.cat`, its length changes every step. With `dynami
 
 Below, we implement `StaticCache`, `DynamicCache`, and the `MuseGlimmer30B` decoder architecture (which interleaves three Sliding Window Attention layers with RoPE and one full NoPE causal attention layer every four blocks).
 
+<section class="zippy" markdown="1">
+
+**Imports and device setup**
+
 ```python
 from concurrent import futures
 import dataclasses
@@ -62,6 +66,12 @@ warnings.filterwarnings(
 device = torch.device("tpu")
 print(f"Using device: {device}")
 ```
+
+</section>
+
+<section class="zippy" markdown="1">
+
+**KV caches and model implementation**
 
 ```python
 def rotate_half(x: torch.Tensor) -> torch.Tensor:
@@ -402,6 +412,8 @@ class MuseGlimmer30B(nn.Module):
     return logits, past_key_values
 ```
 
+</section>
+
 ## 3. Loading pretrained weights and tokenizer
 
 Next, we load the Hugging Face `Muse-Glimmer-30B` tokenizer and weights into `MuseGlimmer30B`:
@@ -409,6 +421,10 @@ Next, we load the Hugging Face `Muse-Glimmer-30B` tokenizer and weights into `Mu
 1. **Checkpoint location:** Only the needed files are downloaded from the Hugging Face Hub repo `MODEL_NAME`. Set `MUSE_GLIMMER_CHECKPOINT_DIR` to use a local copy instead.
 2. **Direct loading:** Text decoder tensors are copied from the `.safetensors` files straight into `m.state_dict()`, without building the Hugging Face model.
 3. **Fast partial loading:** Tensors are read in parallel, and only for the layers in `Config(num_layers=...)`, so `USE_FULL_MODEL = False` (see the top of the notebook) loads 4 layers instead of 52.
+
+<section class="zippy" markdown="1">
+
+**Checkpoint and tokenizer loading**
 
 ```python
 MODEL_NAME = "meta-models/Muse-Glimmer-30B"  # Hugging Face Hub repo ID.
@@ -552,6 +568,8 @@ def load_weights_from_checkpoint(m: MuseGlimmer30B) -> None:
   torch.accelerator.synchronize()
   print(f"Loaded checkpoint in {time.perf_counter() - t0:.2f} s", flush=True)
 ```
+
+</section>
 
 ## 4. Prefill and autoregressive decode loop
 
