@@ -121,12 +121,19 @@ NAryMlirOpBuilder<2, 1> CreateVarBuilder(Dimensions dim_vec,
                                      real_compute_dtype));
 
     // denom = max(reduction_size - correction, 0)
-    auto reduction_size_const_corr = MakeScalarConstant(
-        builder, static_cast<double>(reduction_size), corr_type);
-    TT_ASSIGN_OR_RETURN(auto denom_diff,
-                        BuildSubShlo(reduction_size_const_corr, correction_op));
-    auto zero = MakeScalarConstant(builder, 0.0, corr_type);
-    TT_ASSIGN_OR_RETURN(auto denom, BuildMaximumShlo(denom_diff, zero));
+    // If reduction_size == 0, degrees of freedom is 0 and variance is NaN.
+    mlir::MlirOp denom;
+    if (reduction_size == 0) {
+      denom = MakeScalarConstant(builder, 0.0, corr_type);
+    } else {
+      auto reduction_size_const_corr = MakeScalarConstant(
+          builder, static_cast<double>(reduction_size), corr_type);
+      TT_ASSIGN_OR_RETURN(
+          auto denom_diff,
+          BuildSubShlo(reduction_size_const_corr, correction_op));
+      auto zero = MakeScalarConstant(builder, 0.0, corr_type);
+      TT_ASSIGN_OR_RETURN(denom, BuildMaximumShlo(denom_diff, zero));
+    }
 
     // res = sum_sq_tensor / denom
     TT_ASSIGN_OR_RETURN(auto res, BuildDivShlo(sum_sq_op, denom));
@@ -354,13 +361,20 @@ std::tuple<at::Tensor, at::Tensor> AtenVarMeanCorrection(
                                            reduction_mode, var_type));
 
           // denom = max(reduction_size - correction, 0)
-          auto reduction_size_const = MakeScalarConstant(
-              builder, static_cast<double>(reduction_size), var_type);
-          TT_ASSIGN_OR_RETURN(
-              auto denom_diff,
-              BuildSubShlo(reduction_size_const, correction_op));
-          auto zero = MakeScalarConstant(builder, 0.0, var_type);
-          TT_ASSIGN_OR_RETURN(auto denom, BuildMaximumShlo(denom_diff, zero));
+          // If reduction_size == 0, degrees of freedom is 0 and variance is
+          // NaN.
+          mlir::MlirOp denom;
+          if (reduction_size == 0) {
+            denom = MakeScalarConstant(builder, 0.0, var_type);
+          } else {
+            auto reduction_size_const = MakeScalarConstant(
+                builder, static_cast<double>(reduction_size), var_type);
+            TT_ASSIGN_OR_RETURN(
+                auto denom_diff,
+                BuildSubShlo(reduction_size_const, correction_op));
+            auto zero = MakeScalarConstant(builder, 0.0, var_type);
+            TT_ASSIGN_OR_RETURN(denom, BuildMaximumShlo(denom_diff, zero));
+          }
 
           // var = sum_sq / denom
           TT_ASSIGN_OR_RETURN(auto var, BuildDivShlo(sum_sq, denom));

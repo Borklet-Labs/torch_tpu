@@ -13023,6 +13023,24 @@ class OpsUnitTest(TorchTpuVsCpuTestBase):
 
       self.assert_close_tpu_vs_cpu(compute)
 
+  def test_var_empty_reduction_dim(self):
+    """Tests 0-sized reduction with negative correction returns NaN (b/568045113)."""
+
+    def compute(device):
+      x = torch.empty((0, 3), dtype=torch.float32, device=device)
+      return torch.var(x, dim=0, correction=-1)
+
+    self.assert_close_tpu_vs_cpu(compute)
+
+  def test_var_mean_empty_reduction_dim(self):
+    """Tests 0-sized reduction with negative correction returns NaN (b/568045113)."""
+
+    def compute(device):
+      x = torch.empty((0, 3), dtype=torch.float32, device=device)
+      return torch.var_mean(x, dim=0, correction=-1)
+
+    self.assert_close_tpu_vs_cpu(compute)
+
 
 class OpsCustomOpUnitTest(TorchTpuVsCpuTestBase):
   """Tests for custom ops."""
