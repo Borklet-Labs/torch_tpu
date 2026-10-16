@@ -16,7 +16,14 @@
 # pgmoka
 # chizhang529
 
-load("//build_files:build_defs.bzl", "if_oss", "torch_tpu_package_end", "torch_tpu_py_library", "torch_tpu_py_test")
+load(
+    "//build_files:build_defs.bzl",
+    "REQUIRES_V5_MULTI_DEVICE",
+    "if_oss",
+    "torch_tpu_package_end",
+    "torch_tpu_py_library",
+    "torch_tpu_py_test",
+)
 
 package(
     default_applicable_licenses = ["//:license"],
@@ -31,8 +38,8 @@ torch_tpu_py_test(
         ["exclusive"],
         [],
     ) + [
+        REQUIRES_V5_MULTI_DEVICE,
         "nosan",  # *san builds are low-value for this example and cause OOMs.
-        "requires-tpu-v5lite:8",
     ],
     deps = [
         ":manual_fsdp_worker",
@@ -49,9 +56,9 @@ torch_tpu_py_test(
         ["exclusive"],
         [],
     ) + [
+        REQUIRES_V5_MULTI_DEVICE,
         "noasan",  # OOMs even with the highest memory limit.
         "requires-mem:28g",  # For the *san builds.
-        "requires-tpu-v5lite:8",
     ],
     deps = [
         ":model",

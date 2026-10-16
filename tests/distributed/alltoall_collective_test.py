@@ -312,7 +312,7 @@ class AllToAllSingleUnevenTestData:
 
 class AllToAllSingleCollectiveTest(seed_test_utils.MultiProcessRepeatableTest):
 
-  _world_size = 8
+  _world_size = distributed_utils.get_tpu_device_count()
 
   def test_no_split_sizes_1d(self):
     rank_data = AllToAllSingleTestData()
@@ -331,7 +331,7 @@ class AllToAllSingleCollectiveTest(seed_test_utils.MultiProcessRepeatableTest):
     )
 
   def test_with_equal_splits(self):
-    splits = [1, 1, 1, 1, 1, 1, 1, 1]
+    splits = [1] * self._world_size
     rank_data = AllToAllSingleTestData(
         input_split_sizes=splits, output_split_sizes=splits
     )
@@ -342,7 +342,8 @@ class AllToAllSingleCollectiveTest(seed_test_utils.MultiProcessRepeatableTest):
     )
 
   def test_uneven_splits_1d(self):
-    # matrix of split sizes: rank i sends 2 to (i+1)%8, 1 to others (total 9)
+    # matrix of split sizes: rank i sends 2 to (i + 1) % world_size, 1 to others
+    # (total world_size + 1)
     matrix = [
         [
             (2 if j == (i + 1) % self._world_size else 1)
@@ -604,7 +605,7 @@ def run_all_to_all(
 
 class AllToAllCollectiveTest(seed_test_utils.MultiProcessRepeatableTest):
 
-  _world_size = 8
+  _world_size = distributed_utils.get_tpu_device_count()
 
   def test_uniform_tensors_1d(self):
     rank_data = AllToAllTestData()

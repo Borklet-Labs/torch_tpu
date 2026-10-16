@@ -23,6 +23,7 @@
 
 load(
     "//build_files:build_defs.bzl",
+    "REQUIRES_V5_MULTI_DEVICE",
     "TEST_COV_ENV",
     "if_oss",
     "torch_tpu_package_end",
@@ -267,10 +268,10 @@ torch_tpu_py_test(
         ["exclusive"],
         [],
     ) + [
+        REQUIRES_V5_MULTI_DEVICE,
         "noasan",  # TODO(b/497035517): fix the test in asan mode.
         "nomsan",  # TODO(b/497035517): fix the test in msan mode.
         "notsan",  # TODO(b/497035517): fix the test in tsan mode.
-        "requires-tpu-v5lite:8",
     ],
     deps = if_oss(
         [],
@@ -293,10 +294,10 @@ torch_tpu_py_test(
         ["exclusive"],
         [],
     ) + [
+        REQUIRES_V5_MULTI_DEVICE,
         "noasan",  # TODO(b/497035517): fix the test in asan mode.
         "nomsan",  # TODO(b/497035517): fix the test in msan mode.
         "notsan",  # TODO(b/497035517): fix the test in tsan mode.
-        "requires-tpu-v5lite:8",
     ],
     deps = [
         ":distributed_utils",
@@ -320,10 +321,10 @@ torch_tpu_py_test(
         ["exclusive"],
         [],
     ) + [
+        REQUIRES_V5_MULTI_DEVICE,
         "noasan",  # TODO(b/497035517): fix the test in asan mode.
         "nomsan",  # TODO(b/497035517): fix the test in msan mode.
         "notsan",  # TODO(b/497035517): fix the timeout in test_broadcast_objects.
-        "requires-tpu-v5lite:8",
     ],
     deps = [
         ":distributed_utils",
@@ -357,11 +358,11 @@ torch_tpu_py_test(
         ],
         [],
     ) + [
+        REQUIRES_V5_MULTI_DEVICE,
         "noasan",  # TODO(b/497035517): fix the test in asan mode.
         "nomsan",  # TODO(b/495533335): fix out-of-order in msan mode.
         "notsan",  # TODO(b/495533335): fix out-of-order in tsan mode.
         "requires-net:external",  # Needs remote file access.
-        "requires-tpu-v5lite:8",
     ],
     deps = [
         ":distributed_utils",
@@ -474,8 +475,8 @@ torch_tpu_py_test(
         ["exclusive"],
         [],
     ) + [
+        REQUIRES_V5_MULTI_DEVICE,
         "nosan",  # *san has low value for error tests.
-        "requires-tpu-v5lite:8",
     ],
     deps = [
         ":continuous_test_utils",
@@ -530,11 +531,11 @@ torch_tpu_py_test(
         ["exclusive"],
         [],
     ) + [
+        REQUIRES_V5_MULTI_DEVICE,
         "noasan",  # TODO(b/497035517): fix the test in asan mode.
         "nomsan",  # TODO(b/497035517): fix the test in msan mode.
         "notsan",  # TODO(b/497035517): fix the test in tsan mode.
         "requires-accel-hbm",
-        "requires-tpu-v5lite:8",
     ],
     deps = [
         ":distributed_utils",
@@ -560,8 +561,8 @@ torch_tpu_py_test(
         ["exclusive"],
         [],
     ) + [
+        REQUIRES_V5_MULTI_DEVICE,
         "nosan",  # *san builds are low-value for error tests.
-        "requires-tpu-v5lite:8",
     ],
     deps = [
         ":distributed_utils",
@@ -666,11 +667,12 @@ torch_tpu_py_test(
         ["exclusive"],
         [],
     ) + [
+        REQUIRES_V5_MULTI_DEVICE,
         "nosan",  # *san builds are low-value for error tests.
-        "requires-tpu-v5lite:8",
     ],
     deps = [
         ":continuous_test_utils",
+        ":distributed_utils",
         "//shims/absl_py/testing:absltest",
         "//shims/torch:pytorch",
         "//src/torch_tpu",
@@ -698,6 +700,7 @@ torch_tpu_py_test(
     ],
     deps = [
         ":continuous_test_utils",
+        ":distributed_utils",
         "//shims/absl_py/testing:absltest",
         "//shims/torch:pytorch",
         "//src/torch_tpu",
@@ -714,13 +717,14 @@ torch_tpu_py_test(
         ["exclusive"],
         [],
     ) + [
+        REQUIRES_V5_MULTI_DEVICE,
         "noasan",  # TODO(b/497035517): fix the test in asan mode.
         "nomsan",  # TODO(b/497035517): fix the test in msan mode.
         "notsan",  # TODO(b/497035517): fix the test in tsan mode.
-        "requires-tpu-v5lite:8",
     ],
     deps = [
         ":continuous_test_utils",
+        ":distributed_utils",
         "//shims/absl_py/testing:absltest",
         "//shims/torch:pytorch",
         "//src/torch_tpu",
@@ -745,8 +749,8 @@ torch_tpu_py_test(
         ["exclusive"],
         [],
     ) + [
+        REQUIRES_V5_MULTI_DEVICE,
         "nosan",  # *san builds are low-value for error tests.
-        "requires-tpu-v5lite:8",
     ],
     deps = [
         ":distributed_utils",
@@ -822,10 +826,10 @@ torch_tpu_py_test(
         ["exclusive"],
         [],
     ) + [
+        REQUIRES_V5_MULTI_DEVICE,
         "noasan",  # TODO(b/497035517): fix the test in asan mode.
         "nomsan",  # TODO(b/497035517): fix the test in msan mode.
         "notsan",  # TODO(b/497035517): fix the test in tsan mode.
-        "requires-tpu-v5lite:8",
     ],
     deps = [
         ":distributed_utils",
@@ -909,10 +913,10 @@ torch_tpu_py_test(
         ["exclusive"],
         [],
     ) + [
+        REQUIRES_V5_MULTI_DEVICE,
         "noasan",  # TODO(b/497035517): fix the test in asan mode.
         "nomsan",  # TODO(b/497035517): fix the test in msan mode.
         "notsan",  # TODO(b/497035517): fix the test in tsan mode.
-        "requires-tpu-v5lite:8",
     ],
     deps = [
         ":distributed_utils",
@@ -935,10 +939,10 @@ torch_tpu_py_test(
         ["exclusive"],
         [],
     ) + [
+        REQUIRES_V5_MULTI_DEVICE,
         "noasan",  # TODO(b/497035517): fix the test in asan mode.
         "nomsan",  # TODO(b/497035517): fix the test in msan mode.
         "notsan",  # TODO(b/497035517): fix the test in tsan mode.
-        "requires-tpu-v5lite:8",
     ],
     deps = [
         ":distributed_utils",
@@ -958,13 +962,14 @@ torch_tpu_py_test(
         ["exclusive"],
         [],
     ) + [
+        REQUIRES_V5_MULTI_DEVICE,
         "noasan",  # TODO(b/497035517): fix the test in asan mode.
         "nomsan",  # TODO(b/497035517): fix the test in msan mode.
         "notsan",  # TODO(b/497035517): fix the test in tsan mode.
-        "requires-tpu-v5lite:8",
     ],
     deps = [
         ":continuous_test_utils",
+        ":distributed_utils",
         "//shims/absl_py/testing:absltest",
         "//shims/torch:pytorch",
         "//src/torch_tpu",
@@ -1020,18 +1025,16 @@ torch_tpu_py_test(
         "TORCH_TPU_TIER2_COMPILATION_CACHE": "disabled",
         "TORCH_TPU_TIER3_COMPILATION_CACHE_ROOT": "",
     },
+    # In OSS, we have to run the test exclusively to avoid the
+    # "TPU initialization failed ... Device or resource busy" error.
     tags = if_oss(
-        # In OSS, we have to run the test exclusively to avoid the
-        # "TPU initialization failed ... Device or resource busy" error.
         ["exclusive"],
         [],
     ) + [
+        REQUIRES_V5_MULTI_DEVICE,
         "noasan",  # TODO(b/555774204): fix the test in asan mode.
         "nomsan",  # TODO(b/555774204): OOM
         "notsan",  # TODO(b/555774204): OOM
-        # Exactly 8 chips are required because the test hardcodes _world_size = 8 to match the
-        # topology and avoid uninitialized chips in OSS CI.
-        "requires-tpu-v5lite:8",
     ],
     deps = [
         ":distributed_utils",
@@ -1132,10 +1135,10 @@ torch_tpu_py_test(
         ["exclusive"],
         [],
     ) + [
+        REQUIRES_V5_MULTI_DEVICE,  # We need multi-chip TPU because we are running an actual e2e workflow to test handshake integration.
         "noasan",  # TODO(b/497035517)
         "nomsan",  # TODO(b/497035517)
         "notsan",  # TODO(b/497035517)
-        "requires-tpu-v5lite:8",  # We need 8 chips because we are running an actual e2e workflow to test handshake integration.
     ],
     deps = [
         ":distributed_utils",
@@ -1202,10 +1205,10 @@ torch_tpu_py_test(
         ["exclusive"],
         [],
     ) + [
+        REQUIRES_V5_MULTI_DEVICE,
         "noasan",  # TODO(b/497035517): fix the test in asan mode.
         "nomsan",  # TODO(b/497035517): fix the test in msan mode.
         "notsan",  # TODO(b/497035517): fix the test in tsan mode.
-        "requires-tpu-v5lite:8",
     ],
     deps = [
         ":distributed_utils",

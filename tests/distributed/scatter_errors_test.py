@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
 from absl.testing import absltest
 import torch
 from torch import distributed as dist
@@ -24,8 +23,8 @@ from tests.distributed import distributed_utils
 
 def run_scatter_wrong_number_inputs(num_inputs: int) -> None:
   """Runs scatter with number of inputs not equal to process group size."""
-  rank = int(os.environ["RANK"])
-  world_size = int(os.environ["WORLD_SIZE"])
+  rank = dist.get_rank()
+  world_size = dist.get_world_size()
   assert num_inputs != world_size
   src_rank = 0
   size = 5
@@ -52,8 +51,8 @@ def run_scatter_wrong_shape_output(
     output_shape: list[int],
 ) -> None:
   """Runs scatter with differently-shaped input and output tensors."""
-  rank = int(os.environ["RANK"])
-  world_size = int(os.environ["WORLD_SIZE"])
+  rank = dist.get_rank()
+  world_size = dist.get_world_size()
   assert input_shape != output_shape
   src_rank = 0
   output = torch.empty(output_shape, device="tpu", dtype=torch.float32)
@@ -76,8 +75,8 @@ def run_scatter_mismatch_input_shapes(
     mismatch_shape: list[int],
 ) -> None:
   """Runs scatter with one input having a different shape than the others."""
-  rank = int(os.environ["RANK"])
-  world_size = int(os.environ["WORLD_SIZE"])
+  rank = dist.get_rank()
+  world_size = dist.get_world_size()
   assert shape != mismatch_shape
   src_rank = 0
   output = torch.empty(shape, device="tpu", dtype=torch.float32)
@@ -99,14 +98,15 @@ def run_scatter_mismatch_input_shapes(
 
 def run_scatter_errors() -> None:
   dist.init_process_group(backend="tpu_dist")
-  run_scatter_wrong_number_inputs(num_inputs=9)
+  world_size = dist.get_world_size()
+  run_scatter_wrong_number_inputs(num_inputs=world_size + 1)
   run_scatter_wrong_shape_output(input_shape=[2, 3], output_shape=[3, 3])
   run_scatter_mismatch_input_shapes(shape=[6, 2], mismatch_shape=[8, 6, 2])
 
 
 class ScatterErrorsTest(et.TpuOnlyDistributedErrorTestBase):
 
-  _world_size = 8
+  _world_size = distributed_utils.get_tpu_device_count()
 
   def test_scatter_errors(self):
     distributed_utils.dist_run(

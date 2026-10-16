@@ -194,47 +194,47 @@ class TorchCommsMultiTpuTest(
     absltest.TestCase,  # ABSLTEST_OK=Distributed multi-process test.
 ):
 
-  WORLD_SIZE = 8
+  _world_size = distributed_utils.get_tpu_device_count()
 
   def test_multi_tpu_attributes(self):
     distributed_utils.dist_run(
-        nproc_per_node=self.WORLD_SIZE,
+        nproc_per_node=self._world_size,
         fn=_run_test_attributes,
     )
 
   def test_multi_tpu_all_reduce(self):
     distributed_utils.dist_run(
-        nproc_per_node=self.WORLD_SIZE,
+        nproc_per_node=self._world_size,
         fn=_run_test_all_reduce,
     )
 
   def test_multi_tpu_all_gather(self):
     distributed_utils.dist_run(
-        nproc_per_node=self.WORLD_SIZE,
+        nproc_per_node=self._world_size,
         fn=_run_test_all_gather,
     )
 
   def test_multi_tpu_all_gather_single(self):
     distributed_utils.dist_run(
-        nproc_per_node=self.WORLD_SIZE,
+        nproc_per_node=self._world_size,
         fn=_run_test_all_gather_single,
     )
 
   def test_multi_tpu_broadcast(self):
     distributed_utils.dist_run(
-        nproc_per_node=self.WORLD_SIZE,
+        nproc_per_node=self._world_size,
         fn=_run_test_broadcast,
     )
 
   def test_multi_tpu_barrier(self):
     distributed_utils.dist_run(
-        nproc_per_node=self.WORLD_SIZE,
+        nproc_per_node=self._world_size,
         fn=_run_test_barrier,
     )
 
   def test_multi_tpu_finalize(self):
     distributed_utils.dist_run(
-        nproc_per_node=self.WORLD_SIZE,
+        nproc_per_node=self._world_size,
         fn=_run_test_finalize,
     )
 

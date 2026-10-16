@@ -14,14 +14,20 @@
 
 """A test runner for the manual FSDP example."""
 
+import torch
 from torch.distributed import launcher
 from torch.tpu import distributed  # pyrefly: ignore[missing-import]
 from examples.fsdp.manual import manual_fsdp_worker
 
 
 def main():
-  world_size = 8
-  distributed.set_tpu_launch_env(nproc_per_node=world_size)
+  # Launch one worker per TPU chip on the host, which is also what
+  # `set_tpu_launch_env()` sizes the slice for when `nproc_per_node` is omitted.
+  # Fewer workers than chips would fail on 8-chip TPU v5e hosts, where libtpu
+  # cannot reliably build a 4-chip sub-slice. The TPU runtime is not
+  # initialized in this process, so `device_count()` counts all the chips.
+  distributed.set_tpu_launch_env()
+  world_size = torch.accelerator.device_count()
   config = launcher.LaunchConfig(
       min_nodes=1,
       max_nodes=1,

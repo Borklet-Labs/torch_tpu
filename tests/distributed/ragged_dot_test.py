@@ -19,6 +19,7 @@ import torch
 from torch_tpu._internal.utils import test_utils as utils
 from torch_tpu._internal.distributed import multiprocessing
 from tests.distributed import continuous_test_utils
+from tests.distributed import distributed_utils
 
 
 def manual_ragged_dot(x, w, gs):
@@ -43,7 +44,7 @@ class RaggedDotDistributedTest(
   a distributed environment.
   """
 
-  world_size = 8
+  world_size = distributed_utils.get_tpu_device_count()
 
   def _run_ragged_dot_local_test(self, compile_test: bool = False) -> None:
     """Runs ragged_dot independently on each rank."""

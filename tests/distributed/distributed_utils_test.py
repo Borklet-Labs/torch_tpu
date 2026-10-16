@@ -193,6 +193,14 @@ class DistributedUtilsTest(seed_test_utils.MultiProcessRepeatableTest):
           "--xla_dump_to=/tmp/dumps/rank_1 --xla_tpu_rank=1",
       )
 
+  def test_get_tpu_device_count_returns_device_count(self) -> None:
+    with mock.patch.object(torch.accelerator, "device_count", return_value=8):
+      self.assertEqual(distributed_utils.get_tpu_device_count(default=4), 8)
+
+  def test_get_tpu_device_count_falls_back_to_default(self) -> None:
+    with mock.patch.object(torch.accelerator, "device_count", return_value=0):
+      self.assertEqual(distributed_utils.get_tpu_device_count(default=4), 4)
+
   def test_dist_run_retries_on_port_collision(self) -> None:
     """Verifies that dist_run retries when port collision (EADDRINUSE) occurs."""
     attempt_count = 0

@@ -14,7 +14,6 @@
 
 """Tests PyTorch distributed collective all_to_all errors on multiple TPUs."""
 
-import os
 import re
 
 from absl.testing import absltest
@@ -36,25 +35,27 @@ def run_all_to_all_single_dtype_error() -> None:
 
 
 def run_all_to_all_single_invalid_tensor_size_error() -> None:
+  world_size = dist.get_world_size()
   input_tensor = torch.ones((1, 2), dtype=torch.int64, device="tpu")
   output_tensor = torch.empty((1, 2), dtype=torch.int64, device="tpu")
   expected_msg = (
       "distributed.all_to_all_single(): expected tensor first dimension to be "
-      "divisible by process group size, got 1 is not divisible by 8"
+      f"divisible by process group size, got 1 is not divisible by {world_size}"
   )
   with et.assert_raises_message(RuntimeError, tpu=expected_msg):
     torch.distributed.all_to_all_single(output_tensor, input_tensor)
 
 
 def run_all_to_all_single_invalid_split_sizes_size_error() -> None:
-  input_tensor = torch.ones((8, 2), dtype=torch.int64, device="tpu")
-  output_tensor = torch.empty((8, 2), dtype=torch.int64, device="tpu")
-  input_split_sizes = [2] * 9
-  output_split_sizes = [1] * 8
+  world_size = dist.get_world_size()
+  input_tensor = torch.ones((world_size, 2), dtype=torch.int64, device="tpu")
+  output_tensor = torch.empty((world_size, 2), dtype=torch.int64, device="tpu")
+  input_split_sizes = [2] * (world_size + 1)
+  output_split_sizes = [1] * world_size
   expected_msg = (
       "distributed.all_to_all_single(): expected split sizes to have the same "
-      "size as process group size, got 9 for split sizes and 8 for process "
-      "group size"
+      f"size as process group size, got {world_size + 1} for split sizes and"
+      f" {world_size} for process group size"
   )
   with et.assert_raises_message(RuntimeError, tpu=expected_msg):
     torch.distributed.all_to_all_single(
@@ -63,14 +64,15 @@ def run_all_to_all_single_invalid_split_sizes_size_error() -> None:
 
 
 def run_all_to_all_single_invalid_split_sizes_sum_error() -> None:
-  input_tensor = torch.ones((8, 2), dtype=torch.int64, device="tpu")
-  output_tensor = torch.empty((8, 2), dtype=torch.int64, device="tpu")
-  input_split_sizes = [1, 3, 1, 1, 1, 1, 1, 1]
-  output_split_sizes = [1] * 8
+  world_size = dist.get_world_size()
+  input_tensor = torch.ones((world_size, 2), dtype=torch.int64, device="tpu")
+  output_tensor = torch.empty((world_size, 2), dtype=torch.int64, device="tpu")
+  input_split_sizes = [1, 3] + [1] * (world_size - 2)
+  output_split_sizes = [1] * world_size
   expected_msg = (
       "distributed.all_to_all_single(): expected split sizes sum to be equal to"
-      " tensor first dimension, got 10 for split sizes sum and 8 for tensor"
-      " shape [8, 2] dim 0"
+      f" tensor first dimension, got {world_size + 2} for split sizes sum and"
+      f" {world_size} for tensor shape [{world_size}, 2] dim 0"
   )
   with et.assert_raises_message(RuntimeError, tpu=expected_msg):
     torch.distributed.all_to_all_single(
@@ -79,13 +81,17 @@ def run_all_to_all_single_invalid_split_sizes_sum_error() -> None:
 
 
 def run_all_to_all_single_uneven_trailing_dims_mismatch_error() -> None:
-  input_tensor = torch.ones((10, 4), dtype=torch.float32, device="tpu")
-  output_tensor = torch.empty((10, 8), dtype=torch.float32, device="tpu")
-  input_split_sizes = [2, 1, 1, 1, 1, 1, 1, 2]
-  output_split_sizes = [1, 2, 1, 1, 1, 1, 2, 1]
+  world_size = dist.get_world_size()
+  total_rows = world_size + 2
+  input_tensor = torch.ones((total_rows, 4), dtype=torch.float32, device="tpu")
+  output_tensor = torch.empty(
+      (total_rows, 8), dtype=torch.float32, device="tpu"
+  )
+  input_split_sizes = [2] + [1] * (world_size - 2) + [2]
+  output_split_sizes = [1, 2] + [1] * (world_size - 4) + [2, 1]
   expected_msg = (
       "distributed.all_to_all_single(): expected trailing dimensions of input"
-      " and output to match, got [10, 4] and [10, 8]"
+      f" and output to match, got [{total_rows}, 4] and [{total_rows}, 8]"
   )
   with et.assert_raises_message(RuntimeError, tpu=expected_msg):
     torch.distributed.all_to_all_single(
@@ -94,10 +100,12 @@ def run_all_to_all_single_uneven_trailing_dims_mismatch_error() -> None:
 
 
 def run_all_to_all_single_uneven_dim_count_mismatch_error() -> None:
-  input_tensor = torch.ones((10, 4), dtype=torch.float32, device="tpu")
-  output_tensor = torch.empty(10, dtype=torch.float32, device="tpu")
-  input_split_sizes = [2, 1, 1, 1, 1, 1, 1, 2]
-  output_split_sizes = [1, 2, 1, 1, 1, 1, 2, 1]
+  world_size = dist.get_world_size()
+  total_rows = world_size + 2
+  input_tensor = torch.ones((total_rows, 4), dtype=torch.float32, device="tpu")
+  output_tensor = torch.empty(total_rows, dtype=torch.float32, device="tpu")
+  input_split_sizes = [2] + [1] * (world_size - 2) + [2]
+  output_split_sizes = [1, 2] + [1] * (world_size - 4) + [2, 1]
   expected_msg = (
       "distributed.all_to_all_single(): expected input and output tensors to"
       " have the same number of dimensions, got 2 and 1"
@@ -109,10 +117,13 @@ def run_all_to_all_single_uneven_dim_count_mismatch_error() -> None:
 
 
 def run_all_to_all_single_negative_split_size_error() -> None:
-  input_tensor = torch.ones((8, 2), dtype=torch.float32, device="tpu")
-  output_tensor = torch.empty((8, 2), dtype=torch.float32, device="tpu")
-  input_split_sizes = [-1, 3, 1, 1, 1, 1, 1, 1]
-  output_split_sizes = [1] * 8
+  world_size = dist.get_world_size()
+  input_tensor = torch.ones((world_size, 2), dtype=torch.float32, device="tpu")
+  output_tensor = torch.empty(
+      (world_size, 2), dtype=torch.float32, device="tpu"
+  )
+  input_split_sizes = [-1, 3] + [1] * (world_size - 2)
+  output_split_sizes = [1] * world_size
   expected_msg = (
       "distributed.all_to_all_single(): expected split sizes to be"
       " non-negative, got -1"
@@ -124,9 +135,13 @@ def run_all_to_all_single_negative_split_size_error() -> None:
 
 
 def run_all_to_all_single_send_recv_mismatch_error() -> None:
-  world_size = int(os.environ["WORLD_SIZE"])
-  input_tensor = torch.ones((9, 2), dtype=torch.float32, device="tpu")
-  output_tensor = torch.empty((10, 2), dtype=torch.float32, device="tpu")
+  world_size = dist.get_world_size()
+  input_tensor = torch.ones(
+      (world_size + 1, 2), dtype=torch.float32, device="tpu"
+  )
+  output_tensor = torch.empty(
+      (world_size + 2, 2), dtype=torch.float32, device="tpu"
+  )
   input_split_sizes = [2] + [1] * (world_size - 1)
   output_split_sizes = [2, 2] + [1] * (world_size - 2)
   expected_msg = re.compile(
@@ -139,14 +154,14 @@ def run_all_to_all_single_send_recv_mismatch_error() -> None:
 
 
 def run_all_to_all_single_asymmetric_cross_rank_buffer_error() -> None:
-  rank = int(os.environ["RANK"])
-  world_size = int(os.environ["WORLD_SIZE"])
+  rank = dist.get_rank()
+  world_size = dist.get_world_size()
   if rank == 0:
-    local_size = 9
+    local_size = world_size + 1
     input_split_sizes = [2] + [1] * (world_size - 1)
     output_split_sizes = [2] + [1] * (world_size - 1)
   else:
-    local_size = 10
+    local_size = world_size + 2
     input_split_sizes = [2, 2] + [1] * (world_size - 2)
     output_split_sizes = [2, 2] + [1] * (world_size - 2)
   input_tensor = torch.ones((local_size, 2), dtype=torch.float32, device="tpu")
@@ -164,10 +179,10 @@ def run_all_to_all_single_asymmetric_cross_rank_buffer_error() -> None:
 
 def run_all_to_all_single_asymmetric_cross_rank_output_buffer_error() -> None:
   """Keeps input buffers symmetric so the output buffer check is reached."""
-  rank = int(os.environ["RANK"])
-  world_size = int(os.environ["WORLD_SIZE"])
-  # Every rank allocates the same input capacity (9), so the input buffer check
-  # passes and validation proceeds to the output buffer check.
+  rank = dist.get_rank()
+  world_size = dist.get_world_size()
+  # Every rank allocates the same input capacity (world_size + 1), so the input
+  # buffer check passes and validation proceeds to the output buffer check.
   input_split_sizes = [2] + [1] * (world_size - 1)
   if rank == 0:
     output_split_sizes = [2] + [1] * (world_size - 1)
@@ -202,7 +217,7 @@ def run_all_to_all_single_errors() -> None:
 
 
 def run_all_to_all_unequal_tensor_list_size_error() -> None:
-  world_size = int(os.environ["WORLD_SIZE"])
+  world_size = dist.get_world_size()
   device = "tpu"
   input_tensors = [
       torch.ones(1, device=device, dtype=torch.int64) for _ in range(world_size)
@@ -213,14 +228,15 @@ def run_all_to_all_unequal_tensor_list_size_error() -> None:
   ]
   expected_msg = (
       "distributed.all_to_all(): expected output and input tensors to have the"
-      " same number of tensors, got 9 for output and 8 for input"
+      f" same number of tensors, got {world_size + 1} for output and"
+      f" {world_size} for input"
   )
   with et.assert_raises_message(RuntimeError, tpu=expected_msg):
     torch.distributed.all_to_all(output_tensors, input_tensors)
 
 
 def run_all_to_all_wrong_num_input_tensors_error() -> None:
-  world_size = int(os.environ["WORLD_SIZE"])
+  world_size = dist.get_world_size()
   device = "tpu"
   input_tensors = [
       torch.ones(1, device=device, dtype=torch.int64)
@@ -232,15 +248,15 @@ def run_all_to_all_wrong_num_input_tensors_error() -> None:
   ]
   expected_msg = (
       "distributed.all_to_all(): expected input tensors to have the same"
-      " number of tensors as the process group size, got 9 for input and 8"
-      " for process group size"
+      f" number of tensors as the process group size, got {world_size + 1} for"
+      f" input and {world_size} for process group size"
   )
   with et.assert_raises_message(RuntimeError, tpu=expected_msg):
     torch.distributed.all_to_all(output_tensors, input_tensors)
 
 
 def run_all_to_all_unequal_input_tensor_trailing_dims_error() -> None:
-  world_size = int(os.environ["WORLD_SIZE"])
+  world_size = dist.get_world_size()
   device = "tpu"
   input_tensors = [
       torch.ones((1, 2), device=device, dtype=torch.int64)
@@ -260,7 +276,7 @@ def run_all_to_all_unequal_input_tensor_trailing_dims_error() -> None:
 
 
 def run_all_to_all_unequal_output_tensor_trailing_dims_error() -> None:
-  world_size = int(os.environ["WORLD_SIZE"])
+  world_size = dist.get_world_size()
   device = "tpu"
   input_tensors = [
       torch.ones((1, 2), device=device, dtype=torch.int64)
@@ -280,7 +296,7 @@ def run_all_to_all_unequal_output_tensor_trailing_dims_error() -> None:
 
 
 def run_all_to_all_dim_count_mismatch_error() -> None:
-  world_size = int(os.environ["WORLD_SIZE"])
+  world_size = dist.get_world_size()
   device = "tpu"
   input_tensors = [
       torch.ones(1, device=device, dtype=torch.int64) for _ in range(world_size)
@@ -298,7 +314,7 @@ def run_all_to_all_dim_count_mismatch_error() -> None:
 
 
 def run_all_to_all_dtype_mismatch_error() -> None:
-  world_size = int(os.environ["WORLD_SIZE"])
+  world_size = dist.get_world_size()
   device = "tpu"
   input_tensors = [
       torch.ones(1, device=device, dtype=torch.int64) for _ in range(world_size)
@@ -331,7 +347,7 @@ def _make_ragged_all_to_all_metadata(
 
 
 def run_ragged_all_to_all_dim_count_mismatch_error() -> None:
-  world_size = int(os.environ["WORLD_SIZE"])
+  world_size = dist.get_world_size()
   input_offsets, send_sizes, output_offsets, recv_sizes = (
       _make_ragged_all_to_all_metadata(world_size)
   )
@@ -353,7 +369,7 @@ def run_ragged_all_to_all_dim_count_mismatch_error() -> None:
 
 
 def run_ragged_all_to_all_trailing_dims_mismatch_error() -> None:
-  world_size = int(os.environ["WORLD_SIZE"])
+  world_size = dist.get_world_size()
   input_offsets, send_sizes, output_offsets, recv_sizes = (
       _make_ragged_all_to_all_metadata(world_size)
   )
@@ -375,7 +391,7 @@ def run_ragged_all_to_all_trailing_dims_mismatch_error() -> None:
 
 
 def run_ragged_all_to_all_dtype_mismatch_error() -> None:
-  world_size = int(os.environ["WORLD_SIZE"])
+  world_size = dist.get_world_size()
   input_offsets, send_sizes, output_offsets, recv_sizes = (
       _make_ragged_all_to_all_metadata(world_size)
   )
@@ -411,7 +427,7 @@ def run_all_to_all_collective_errors() -> None:
 
 class AllToAllCollectiveErrorsTest(et.TpuOnlyDistributedErrorTestBase):
 
-  _world_size = 8
+  _world_size = distributed_utils.get_tpu_device_count()
 
   def test_all_to_all_collective_errors(self):
     distributed_utils.dist_run(

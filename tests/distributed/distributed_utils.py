@@ -52,6 +52,26 @@ _picked_slicebuilder_addresses: set[str] = set()
 _picked_topologies: set[str] = set()
 
 
+def get_tpu_device_count(default: int = 4) -> int:
+  """Returns the number of workers for multi-process distributed tests.
+
+  This is one worker per TPU chip on the host, so it is 8 on 8-chip hosts and 4
+  on 4-chip hosts. Unlike `accelerator_test_utils.get_tpu_device_count`, it is
+  not capped at 4 chips in OSS: on 8-chip TPU v5e hosts, libtpu cannot reliably
+  build a 4-process sub-slice, because which chip numbers form a physical 2x2
+  block varies from host to host.
+
+  Call this in the parent process, which does not initialize the TPU runtime:
+  once it is initialized, e.g. in a worker, `torch.accelerator.device_count()`
+  only counts the devices visible to that process.
+
+  Args:
+    default: Fallback device count to return when no TPU devices are detected
+      (e.g. on CPU-only runners where emulated devices are used).
+  """
+  return torch.accelerator.device_count() or default
+
+
 def set_launch_env(nproc_per_node: int) -> bool:
   """Sets the environment all ranks must agree on, before spawning workers.
 

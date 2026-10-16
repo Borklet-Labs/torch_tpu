@@ -18,13 +18,12 @@ import torch.multiprocessing as mp
 from torch_tpu._internal.utils import test_utils as utils
 from torch_tpu._internal.distributed import multiprocessing
 from tests.distributed import continuous_test_utils
+from tests.distributed import distributed_utils
 
 
 class ScatterTest(continuous_test_utils.TpuMultiProcContinuousTest):
 
-  @property
-  def world_size(self) -> int:
-    return 8
+  world_size = distributed_utils.get_tpu_device_count()
 
   def test_scatter_tensor(self) -> None:
     """Tests scatter functionality."""

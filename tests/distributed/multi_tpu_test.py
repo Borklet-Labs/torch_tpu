@@ -26,7 +26,7 @@ from tests import seed_test_utils
 from tests.distributed import distributed_utils
 
 
-def run_global_device_count() -> None:
+def run_global_device_count(expected_world_size: int) -> None:
   # Verify that rank-related environment variables are set by torchrun or
   # launcher.
   assert "RANK" in os.environ
@@ -35,7 +35,7 @@ def run_global_device_count() -> None:
   assert "WORLD_SIZE" in os.environ
 
   world_size = int(os.environ["WORLD_SIZE"])
-  assert world_size == 8
+  assert world_size == expected_world_size
 
   dist.init_process_group(backend="tpu_dist")
 
@@ -54,9 +54,11 @@ def run_global_device_count() -> None:
 class MultiTpuTest(seed_test_utils.MultiProcessRepeatableTest):
 
   def test_global_device_count(self):
+    world_size = distributed_utils.get_tpu_device_count()
     distributed_utils.dist_run(
-        nproc_per_node=8,
-        fn=run_global_device_count,
+        world_size,
+        run_global_device_count,
+        world_size,
     )
 
 

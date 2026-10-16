@@ -100,15 +100,18 @@ def memory_worker_fn() -> None:
     logging.info("\n".join(lines))
 
   # Full bf16 weights are 32.0 MiB (linear1: 4096x4096) and 64.0 MiB
-  # (linear2: 8192x4096). Sharded weights are 4.0 MiB + 8.0 MiB = 12.0 MiB.
+  # (linear2: 8192x4096). Sharded weights are (32 + 64) MiB / world_size
+  # (12.0 MiB at world_size=8, 24.0 MiB at world_size=4).
   # Assert that retained memory across the forward-backward boundary is
-  # < 20 MiB, proving that full weights (32.0 MiB / 64.0 MiB) were freed
-  # during forward rather than saved for backward.
+  # less than sharded weights + 8 MiB margin, proving that full weights
+  # (32.0 MiB / 64.0 MiB) were freed during forward rather than saved for backward.
   # Warm-up steps may retain one-time compilation and runtime allocations, so
   # the retained-memory check only applies to the steps after them.
+  max_retained_bytes = ((32 + 64) * 1024 * 1024 // world_size) + 8 * 1024 * 1024
   for step, _, _, fwd_retained_bytes, _ in step_stats[NUM_WARMUP_STEPS:]:
-    assert fwd_retained_bytes < 20 * 1024 * 1024, (
-        f"Step {step}: expected < 20 MiB retained after forward, got"
+    assert fwd_retained_bytes < max_retained_bytes, (
+        f"Step {step}: expected < {max_retained_bytes / (1024 * 1024):.2f} MiB"
+        " retained after forward, got"
         f" {fwd_retained_bytes / (1024 * 1024):.2f} MiB"
     )
 
@@ -116,8 +119,13 @@ def memory_worker_fn() -> None:
 
 
 def main():
-  world_size = 8
-  distributed.set_tpu_launch_env(nproc_per_node=world_size)
+  # Launch one worker per TPU chip on the host, which is also what
+  # `set_tpu_launch_env()` sizes the slice for when `nproc_per_node` is omitted.
+  # Fewer workers than chips would fail on 8-chip TPU v5e hosts, where libtpu
+  # cannot reliably build a 4-chip sub-slice. The TPU runtime is not
+  # initialized in this process, so `device_count()` counts all the chips.
+  distributed.set_tpu_launch_env()
+  world_size = torch.accelerator.device_count()
   config = launcher.LaunchConfig(
       min_nodes=1,
       max_nodes=1,

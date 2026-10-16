@@ -61,7 +61,7 @@ def run_all_reduce_error() -> None:
 
 def run_all_gather_tensor_wrong_number_output_dimensions() -> None:
   """Tests incorrect output dimensionality."""
-  world_size = int(os.environ["WORLD_SIZE"])
+  world_size = dist.get_world_size()
   x = torch.ones((2, 2), device="tpu", dtype=torch.float32)
   output = torch.empty((world_size, 2, 2, 1), device="tpu", dtype=torch.float32)
   expected_msg = (
@@ -76,7 +76,7 @@ def run_all_gather_tensor_wrong_number_output_dimensions() -> None:
 
 def run_all_gather_tensor_wrong_concat_dimension() -> None:
   """Tests incorrect size along concatenation dimension."""
-  world_size = int(os.environ["WORLD_SIZE"])
+  world_size = dist.get_world_size()
   x = torch.ones((2, 2), device="tpu", dtype=torch.float32)
   output = torch.empty(
       (2 * world_size - 1, 2), device="tpu", dtype=torch.float32
@@ -94,7 +94,7 @@ def run_all_gather_tensor_wrong_concat_dimension() -> None:
 
 def run_all_gather_tensor_wrong_stack_dimension() -> None:
   """Tests incorrect size along stacking dimension."""
-  world_size = int(os.environ["WORLD_SIZE"])
+  world_size = dist.get_world_size()
   x = torch.ones((2, 2), device="tpu", dtype=torch.float32)
   output = torch.empty(
       (world_size - 1, 2, 2), device="tpu", dtype=torch.float32
@@ -111,7 +111,7 @@ def run_all_gather_tensor_wrong_stack_dimension() -> None:
 
 def run_all_gather_tensor_stack_mismatched_dim() -> None:
   """Tests incorrect size along a non-stacking dimension."""
-  world_size = int(os.environ["WORLD_SIZE"])
+  world_size = dist.get_world_size()
   x = torch.ones((2, 2), device="tpu", dtype=torch.float32)
   output = torch.empty((world_size, 3, 2), device="tpu", dtype=torch.float32)
   expected_msg = (
@@ -125,7 +125,7 @@ def run_all_gather_tensor_stack_mismatched_dim() -> None:
 
 def run_all_gather_tensor_concat_mismatched_dim() -> None:
   """Tests incorrect size along a non-concatenation dimension."""
-  world_size = int(os.environ["WORLD_SIZE"])
+  world_size = dist.get_world_size()
   x = torch.ones((2, 2), device="tpu", dtype=torch.float32)
   output = torch.empty((world_size * 2, 3), device="tpu", dtype=torch.float32)
   expected_msg = (
@@ -139,7 +139,7 @@ def run_all_gather_tensor_concat_mismatched_dim() -> None:
 
 def run_all_gather_tensor_wrong_scalar_dimension() -> None:
   """Tests incorrect size when gathering scalars."""
-  world_size = int(os.environ["WORLD_SIZE"])
+  world_size = dist.get_world_size()
   x = torch.tensor(1.0, device="tpu", dtype=torch.float32)
   output = torch.empty(
       (world_size, world_size), device="tpu", dtype=torch.float32
@@ -154,8 +154,8 @@ def run_all_gather_tensor_wrong_scalar_dimension() -> None:
 
 
 def run_all_gather_uneven_output_sizes() -> None:
-  rank = int(os.environ["RANK"])
-  world_size = int(os.environ["WORLD_SIZE"])
+  rank = dist.get_rank()
+  world_size = dist.get_world_size()
   x = torch.full(
       (rank + 1,), fill_value=rank, device="tpu", dtype=torch.float32
   )
@@ -172,7 +172,7 @@ def run_all_gather_uneven_output_sizes() -> None:
 
 
 def run_all_gather_mismatch_input_size() -> None:
-  world_size = int(os.environ["WORLD_SIZE"])
+  world_size = dist.get_world_size()
   x = torch.ones((2, 2), device="tpu", dtype=torch.float32)
   outputs = [
       torch.empty((3, 2), device="tpu", dtype=torch.float32)
@@ -188,7 +188,7 @@ def run_all_gather_mismatch_input_size() -> None:
 
 
 def run_all_gather_mismatch_dtype() -> None:
-  world_size = int(os.environ["WORLD_SIZE"])
+  world_size = dist.get_world_size()
   x = torch.ones((3, 2), device="tpu", dtype=torch.int32)
   outputs = [
       torch.empty((3, 2), device="tpu", dtype=torch.float32)
@@ -206,7 +206,7 @@ def run_all_gather_mismatch_dtype() -> None:
 
 def run_reduce_scatter_errors() -> None:
   """Tests reduce-scatter functionality with invalid inputs."""
-  world_size = int(os.environ["WORLD_SIZE"])
+  world_size = dist.get_world_size()
 
   # Helps the test look nicer.
   def new_inputs():
@@ -261,7 +261,7 @@ def run_reduce_scatter_errors() -> None:
 
 def run_reduce_scatter_tensor_errors() -> None:
   """Tests reduce_scatter_tensor with invalid inputs."""
-  world_size = int(os.environ["WORLD_SIZE"])
+  world_size = dist.get_world_size()
 
   output = torch.zeros((3, 4, 5), device="tpu")
   input_invalid = torch.zeros((10, 4, 5), device="tpu")
@@ -289,7 +289,7 @@ def run_gather_wrong_input_size() -> None:
 
 def run_gather_wrong_output_list_size() -> None:
   """Tests gather failure when output_tensors.size() != 1 on root."""
-  rank = int(os.environ["RANK"])
+  rank = dist.get_rank()
   dst = 0
   pg = dist.group.WORLD
   opts = dist.GatherOptions()
@@ -309,8 +309,8 @@ def run_gather_wrong_output_list_size() -> None:
 
 def run_gather_wrong_output_tensor_count() -> None:
   """Tests gather failure when output_tensor_list.size() != world_size."""
-  rank = int(os.environ["RANK"])
-  world_size = int(os.environ["WORLD_SIZE"])
+  rank = dist.get_rank()
+  world_size = dist.get_world_size()
   dst = 0
   tensor = torch.zeros(2, device="tpu")
   if rank == dst:
@@ -329,8 +329,8 @@ def run_gather_wrong_output_tensor_count() -> None:
 
 def run_gather_mismatch_input_size() -> None:
   """Tests gather failure when input shape != output shape."""
-  rank = int(os.environ["RANK"])
-  world_size = int(os.environ["WORLD_SIZE"])
+  rank = dist.get_rank()
+  world_size = dist.get_world_size()
   dst = 0
   tensor = torch.zeros(2, device="tpu")
   if rank == dst:
@@ -348,8 +348,8 @@ def run_gather_mismatch_input_size() -> None:
 
 def run_gather_non_uniform_output_shapes() -> None:
   """Tests gather failure when output tensors have different shapes."""
-  rank = int(os.environ["RANK"])
-  world_size = int(os.environ["WORLD_SIZE"])
+  rank = dist.get_rank()
+  world_size = dist.get_world_size()
   dst = 0
   tensor = torch.zeros(2, device="tpu")
   if rank == dst:
@@ -367,8 +367,8 @@ def run_gather_non_uniform_output_shapes() -> None:
 
 def run_gather_output_on_non_root() -> None:
   """Tests gather failure when output list is provided on non-root."""
-  rank = int(os.environ["RANK"])
-  world_size = int(os.environ["WORLD_SIZE"])
+  rank = dist.get_rank()
+  world_size = dist.get_world_size()
   dst = 0
   pg = dist.group.WORLD
   opts = dist.GatherOptions()
@@ -615,7 +615,7 @@ class CollectiveErrorsTest(
     continuous_test_utils.TpuMultiProcContinuousTest,
     et.TpuOnlyDistributedErrorTestBase,
 ):
-  world_size = 8
+  world_size = distributed_utils.get_tpu_device_count()
 
   def test_collective_validation_errors(self):
     run_collective_validation_errors()

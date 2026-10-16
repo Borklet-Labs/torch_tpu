@@ -23,6 +23,7 @@ from torch_tpu._internal import testing as tt_testing
 from torch_tpu._internal.distributed import multiprocessing
 from tests import error_testing as et
 from tests.distributed import continuous_test_utils
+from tests.distributed import distributed_utils
 
 
 class AllGatherErrorsTest(
@@ -30,9 +31,7 @@ class AllGatherErrorsTest(
     et.TpuOnlyDistributedErrorTestBase,
 ):
 
-  @property
-  def world_size(self) -> int:
-    return 8
+  world_size = distributed_utils.get_tpu_device_count()
 
   def test_all_gather_dtype_error(self) -> None:
     input_tensor = torch.ones((1, 2), dtype=torch.float64, device="tpu")
@@ -53,7 +52,7 @@ class AllGatherErrorsTest(
     # This message comes from native PyTorch.
     expected_msg = re.compile(
         r"distributed\.all_gather\(\): expected output tensor list to have one"
-        r" tensor per process, got 1 tensor and 8 processes.*"
+        rf" tensor per process, got 1 tensor and {self.world_size} processes.*"
     )
     with et.assert_raises_message(RuntimeError, tpu=expected_msg):
       dist.all_gather(output_tensors, input_tensor)
