@@ -393,8 +393,13 @@ absl::StatusOr<mlir::MlirOp> BuildPolygammaShlo(
     auto inf_cst = MakeConstantLike(input_op, inf_val);
     result = mlir::stablehlo::Select(is_pole, inf_cst, selected_op);
   } else {
-    // Trigamma (n=1): returns finite values at poles (using reflection)
-    result = selected_op;
+    // Trigamma (n=1): returns finite values at poles (using reflection) and
+    // evaluates to 0.0 at +inf.
+    auto pos_inf =
+        MakeConstantLike(input_op, std::numeric_limits<double>::infinity());
+    auto is_pos_inf = mlir::stablehlo::Compare(
+        input_op, pos_inf, mlir::stablehlo::ComparisonDirection::EQ);
+    result = mlir::stablehlo::Select(is_pos_inf, zero_cst, selected_op);
   }
 
   if (GetElementTypeOrDie(result) != out_mlir_type) {

@@ -19581,6 +19581,26 @@ class OpsGradUnitTest(TorchTpuVsCpuTestBase):
 
     self.assert_close_tpu_vs_cpu(test_type_promotion, rtol=1.6e-5, atol=6.8e-6)
 
+  def test_polygamma_pos_inf(self):
+    # Test polygamma(n, +inf) returns 0.0 for n=1 and nan for n > 1 matching CPU (b/568040580).
+    for n in (1, 2, 3):
+      for dtype in (
+          torch.float32,
+          torch.float64,
+          torch.bfloat16,
+          torch.float16,
+      ):
+        for shape in ((), (1,)):
+          self.assert_close_tpu_vs_cpu(
+              lambda device, n=n, dtype=dtype, shape=shape: torch.polygamma(
+                  n,
+                  to(
+                      torch.full(shape, float("inf"), dtype=dtype),
+                      device=device,
+                  ),
+              )
+          )
+
   def test_masked_softmax(self):
     def test_fn(device):
       results = []
