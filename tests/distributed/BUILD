@@ -472,7 +472,6 @@ torch_tpu_py_test(
         "--test_mode=tpu",
     ],
     env = {"TORCH_SHOW_CPP_STACKTRACES": "0"},
-    shard_count = 4,
     tags = if_oss(
         ["exclusive"],
         [],
@@ -481,6 +480,7 @@ torch_tpu_py_test(
         "requires-tpu-v5lite:8",
     ],
     deps = [
+        ":continuous_test_utils",
         ":distributed_utils",
         "//shims/absl_py/testing:absltest",
         "//shims/torch:pytorch",
@@ -503,7 +503,6 @@ torch_tpu_py_test(
     env = TEST_COV_ENV,
     main = "collective_errors_test.py",
     notap = "Run by error_coverage_test in the torch_tpu.error_coverage Guitar workflow.",
-    shard_count = 4,
     tags = if_oss(
         ["exclusive"],
         [],
@@ -512,6 +511,7 @@ torch_tpu_py_test(
         "requires-tpu-v5lite:8",
     ],
     deps = [
+        ":continuous_test_utils",
         ":distributed_utils",
         "//shims/absl_py/testing:absltest",
         "//shims/torch:pytorch",

@@ -40,6 +40,7 @@ from torch_tpu._internal import pallas
 from torch_tpu._internal.utils import test_utils as utils
 from torch_tpu._internal.distributed import multiprocessing
 from tests import error_testing as et
+from tests.distributed import continuous_test_utils
 from tests.distributed import distributed_utils
 
 
@@ -394,7 +395,6 @@ def run_gather_output_on_non_root() -> None:
 
 def run_collective_validation_errors() -> None:
   """Runs synchronous collective input validation error checks."""
-  dist.init_process_group(backend="tpu_dist")
   run_all_reduce_error()
   run_all_gather_tensor_wrong_number_output_dimensions()
   run_all_gather_tensor_wrong_concat_dimension()
@@ -417,7 +417,6 @@ def run_collective_validation_errors() -> None:
 
 def run_conflicting_device_assignments_error() -> None:
   """Tests that compatible tiled subgroups fuse cleanly while conflicting device assignments fail."""
-  dist.init_process_group("tpu")
   rank = dist.get_rank()
   world_size = dist.get_world_size()
   half = world_size // 2
@@ -612,20 +611,17 @@ def _remove_node_local_store_file() -> None:
     pass
 
 
-class CollectiveErrorsTest(et.TpuOnlyDistributedErrorTestBase):
-  _world_size = 8
+class CollectiveErrorsTest(
+    continuous_test_utils.TpuMultiProcContinuousTest,
+    et.TpuOnlyDistributedErrorTestBase,
+):
+  world_size = 8
 
   def test_collective_validation_errors(self):
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=run_collective_validation_errors,
-    )
+    run_collective_validation_errors()
 
   def test_conflicting_device_assignments_error(self):
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=run_conflicting_device_assignments_error,
-    )
+    run_conflicting_device_assignments_error()
 
 
 class ProcessGroupTpuErrorsTest(et.TpuOnlyDistributedErrorTestBase):
