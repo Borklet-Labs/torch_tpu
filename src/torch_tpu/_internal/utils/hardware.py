@@ -285,6 +285,7 @@ TpuSpec.V8T = TpuSpec(
 
 # The `TpuSpec` of each TPU PCI device ID. Verified IDs from
 # util/platforminfo/pci_ids.h.
+# Keep in sync with `kTpuPciDeviceIds` in torch_tpu/csrc/common/tpu_hardware.cc.
 _TPU_SPEC_BY_PCI_DEVICE_ID: Final[Mapping[str, TpuSpec]] = (
     immutabledict.immutabledict({
         "0x0062": TpuSpec.V5P,
@@ -368,6 +369,9 @@ def get_hbm_bytes_per_device() -> int | None:
 
 def _scan_pci_tpus() -> tuple[int, TpuSpec | None]:
   """Scans PCI bus for TPU devices.
+
+  The device count logic is mirrored in C++ by `CountTpuDevicesViaSysfs()` in
+  torch_tpu/csrc/common/tpu_hardware.cc; keep the two in sync.
 
   Returns:
     A tuple of (count, tpu_spec). `count` is the number of TPU devices exposed

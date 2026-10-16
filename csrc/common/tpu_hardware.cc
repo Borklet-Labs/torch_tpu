@@ -1,0 +1,308 @@
+/*
+ * Copyright 2026 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+#include "csrc/common/tpu_hardware.h"
+
+#include <dirent.h>
+#include <limits.h>
+#include <sys/stat.h>
+#include <sys/sysmacros.h>
+#include <unistd.h>
+
+#include <cerrno>
+#include <cstddef>
+#include <cstring>
+#include <fstream>
+#include <memory>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <vector>
+
+#include "absl/algorithm/container.h"
+#include "absl/functional/function_ref.h"
+#include "absl/status/statusor.h"
+#include "absl/strings/ascii.h"
+#include "absl/strings/match.h"
+#include "absl/strings/numbers.h"
+#include "absl/strings/str_cat.h"
+#include "csrc/common/error_utils.h"
+
+namespace torch_tpu {
+namespace {
+
+constexpr std::string_view kGooglePciVendorId = "0x1ae0";
+
+// Keep in sync with `_TPU_SPEC_BY_PCI_DEVICE_ID` in
+// torch_tpu/_internal/utils/hardware.py.
+constexpr std::string_view kTpuPciDeviceIds[] = {
+    "0x0062",  // TPU v5p
+    "0x0063",  // TPU v5e
+    "0x006f",  // TPU v6e
+    "0x0076",  // TPU v7
+    "0x007c",  // TPU v8t
+    "0x0083",  // TPU v8i
+};
+
+// Returns the whitespace-stripped contents of the first line of `path`, or
+// std::nullopt if it cannot be read.
+[[nodiscard]] std::optional<std::string> ReadFirstLine(
+    const std::string& path) {
+  std::ifstream file(path);
+  std::string line;
+  if (!std::getline(file, line)) {
+    return std::nullopt;
+  }
+  return std::string(absl::StripAsciiWhitespace(line));
+}
+
+// Returns true if `device_id` (e.g. "0x0063", as read from a PCI device's
+// sysfs `device` file) is the PCI device ID of a supported TPU generation.
+[[nodiscard]] bool IsTpuPciDeviceId(std::string_view device_id) {
+  for (const std::string_view id : kTpuPciDeviceIds) {
+    if (id == device_id) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Returns true if the PCI device at `device_dir` is in an IOMMU group that is
+// exposed under `vfio_dir`.
+[[nodiscard]] bool IsExposedViaVfio(std::string_view device_dir,
+                                    std::string_view vfio_dir) {
+  char link_target[PATH_MAX];
+  const std::string link_path = absl::StrCat(device_dir, "/iommu_group");
+  const ssize_t len =
+      readlink(link_path.c_str(), link_target, sizeof(link_target) - 1);
+  if (len <= 0) {
+    return false;
+  }
+  const std::string_view target(link_target, len);
+  const size_t last_slash = target.rfind('/');
+  const std::string_view group_id = last_slash == std::string_view::npos
+                                        ? target
+                                        : target.substr(last_slash + 1);
+  if (group_id.empty()) {
+    return false;
+  }
+  struct stat st;
+  return stat(absl::StrCat(vfio_dir, "/", group_id).c_str(), &st) == 0;
+}
+
+// Returns true if the PCI device at `device_dir` is a TPU of a supported
+// generation that is exposed via VFIO under `vfio_dir`. Some devices have
+// multiple TensorCores sharing the same bus; only those exposed via VFIO count.
+[[nodiscard]] bool IsVfioExposedTpuDevice(std::string_view device_dir,
+                                          std::string_view vfio_dir) {
+  if (ReadFirstLine(absl::StrCat(device_dir, "/vendor")) !=
+      kGooglePciVendorId) {
+    return false;
+  }
+  const std::optional<std::string> device_id =
+      ReadFirstLine(absl::StrCat(device_dir, "/device"));
+  return device_id.has_value() && IsTpuPciDeviceId(*device_id) &&
+         IsExposedViaVfio(device_dir, vfio_dir);
+}
+
+// The result of listing a directory.
+enum class DirListing { kListed, kMissing, kUnlistable };
+
+// Calls `visit` with the name of each entry of `dir`. Returns whether `dir`
+// was listed, does not exist, or exists but cannot be (fully) listed.
+[[nodiscard]] DirListing ForEachDirEntry(
+    std::string_view dir, absl::FunctionRef<void(std::string_view)> visit) {
+  const std::unique_ptr<DIR, decltype(&closedir)> d(
+      opendir(std::string(dir).c_str()), &closedir);
+  if (d == nullptr) {
+    return errno == ENOENT || errno == ENOTDIR ? DirListing::kMissing
+                                               : DirListing::kUnlistable;
+  }
+  while (true) {
+    // readdir() returns nullptr both at the end and on error; only the latter
+    // sets errno.
+    errno = 0;
+    const dirent* const entry = readdir(d.get());
+    if (entry == nullptr) {
+      return errno == 0 ? DirListing::kListed : DirListing::kUnlistable;
+    }
+    visit(entry->d_name);
+  }
+}
+
+// Returns the character device majors registered in `proc_devices`, which has
+// the format of /proc/devices, or std::nullopt if it cannot be read.
+[[nodiscard]] std::optional<std::vector<int>> ReadCharDeviceMajors(
+    std::string_view proc_devices) {
+  std::ifstream file{std::string(proc_devices)};
+  if (!file.is_open()) {
+    return std::nullopt;
+  }
+  std::vector<int> majors;
+  bool in_char_section = false;
+  std::string line;
+  while (std::getline(file, line)) {
+    const std::string_view stripped = absl::StripAsciiWhitespace(line);
+    if (stripped == "Character devices:") {
+      in_char_section = true;
+      continue;
+    }
+    // A blank line or another section header ("Block devices:") ends it.
+    if (stripped.empty() || absl::EndsWith(stripped, ":")) {
+      in_char_section = false;
+      continue;
+    }
+    int major_number;
+    if (in_char_section &&
+        absl::SimpleAtoi(stripped.substr(0, stripped.find(' ')),
+                         &major_number)) {
+      majors.push_back(major_number);
+    }
+  }
+  if (file.bad()) {
+    return std::nullopt;
+  }
+  return majors;
+}
+
+// Returns true if `name` is the name of a VFIO group node, e.g. "12".
+[[nodiscard]] bool IsVfioGroupNodeName(std::string_view name) {
+  return !name.empty() && absl::c_all_of(name, absl::ascii_isdigit);
+}
+
+// Returns true if `name` is the name of an accel node, e.g. "accel0".
+[[nodiscard]] bool IsAccelNodeName(std::string_view name) {
+  return absl::StartsWith(name, "accel");
+}
+
+// Returns true if `name` is the name of a real directory entry, i.e. neither
+// "." nor "..".
+[[nodiscard]] bool IsRealEntryName(std::string_view name) {
+  return name != "." && name != "..";
+}
+
+// Returns whether `vfio_dir` may hold a node through which libtpu could reach
+// a TPU: a VFIO group node `<vfio_dir>/<number>` (not the container node
+// `<vfio_dir>/vfio`), or any entry of `<vfio_dir>/devices`, which holds the
+// VFIO per-device (iommufd) nodes such as `vfio0`. Also returns true if either
+// directory exists but cannot be listed.
+[[nodiscard]] bool HasVfioNodes(std::string_view vfio_dir) {
+  bool has_vfio_node = false;
+  if (ForEachDirEntry(vfio_dir,
+                      [&](std::string_view name) {
+                        has_vfio_node |= IsVfioGroupNodeName(name);
+                      }) == DirListing::kUnlistable ||
+      has_vfio_node) {
+    return true;
+  }
+  return ForEachDirEntry(absl::StrCat(vfio_dir, "/devices"),
+                         [&](std::string_view name) {
+                           has_vfio_node |= IsRealEntryName(name);
+                         }) == DirListing::kUnlistable ||
+         has_vfio_node;
+}
+
+// Appends to `majors` the major of each character device in `dir` whose name
+// satisfies `is_candidate`. Returns whether `dir` was listed, does not exist,
+// or exists but cannot be (fully) listed.
+[[nodiscard]] DirListing AppendCharDeviceMajors(
+    std::string_view dir,
+    absl::FunctionRef<bool(std::string_view)> is_candidate,
+    std::vector<int>& majors) {
+  return ForEachDirEntry(dir, [&](std::string_view name) {
+    if (!is_candidate(name)) {
+      return;
+    }
+    struct stat st;
+    if (stat(absl::StrCat(dir, "/", name).c_str(), &st) == 0 &&
+        S_ISCHR(st.st_mode)) {
+      majors.push_back(static_cast<int>(major(st.st_rdev)));
+    }
+  });
+}
+
+}  // namespace
+
+absl::StatusOr<int> CountTpuDevicesViaSysfs(std::string_view pci_devices_dir,
+                                            std::string_view vfio_dir) {
+  const std::unique_ptr<DIR, decltype(&closedir)> dir(
+      opendir(std::string(pci_devices_dir).c_str()), &closedir);
+  if (dir == nullptr) {
+    const int open_errno = errno;
+    return TT_ERROR(  // ERROR_COV_INFEASIBLE=Covered by C++ tpu_hardware_test.
+               error::kUnavailable)
+           << "cannot open the PCI devices directory " << pci_devices_dir
+           << ": " << std::strerror(open_errno);
+  }
+  int count = 0;
+  while (true) {
+    // readdir() returns nullptr both at the end and on error; only the latter
+    // sets errno.
+    errno = 0;
+    const dirent* const entry = readdir(dir.get());
+    if (entry == nullptr) {
+      if (errno != 0) {
+        const int read_errno = errno;
+        return TT_ERROR(  // ERROR_COV_INFEASIBLE=Needs a failing readdir().
+                   error::kUnavailable)
+               << "cannot read the PCI devices directory " << pci_devices_dir
+               << ": " << std::strerror(read_errno);
+      }
+      break;
+    }
+    const std::string_view name = entry->d_name;
+    if (IsRealEntryName(name) &&
+        IsVfioExposedTpuDevice(absl::StrCat(pci_devices_dir, "/", name),
+                               vfio_dir)) {
+      ++count;
+    }
+  }
+  return count;
+}
+
+bool HasTpuDeviceNodes(std::string_view dev_dir, std::string_view dev_borg_dir,
+                       std::string_view proc_devices) {
+  if (HasVfioNodes(absl::StrCat(dev_dir, "/vfio"))) {
+    return true;
+  }
+
+  // Accel nodes count only if they are character devices backed by a driver,
+  // that is, whose major is registered in /proc/devices: some static /dev trees
+  // (e.g. in sandboxed build and test environments) contain hundreds of
+  // driverless /dev/accel* nodes. The kernel's compute accelerator subsystem
+  // puts its nodes in an `accel` directory instead, e.g. /dev/accel/accel0.
+  std::vector<int> accel_majors;
+  for (const std::string_view dir : {dev_dir, dev_borg_dir}) {
+    if (AppendCharDeviceMajors(dir, IsAccelNodeName, accel_majors) ==
+            DirListing::kUnlistable ||
+        AppendCharDeviceMajors(absl::StrCat(dir, "/accel"), IsRealEntryName,
+                               accel_majors) == DirListing::kUnlistable) {
+      return true;
+    }
+  }
+  if (accel_majors.empty()) {
+    return false;
+  }
+  const std::optional<std::vector<int>> registered_majors =
+      ReadCharDeviceMajors(proc_devices);
+  if (!registered_majors.has_value()) {
+    return true;
+  }
+  return absl::c_any_of(accel_majors, [&](const int accel_major) {
+    return absl::c_linear_search(*registered_majors, accel_major);
+  });
+}
+
+}  // namespace torch_tpu

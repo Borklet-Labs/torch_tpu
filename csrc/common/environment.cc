@@ -17,6 +17,7 @@
 #include "csrc/common/environment.h"
 
 #include <cstddef>
+#include <cstdlib>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -157,6 +158,24 @@ void EnsureUndefokFlag(std::string_view flag_name,
   return absl::StrJoin(flags, " ");
 }
 
+// Returns true if `libtpu_init_args` sets libtpu's
+// `--deepsea_hal_included_devicepaths` flag, to which libtpu also maps
+// TPU_VISIBLE_DEVICE_PATHS.
+[[nodiscard]] bool SetsIncludedDevicePathsFlag(
+    std::string_view libtpu_init_args) {
+  const std::vector<std::string_view> flags = absl::StrSplit(
+      libtpu_init_args, absl::ByAsciiWhitespace(), absl::SkipEmpty());
+  return absl::c_any_of(flags, [](std::string_view flag) {
+    if (!absl::ConsumePrefix(&flag, "-")) return false;
+    absl::ConsumePrefix(&flag, "-");
+    if (!absl::ConsumePrefix(&flag, "deepsea_hal_included_devicepaths")) {
+      return false;
+    }
+    // `--name value` (value in the next token) or `--name=value`.
+    return flag.empty() || (flag.front() == '=' && flag.size() > 1);
+  });
+}
+
 }  // namespace
 
 absl::Status InitializeDistributedEnvironment(
@@ -231,6 +250,24 @@ absl::Status InitializeSingleDeviceEnvironment() {
   SetEnv<kTpuVisibleDevicesEnvVar>(target_dev);
   SetEnv<kTpuVisibleChipsEnvVar>(target_dev);
   return absl::OkStatus();
+}
+
+// In OSS, libtpu is loaded dynamically, so its absl flags (such as
+// --deepsea_hal_included_devicepaths) aren't linked into this process. Read
+// the env vars that libtpu reads instead. Internally, libtpu is linked
+// statically and google/csrc/common/environment.cc reads the flag directly.
+bool HasCustomTpuDevicePaths() {
+  // Read with std::getenv() rather than GetEnvOnce<>(), which caches the value:
+  // these env vars belong to libtpu, which reads them when it initializes.
+  const char* const device_paths =
+      std::getenv(kTpuVisibleDevicePathsEnvVar);  // GETENV_OK=libtpu's env
+  if (device_paths != nullptr && device_paths[0] != '\0') {
+    return true;
+  }
+  const char* const libtpu_init_args =
+      std::getenv(kLibtpuInitArgsEnvVar);  // GETENV_OK=libtpu's env
+  return libtpu_init_args != nullptr &&
+         SetsIncludedDevicePathsFlag(libtpu_init_args);
 }
 
 }  // namespace torch_tpu

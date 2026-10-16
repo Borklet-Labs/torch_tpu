@@ -21,6 +21,7 @@ from absl.testing import parameterized
 import torch
 from torch._dynamo.device_interface import DeviceInterface
 from torch._dynamo.device_interface import get_interface_for_device
+from torch_tpu._internal import testing as tt_testing
 from torch_tpu._internal.device import _device_module
 from torch_tpu._internal.utils import annotations
 from tests.device import device_module_testing
@@ -281,6 +282,12 @@ class TpuDeviceModuleTest(
       self.assertEmpty(
           w, msg=f"Expected no warnings but got {[str(x.message) for x in w]}"
       )
+
+  def test_tpu_device_nodes_detected(self):
+    # Before the TPU runtime is initialized, the TPU device guard reports 0
+    # devices if no TPU device node is detected, assuming that initialization
+    # would fail. On a TPU host, the TPU device nodes must be detected.
+    self.assertTrue(tt_testing.has_tpu_device_nodes())
 
 
 if __name__ == "__main__":

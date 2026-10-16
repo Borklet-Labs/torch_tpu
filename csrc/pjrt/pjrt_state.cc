@@ -335,6 +335,11 @@ bool PjrtBackend::IsInitialized() const {
   return client_ != nullptr;
 }
 
+bool PjrtBackend::InitAttempted() const {
+  absl::ReaderMutexLock lock(mutex_);
+  return init_attempted_;
+}
+
 bool PjrtBackend::IsInBadFork() const {
   const BadForkChecker checker =
       bad_fork_checker_.load(std::memory_order_relaxed);

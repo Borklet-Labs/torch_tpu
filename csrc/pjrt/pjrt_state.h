@@ -86,6 +86,10 @@ class PjrtBackend {
   // Returns whether the PjRt runtime is initialized.
   [[nodiscard]] bool IsInitialized() const ABSL_LOCKS_EXCLUDED(mutex_);
 
+  // Returns whether initialization has been attempted since startup or the
+  // last Shutdown(), whether or not it succeeded. For tests.
+  [[nodiscard]] bool InitAttempted() const ABSL_LOCKS_EXCLUDED(mutex_);
+
   // Returns whether the current process is in an unsafe forked child state
   // (i.e. forked after PjRt runtime initialization occurred in the parent).
   [[nodiscard]] bool IsInBadFork() const;

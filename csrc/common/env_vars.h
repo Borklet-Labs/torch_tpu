@@ -238,6 +238,10 @@ inline constexpr char kTpuProcessPortEnvVar[] =
 // because libtpu prioritizes non-empty TPU_VISIBLE_CHIPS over
 // TPU_VISIBLE_DEVICES.
 inline constexpr char kTpuVisibleChipsEnvVar[] = "TPU_VISIBLE_CHIPS";
+// Comma-separated device paths of the TPUs that are visible to this process.
+// Read by libtpu.
+inline constexpr char kTpuVisibleDevicePathsEnvVar[] =
+    "TPU_VISIBLE_DEVICE_PATHS";
 // Specifies which TPU devices are visible to this process. Read by libtpu.
 inline constexpr char kTpuVisibleDevicesEnvVar[] = "TPU_VISIBLE_DEVICES";
 // The hostnames of every worker in a multi-host job, comma separated.
@@ -342,6 +346,7 @@ inline constexpr auto kEnvVarToStage =
         {kTpuProcessBoundsEnvVar, SymbolStage::InternalImplementation()},
         {kTpuProcessPortEnvVar, SymbolStage::InternalImplementation()},
         {kTpuVisibleChipsEnvVar, SymbolStage::InternalImplementation()},
+        {kTpuVisibleDevicePathsEnvVar, SymbolStage::InternalImplementation()},
         // Marked as Stable because it is the standard TPU runtime equivalent to
         // CUDA_VISIBLE_DEVICES that external production consumers and infra
         // rely on. The TorchTPU team is committed to honor this env var.

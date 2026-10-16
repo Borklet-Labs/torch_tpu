@@ -24,6 +24,7 @@
 #include "c10/util/Exception.h"
 #include "csrc/common/error_utils.h"
 #include "csrc/common/pybind_error_utils.h"
+#include "csrc/common/tpu_hardware.h"
 #include "csrc/common/warnings.h"
 #include "csrc/eager/device_gen_impl.h"
 #include "csrc/eager/events_queue.h"
@@ -31,6 +32,7 @@
 #include "csrc/eager/structured_log_buffer.h"
 #include "csrc/eager/tensor_to_buffer.h"
 #include "csrc/ops/python_context.h"
+#include "csrc/pjrt/pjrt_state.h"
 #include "pybind11/pybind11.h"
 #include "pybind11/stl.h"
 #include "torch/csrc/Exceptions.h"
@@ -204,6 +206,14 @@ TT_PYBIND11_MODULE(testing, m) {
         "Emits a TT_WARN warning from C++.");
   m.def("emit_tt_warn_once", &EmitTtWarnOnce, py::arg("category"),
         py::arg("msg"), "Emits a TT_WARN_ONCE warning from C++.");
+  m.def(
+      "has_tpu_device_nodes", []() -> bool { return HasTpuDeviceNodes(); },
+      "Returns whether a device node through which the TPU runtime could "
+      "reach a TPU exists at the default paths.");
+  m.def(
+      "pjrt_init_attempted",
+      []() -> bool { return PjrtBackend::GetInstance().InitAttempted(); },
+      "Returns whether PjRt runtime initialization has been attempted.");
   m.def(
       "enable_mlir_tracebacks",
       [](std::optional<bool> enabled) {

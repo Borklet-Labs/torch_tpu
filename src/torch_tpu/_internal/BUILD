@@ -68,6 +68,7 @@ pybind_extension(
     deps = [
         "//csrc/common:error_utils",
         "//csrc/common:pybind_error_utils",
+        "//csrc/common:tpu_hardware",
         "//csrc/common:warnings",
         "//csrc/eager:device_gen_impl",
         "//csrc/eager:events_queue",
@@ -75,6 +76,7 @@ pybind_extension(
         "//csrc/eager:structured_log_buffer",
         "//csrc/eager:tensor_to_buffer",
         "//csrc/ops:python_context",
+        "//csrc/pjrt:pjrt_state",
         "//shims/torch",
         "//shims/torch:aten",
         "//shims/torch:aten_headers",

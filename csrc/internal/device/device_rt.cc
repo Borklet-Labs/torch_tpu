@@ -151,15 +151,24 @@ void RegisterForkHandler() {
   torch::utils::register_fork_handler_for_device_init(at::kPrivateUse1);
 }
 
+// Runs once the TPU runtime has initialized successfully, whichever call
+// triggered the initialization.
+void OnTpuRuntimeInitialized() {
+  RegisterForkHandler();
+  CheckTpuDeviceNodesAfterInitialization();
+}
+
 void InitRuntimeOptions(const std::string& device_type) {
-  if (device_type == "tpu") {
+  const bool is_tpu = device_type == "tpu";
+  if (is_tpu) {
     TT_THROW_IF_ERROR(AddTpuHooks()) << "Failed to add TPU hooks.";
     RegisterTpuAllocator();
   }
   PjrtBackend::GetInstance().SetPjRtInitializationOptions(
       {.device_type = device_type,
        .bad_fork_checker = &CheckIsInBadFork,
-       .on_initialized_hook = &RegisterForkHandler});
+       .on_initialized_hook =
+           is_tpu ? &OnTpuRuntimeInitialized : &RegisterForkHandler});
   ABSL_LOG(INFO) << "PjRt runtime initialization deferred for " << device_type;
   CompilationCache::GetInstance().SetOptions({});
 }

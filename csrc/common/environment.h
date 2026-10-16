@@ -30,6 +30,12 @@ absl::Status InitializeDistributedEnvironment(
 // Configures the local environment for single-device execution.
 absl::Status InitializeSingleDeviceEnvironment();
 
+// Returns whether the TPU device paths that libtpu should use are configured
+// explicitly. Such paths may name device nodes outside of the default
+// locations checked by HasTpuDeviceNodes() in tpu_hardware.h. Does not
+// initialize the TPU runtime and does not cache the result.
+[[nodiscard]] bool HasCustomTpuDevicePaths();
+
 }  // namespace torch_tpu
 
 #endif  // TORCH_TPU_CSRC_COMMON_ENVIRONMENT_H_

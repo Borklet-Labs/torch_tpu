@@ -519,5 +519,48 @@ TEST(EnvironmentDeathTest,
       ExitedWithCode(0), "");
 }
 
+// Unsets the env vars read by HasCustomTpuDevicePaths().
+void ClearTpuDevicePathEnvVars() {
+  unsetenv(kTpuVisibleDevicePathsEnvVar);
+  unsetenv(kLibtpuInitArgsEnvVar);
+}
+
+TEST(HasCustomTpuDevicePathsTest, ReturnsFalseByDefault) {
+  ClearTpuDevicePathEnvVars();
+  EXPECT_FALSE(HasCustomTpuDevicePaths());
+}
+
+TEST(HasCustomTpuDevicePathsTest, DetectsTpuVisibleDevicePaths) {
+  ClearTpuDevicePathEnvVars();
+  setenv(kTpuVisibleDevicePathsEnvVar, "/dev/vfio/132", /*overwrite=*/1);
+  EXPECT_TRUE(HasCustomTpuDevicePaths());
+  setenv(kTpuVisibleDevicePathsEnvVar, "", /*overwrite=*/1);
+  EXPECT_FALSE(HasCustomTpuDevicePaths());
+  ClearTpuDevicePathEnvVars();
+}
+
+TEST(HasCustomTpuDevicePathsTest, DetectsIncludedDevicePathsFlag) {
+  ClearTpuDevicePathEnvVars();
+  for (const char* const args : {
+           "--deepsea_hal_included_devicepaths=/dev/vfio/132",
+           "--xla_foo=1 -deepsea_hal_included_devicepaths=/dev/accel0",
+           "--deepsea_hal_included_devicepaths /dev/vfio/132",
+       }) {
+    setenv(kLibtpuInitArgsEnvVar, args, /*overwrite=*/1);
+    EXPECT_TRUE(HasCustomTpuDevicePaths()) << args;
+  }
+  for (const char* const args : {
+           "",
+           "--xla_foo=1",
+           "--deepsea_hal_included_devicepaths=",
+           "--deepsea_hal_included_devs=0",
+           "--deepsea_hal_included_devicepaths_foo=1",
+       }) {
+    setenv(kLibtpuInitArgsEnvVar, args, /*overwrite=*/1);
+    EXPECT_FALSE(HasCustomTpuDevicePaths()) << args;
+  }
+  ClearTpuDevicePathEnvVars();
+}
+
 }  // namespace
 }  // namespace torch_tpu

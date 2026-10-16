@@ -54,6 +54,7 @@ torch_tpu_cc_library(
     deps = [
         "//csrc/common:error_utils",
         "//csrc/common:pybind_error_utils",
+        "//csrc/common:tpu_hardware",
         "//csrc/common:warnings",
         "//csrc/eager:device_gen_impl",
         "//csrc/eager:events_queue",
@@ -61,6 +62,7 @@ torch_tpu_cc_library(
         "//csrc/eager:structured_log_buffer",
         "//csrc/eager:tensor_to_buffer",
         "//csrc/ops:python_context",
+        "//csrc/pjrt:pjrt_state",
         "//shims/pybind11",
         "//shims/torch",
         "//shims/torch:aten",
