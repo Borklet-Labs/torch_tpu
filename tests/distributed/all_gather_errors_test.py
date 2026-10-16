@@ -14,82 +14,68 @@
 
 """Tests PyTorch collective all_gather errors on multiple TPUs."""
 
-import os
 import re
 
 from absl.testing import absltest
 import torch
 from torch import distributed as dist
-import torch.multiprocessing as mp
 from torch_tpu._internal import testing as tt_testing
 from torch_tpu._internal.distributed import multiprocessing
 from tests import error_testing as et
-from tests.distributed import distributed_utils
+from tests.distributed import continuous_test_utils
 
 
-def run_all_gather_dtype_error() -> None:
-  world_size = int(os.environ["WORLD_SIZE"])
-  input_tensor = torch.ones((1, 2), dtype=torch.float64, device="tpu")
-  output_tensors = [
-      torch.empty((1, 2), dtype=torch.int64, device="tpu")
-      for _ in range(world_size)
-  ]
-  # This message comes from native PyTorch.
-  expected_msg = re.compile("Invalid usage of tensors with different dtypes.*")
-  with et.assert_raises_message(ValueError, tpu=expected_msg):
-    dist.all_gather(output_tensors, input_tensor)
+class AllGatherErrorsTest(
+    continuous_test_utils.TpuMultiProcContinuousTest,
+    et.TpuOnlyDistributedErrorTestBase,
+):
 
+  @property
+  def world_size(self) -> int:
+    return 8
 
-def run_all_gather_wrong_num_tensors() -> None:
-  input_tensor = torch.ones((1, 2), dtype=torch.float32, device="tpu")
-  output_tensors = [torch.empty((1, 2), dtype=torch.float32, device="tpu")]
-  # This message comes from native PyTorch.
-  expected_msg = re.compile(
-      r"distributed\.all_gather\(\): expected output tensor list to have one"
-      r" tensor per process, got 1 tensor and 8 processes.*"
-  )
-  with et.assert_raises_message(RuntimeError, tpu=expected_msg):
-    dist.all_gather(output_tensors, input_tensor)
-
-
-def run_all_gather_dispatch_failure() -> None:
-  world_size = int(os.environ["WORLD_SIZE"])
-  input_tensor = torch.ones((1, 2), dtype=torch.float32, device="tpu")
-  output_tensors = [
-      torch.empty((1, 2), dtype=torch.float32, device="tpu")
-      for _ in range(world_size)
-  ]
-  tt_testing.set_op_dispatch_failure(
-      "distributed.all_gather", "forced dispatch failure"
-  )
-  try:
+  def test_all_gather_dtype_error(self) -> None:
+    input_tensor = torch.ones((1, 2), dtype=torch.float64, device="tpu")
+    output_tensors = [
+        torch.empty((1, 2), dtype=torch.int64, device="tpu")
+        for _ in range(self.world_size)
+    ]
+    # This message comes from native PyTorch.
     expected_msg = re.compile(
-        r"distributed\.all_gather\(\): forced dispatch failure.*"
+        "Invalid usage of tensors with different dtypes.*"
+    )
+    with et.assert_raises_message(ValueError, tpu=expected_msg):
+      dist.all_gather(output_tensors, input_tensor)
+
+  def test_all_gather_wrong_num_tensors(self) -> None:
+    input_tensor = torch.ones((1, 2), dtype=torch.float32, device="tpu")
+    output_tensors = [torch.empty((1, 2), dtype=torch.float32, device="tpu")]
+    # This message comes from native PyTorch.
+    expected_msg = re.compile(
+        r"distributed\.all_gather\(\): expected output tensor list to have one"
+        r" tensor per process, got 1 tensor and 8 processes.*"
     )
     with et.assert_raises_message(RuntimeError, tpu=expected_msg):
       dist.all_gather(output_tensors, input_tensor)
-  finally:
-    tt_testing.set_op_dispatch_failure("", "")
 
-
-def run_all_gather_errors() -> None:
-  dist.init_process_group(backend="tpu_dist")
-  run_all_gather_dtype_error()
-  run_all_gather_wrong_num_tensors()
-  run_all_gather_dispatch_failure()
-
-
-class AllGatherErrorsTest(et.TpuOnlyDistributedErrorTestBase):
-
-  _world_size = 8
-
-  def test_all_gather_errors(self):
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=run_all_gather_errors,
+  def test_all_gather_dispatch_failure(self) -> None:
+    input_tensor = torch.ones((1, 2), dtype=torch.float32, device="tpu")
+    output_tensors = [
+        torch.empty((1, 2), dtype=torch.float32, device="tpu")
+        for _ in range(self.world_size)
+    ]
+    tt_testing.set_op_dispatch_failure(
+        "distributed.all_gather", "forced dispatch failure"
     )
+    try:
+      expected_msg = re.compile(
+          r"distributed\.all_gather\(\): forced dispatch failure.*"
+      )
+      with et.assert_raises_message(RuntimeError, tpu=expected_msg):
+        dist.all_gather(output_tensors, input_tensor)
+    finally:
+      tt_testing.set_op_dispatch_failure("", "")
 
 
 if __name__ == "__main__":
-  mp.set_start_method("spawn")
   multiprocessing.handle_test_main(absltest.main)
