@@ -36,7 +36,6 @@
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
-#include "c10/core/DispatchKey.h"
 #include "c10/core/DispatchKeySet.h"
 #include "c10/core/GradMode.h"
 #include "c10/core/impl/LocalDispatchKeySet.h"
@@ -44,6 +43,7 @@
 #include "csrc/common/dimension_types.h"
 #include "csrc/common/dtype.h"
 #include "csrc/common/error_utils.h"
+#include "csrc/common/fake_tensor_utils.h"
 #include "csrc/common/op_name_stack.h"
 #include "csrc/common/to_string.h"
 #include "csrc/common/utils.h"
@@ -133,16 +133,6 @@ void ValidateRmsNormInputsOrThrow(const at::Tensor& input,
   } catch (const TtError& e) {
     TranslateToC10ErrorAndThrow(e);
   }
-}
-
-bool IsFakeOrFunctorchTensor(const at::Tensor& tensor) {
-  const auto include_set = c10::impl::tls_local_dispatch_key_set().included_;
-  if (include_set.has(c10::DispatchKey::FuncTorchDynamicLayerFrontMode) ||
-      include_set.has(c10::DispatchKey::FuncTorchDynamicLayerBackMode) ||
-      !tensor.has_storage()) {
-    return true;
-  }
-  return tensor.storage().data_ptr() == nullptr;
 }
 
 // Composite fallback using TORCH_API-exported ATen ops for FakeTensor

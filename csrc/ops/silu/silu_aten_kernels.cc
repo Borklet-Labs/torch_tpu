@@ -25,14 +25,13 @@
 #include "absl/log/absl_check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "c10/core/DispatchKey.h"
 #include "c10/core/GradMode.h"
 #include "c10/core/ScalarType.h"
-#include "c10/core/impl/LocalDispatchKeySet.h"
 #include "csrc/common/aten_utils.h"
 #include "csrc/common/cache_key.h"
 #include "csrc/common/dtype.h"
 #include "csrc/common/error_utils.h"
+#include "csrc/common/fake_tensor_utils.h"
 #include "csrc/common/to_string.h"
 #include "csrc/ops/binary_aten_kernels.h"
 #include "csrc/ops/macros/kernel.h"
@@ -106,19 +105,6 @@ absl::StatusOr<mlir::MlirOp> BuildSiluBackwardShlo(mlir::MlirOp grad_output_op,
                       ApplyBroadcastIfNeeded(comp_grad_output, dsilu_dx));
   mlir::MlirOp grad_input = stablehlo::Mul(bcast_grad_output, bcast_dsilu_dx);
   return stablehlo::ConvertElementType(grad_input, out_dtype);
-}
-
-bool IsFunctorchActive() {
-  const auto include_set = c10::impl::tls_local_dispatch_key_set().included_;
-  return include_set.has(c10::DispatchKey::FuncTorchDynamicLayerFrontMode) ||
-         include_set.has(c10::DispatchKey::FuncTorchDynamicLayerBackMode);
-}
-
-bool IsFakeOrFunctorchTensor(const at::Tensor& tensor) {
-  if (IsFunctorchActive() || !tensor.has_storage()) {
-    return true;
-  }
-  return tensor.storage().data_ptr() == nullptr;
 }
 
 // Matches PyTorch's `silu_backward` meta function, which builds a

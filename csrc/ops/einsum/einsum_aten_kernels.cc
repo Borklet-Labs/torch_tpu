@@ -44,13 +44,13 @@
 #include "c10/core/DispatchKeySet.h"
 #include "c10/core/SymInt.h"
 #include "c10/core/TensorImpl.h"
-#include "c10/core/impl/LocalDispatchKeySet.h"
 #include "c10/util/intrusive_ptr.h"
 #include "c10/util/string_view.h"
 #include "csrc/common/aten_utils.h"
 #include "csrc/common/dimension_types.h"
 #include "csrc/common/dtype.h"
 #include "csrc/common/error_utils.h"
+#include "csrc/common/fake_tensor_utils.h"
 #include "csrc/common/to_string.h"
 #include "csrc/eager/device_buffer.h"
 #include "csrc/eager/op_dispatcher.h"
@@ -933,13 +933,6 @@ absl::StatusOr<mlir::MlirOp> BuildEinsumShlo(
   // Step 5: Emit at most one final `Transpose` if `final_labels` differs from
   // `parsed.rhs_labels`.
   return TransposeToOutputOrder(ops[0], op_labels[0], parsed.rhs_labels);
-}
-
-bool IsFunctorchActive() {
-  const c10::DispatchKeySet include_set =
-      c10::impl::tls_local_dispatch_key_set().included_;
-  return include_set.has(c10::DispatchKey::FuncTorchDynamicLayerFrontMode) ||
-         include_set.has(c10::DispatchKey::FuncTorchDynamicLayerBackMode);
 }
 
 bool IsPythonWrapperSubclass(const at::Tensor& tensor) {

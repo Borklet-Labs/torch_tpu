@@ -849,6 +849,31 @@ torch_tpu_cc_library(
 )
 
 torch_tpu_cc_library(
+    name = "fake_tensor_utils",
+    srcs = ["fake_tensor_utils.cc"],
+    hdrs = ["fake_tensor_utils.h"],
+    deps = [
+        ":const_tensor",
+        "//shims/torch/c10/core:base_headers",
+    ],
+)
+
+torch_tpu_cc_test(
+    name = "fake_tensor_utils_test",
+    srcs = ["fake_tensor_utils_test.cc"],
+    deps = [
+        ":fake_tensor_utils",
+        "//csrc/common:oss_test_main",
+        "//shims/torch",
+        "//shims/torch:aten",
+        "//shims/torch:aten_headers",
+        "//shims/torch/c10/core:base_headers",
+        "//shims/torch/c10/util:base_headers",
+        "//shims/torch/torch/headeronly:torch_headeronly",
+    ],
+)
+
+torch_tpu_cc_library(
     name = "constexpr_map",
     hdrs = ["constexpr_map.h"],
     deps = [":utils"],

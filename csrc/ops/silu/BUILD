@@ -32,6 +32,7 @@ torch_tpu_cc_library(
         "//csrc/common:cache_key",
         "//csrc/common:dtype",
         "//csrc/common:error_utils",
+        "//csrc/common:fake_tensor_utils",
         "//csrc/common:to_string",
         "//csrc/ops:binary_aten_kernels",
         "//csrc/ops:op_builder_utils",

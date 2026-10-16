@@ -27,17 +27,16 @@
 #include "ATen/ops/repeat_interleave.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
-#include "c10/core/DispatchKey.h"
 #include "c10/core/GradMode.h"
 #include "c10/core/ScalarType.h"
 #include "c10/core/SymInt.h"
 #include "c10/core/SymIntArrayRef.h"
 #include "c10/core/WrapDimMinimal.h"
-#include "c10/core/impl/LocalDispatchKeySet.h"
 #include "csrc/common/aten_utils.h"
 #include "csrc/common/dimension_types.h"
 #include "csrc/common/dtype.h"
 #include "csrc/common/error_utils.h"
+#include "csrc/common/fake_tensor_utils.h"
 #include "csrc/common/fixed_size_span.h"
 #include "csrc/common/to_string.h"
 #include "csrc/common/utils.h"
@@ -453,28 +452,6 @@ at::Tensor DecomposeRepeatInterleaveSelfInt(
   return input.unsqueeze(resolved_dim + 1)
       .expand_symint(expand_shape)
       .reshape_symint(out_shape);
-}
-
-// Returns true if `tensor` is a `FakeTensor`, `Meta` tensor, or wrapped inside
-// a `functorch` dynamic layer (e.g., `torch.vmap`, `torch.func.grad`,
-// `make_fx`).
-//
-// Checks two conditions:
-//   1. Thread-local dispatch key set (`tls_local_dispatch_key_set`) contains
-//      `FuncTorchDynamicLayerFrontMode` or `FuncTorchDynamicLayerBackMode`,
-//      indicating that a functorch interpreter is active and must intercept
-//      primitive ATen operations rather than opaque backend kernels.
-//   2. The tensor has no underlying storage (`!tensor.has_storage()`) or a null
-//      data pointer (`tensor.storage().data_ptr() == nullptr`), which holds for
-//      `FakeTensor` and `Meta` tensors during `torch.compile` tracing.
-bool IsFakeOrFunctorchTensor(const at::Tensor& tensor) {
-  const auto include_set = c10::impl::tls_local_dispatch_key_set().included_;
-  if (include_set.has(c10::DispatchKey::FuncTorchDynamicLayerFrontMode) ||
-      include_set.has(c10::DispatchKey::FuncTorchDynamicLayerBackMode) ||
-      !tensor.has_storage()) {
-    return true;
-  }
-  return tensor.storage().data_ptr() == nullptr;
 }
 
 struct RepeatsStats {

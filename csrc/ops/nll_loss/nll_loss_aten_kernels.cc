@@ -28,14 +28,13 @@
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
-#include "c10/core/DispatchKey.h"
 #include "c10/core/GradMode.h"
-#include "c10/core/impl/LocalDispatchKeySet.h"
 #include "c10/util/Optional.h"
 #include "csrc/common/cache_key.h"
 #include "csrc/common/dimension_types.h"
 #include "csrc/common/dtype.h"
 #include "csrc/common/error_utils.h"
+#include "csrc/common/fake_tensor_utils.h"
 #include "csrc/common/to_string.h"
 #include "csrc/common/utils.h"
 #include "csrc/eager/device_buffer.h"
@@ -52,19 +51,6 @@
 
 namespace torch_tpu {
 namespace {
-
-bool IsFunctorchActive() {
-  const auto include_set = c10::impl::tls_local_dispatch_key_set().included_;
-  return include_set.has(c10::DispatchKey::FuncTorchDynamicLayerFrontMode) ||
-         include_set.has(c10::DispatchKey::FuncTorchDynamicLayerBackMode);
-}
-
-bool IsFakeOrFunctorchTensor(const at::Tensor& tensor) {
-  if (IsFunctorchActive() || !tensor.has_storage()) {
-    return true;
-  }
-  return tensor.storage().data_ptr() == nullptr;
-}
 
 absl::Status ValidateNllLossCommon(const at::Tensor& self,
                                    const at::Tensor& target,

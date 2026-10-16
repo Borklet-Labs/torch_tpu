@@ -34,13 +34,13 @@
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "c10/core/DispatchKey.h"
-#include "c10/core/impl/LocalDispatchKeySet.h"
 #include "c10/util/intrusive_ptr.h"
 #include "csrc/common/aten_utils.h"
 #include "csrc/common/cache_key.h"
 #include "csrc/common/dimension_types.h"
 #include "csrc/common/dtype.h"
 #include "csrc/common/error_utils.h"
+#include "csrc/common/fake_tensor_utils.h"
 #include "csrc/common/fixed_size_span.h"
 #include "csrc/common/to_string.h"
 #include "csrc/eager/device_buffer.h"
@@ -397,12 +397,6 @@ absl::StatusOr<std::array<DeviceBufferRef, 3>> LinearBackward(
        .out_dims_list =
            FixedSizeSpan<const absl::Span<const int64_t>, 3>(out_dims_list),
        .op_param_cache_keys = std::move(param_keys)});
-}
-
-bool IsFunctorchActive() {
-  const auto include_set = c10::impl::tls_local_dispatch_key_set().included_;
-  return include_set.has(c10::DispatchKey::FuncTorchDynamicLayerFrontMode) ||
-         include_set.has(c10::DispatchKey::FuncTorchDynamicLayerBackMode);
 }
 
 // Returns true if `tensor` is a Meta tensor or a `FakeTensor` (whose
