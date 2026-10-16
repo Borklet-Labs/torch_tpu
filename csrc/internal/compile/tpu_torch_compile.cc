@@ -1660,7 +1660,7 @@ class FxOutputReconstructor {
   // Enables pickle serialization (`__reduce__`) for compiled artifact caching.
   py::tuple Reduce() const {
     py::object cls =
-        py::module_::import("torch_tpu._internal.compile.tpu_torch_compile")
+        PyBindModule::Import("torch_tpu._internal.compile.tpu_torch_compile")
             .attr("FxOutputReconstructor");
     return py::make_tuple(
         cls, py::make_tuple(output_map_py_, expected_layouts_py_, spec_py_,
