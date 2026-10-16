@@ -1026,8 +1026,7 @@ class _TpuDeviceProperties:
   .. warning::
       This API is experimental and subject to change in future releases.
 
-  ``name`` is the name of the TPU generation, as returned by
-  ``torch.tpu.get_device_name()``.
+  ``name`` is the human-readable name of the TPU generation, e.g. "TPU v7".
   ``devices_per_chip`` is the number of PyTorch devices per physical TPU chip.
   ``hbm_bytes_per_chip`` and ``hbm_bytes_per_device`` are the physical HBM
   capacity per chip and visible to a single device, in bytes.
@@ -1137,16 +1136,21 @@ class TpuDeviceModule(_DeviceModule):
   _device_type: Final[str] = "tpu"  # pyrefly: ignore[bad-override]
 
   @classmethod
-  @experimental(
-      "get_device_name() is experimental and subject to change without notice."
+  @annotations.deprecated(
+      version="0.2.1",
+      reason=(
+          "Use torch.tpu.get_device_properties().name instead, which mirrors"
+          " torch.cuda.get_device_properties().name."
+      ),
   )
   def get_device_name(
       cls, device: int | str | torch.device | None = None
   ) -> str | None:
     """Human-readable name of the attached TPU, e.g. "TPU v7".
 
-    .. warning::
-        This API is experimental and subject to change in future releases.
+    Deprecated: use ``torch.tpu.get_device_properties().name`` instead, which
+    raises a RuntimeError rather than returning None if no TPU generation that
+    TorchTPU supports is attached.
 
     Identifies the TPU from its PCI device ID, so it doesn't initialize the TPU
     runtime.

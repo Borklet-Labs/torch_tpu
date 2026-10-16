@@ -62,7 +62,10 @@ from tests.distributed import distributed_utils
 _SKIP_P2P_ON_TPU_V7_REASON = (
     "P2P send/recv aborts in libtpu on TPU v7 (b/540414751)."
 )
-_IS_TPU_V7 = torch.tpu.get_device_name() == "TPU v7"
+try:
+  _IS_TPU_V7 = torch.tpu.get_device_properties().name == "TPU v7"
+except RuntimeError:  # No TPU generation that TorchTPU supports is attached.
+  _IS_TPU_V7 = False
 
 
 def _test_wrapper(

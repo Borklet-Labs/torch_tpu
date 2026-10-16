@@ -376,7 +376,7 @@ class DeprecatedFunctionsTest(seed_test_utils.RepeatableTest):
       (
           "get_tpu_device_name",
           hardware.get_tpu_device_name,
-          "torch.tpu.get_device_name()",
+          "torch.tpu.get_device_properties().name",
       ),
       (
           "get_tpu_topology",

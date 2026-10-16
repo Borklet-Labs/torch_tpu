@@ -144,7 +144,7 @@ class TpuSpec:
 
   Attributes:
     name: Human-readable name of the generation, as returned by
-      `torch.tpu.get_device_name()`.
+      `torch.tpu.get_device_properties().name`.
     devices_per_chip: Number of separately-addressable devices the chip exposes
       to the runtime, used as the divisor that turns a per-chip quantity into
       what one device sees. This is megacore-aware (not the physical TensorCore
@@ -326,14 +326,16 @@ def get_tpu_spec() -> TpuSpec | None:
 
 
 @annotations.deprecated(
-    version="0.2.1", reason="Use torch.tpu.get_device_name() instead."
+    version="0.2.1",
+    reason="Use torch.tpu.get_device_properties().name instead.",
 )
 def get_tpu_device_name() -> str:
   """Returns a human-readable name for the attached TPU device.
 
-  Deprecated: code outside TorchTPU should call `torch.tpu.get_device_name()`
-  instead, which returns None rather than "TPU" if no TPU generation that
-  TorchTPU supports is attached.
+  Deprecated: code outside TorchTPU should use
+  `torch.tpu.get_device_properties().name` instead, which raises a RuntimeError
+  rather than returning "TPU" if no TPU generation that TorchTPU supports is
+  attached.
 
   Like `get_tpu_spec()`, does not initialize any TPU runtime.
 

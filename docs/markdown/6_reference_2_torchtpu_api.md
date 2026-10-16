@@ -41,7 +41,7 @@ generic equivalent.
 | `torch.cuda.current_device()` | `torch.accelerator.current_device_index()` | Returns the active TPU device index. |
 | `torch.cuda.set_device(rank)` | `torch.accelerator.set_device_index(rank)` | Sets the active TPU device index for the current process. |
 | `torch.cuda.device(rank)` | `torch.accelerator.device_index(rank)` | Context manager that temporarily sets the active device index. |
-| `torch.cuda.get_device_name(device=None)` | `torch.tpu.get_device_name(device=None)` | Returns the human-readable model name of the attached TPU (e.g., `"TPU v6e"`). |
+| `torch.cuda.get_device_name(device=None)` | `torch.tpu.get_device_properties(device=None).name` | Returns the human-readable model name of the attached TPU (e.g., `"TPU v6e"`). |
 | `torch.cuda.get_device_properties(device=None)` | `torch.tpu.get_device_properties(device=None)` | Returns static TPU device properties (including `name`, `devices_per_chip`, `hbm_bytes_per_chip`, `hbm_bytes_per_device`, `bf16_flops_per_chip`, `bf16_flops_per_device`, `sparse_cores_per_device`, and `sparse_core_simd_width`). |
 <!-- mdformat on -->
 
@@ -64,7 +64,10 @@ print(
     "torch.accelerator.current_device_index():"
     f" {torch.accelerator.current_device_index()}"
 )
-print(f"torch.tpu.get_device_name(): {torch.tpu.get_device_name()}")
+print(
+    "torch.tpu.get_device_properties().name:"
+    f" {torch.tpu.get_device_properties().name}"
+)
 ```
 
 ## **Random Number Generation (RNG)**

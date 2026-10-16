@@ -55,6 +55,21 @@ class NoTpuDeviceModuleTest(
     with mock.patch.object(hardware, "get_tpu_spec", return_value=tpu_spec):
       self.assertEqual(torch.tpu.get_device_name(), tpu_spec.name)
 
+  def test_get_device_name_is_deprecated(self):
+    # Reset the one-time warning flag, which other tests may have set.
+    wrapper = torch.tpu.get_device_name.__func__
+    wrapper.__closure__[
+        wrapper.__code__.co_freevars.index("_warned")
+    ].cell_contents = False
+    with self.assertWarnsRegex(
+        DeprecationWarning,
+        r"^<TorchTpu/ApiStage/DeprecatedApi/> get_device_name is deprecated as"
+        r" of TorchTPU 0\.2\.1 and will be removed in a future release: Use"
+        r" torch\.tpu\.get_device_properties\(\)\.name instead, which mirrors"
+        r" torch\.cuda\.get_device_properties\(\)\.name\.$",
+    ):
+      torch.tpu.get_device_name()
+
   def test_get_device_properties_raises_when_tpu_unrecognized(self):
     with self.assertRaisesWithLiteralMatch(  # ASSERT_RAISES_OK=Needs a host without a recognized TPU.
         RuntimeError,

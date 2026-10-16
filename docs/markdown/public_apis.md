@@ -131,7 +131,6 @@ process. Use it at your own risk. Using it triggers a one-time warning.
 *   `torch.tpu.eager_mode` (setter)
 *   `torch.tpu.get_amp_supported_dtype`
 *   `torch.tpu.get_device_layout_if_materialized`
-*   `torch.tpu.get_device_name`
 *   `torch.tpu.get_device_properties`
 *   `torch.tpu.get_device_properties.bf16_flops_per_chip`
 *   `torch.tpu.get_device_properties.bf16_flops_per_device`
@@ -243,6 +242,7 @@ PyTorch deprecation policy instead.
 
 *   `torch.accelerator.current_device_idx` (deprecated by PyTorch)
 *   `torch.accelerator.set_device_idx` (deprecated by PyTorch)
+*   `torch.tpu.get_device_name` (deprecated in TorchTPU 0.2.1)
 *   `torch.tpu.get_device_properties.multi_processor_count` (getter) (deprecated
     in TorchTPU 0.2.1)
 *   `torch.tpu.get_device_properties.total_memory` (getter) (deprecated in
