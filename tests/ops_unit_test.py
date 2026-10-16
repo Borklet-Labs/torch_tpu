@@ -4884,6 +4884,177 @@ class OpsUnitTest(TorchTpuVsCpuTestBase):
         )
         self.assert_close(golden_result=res_cpu, torch_tpu_result=res_tpu.cpu())
 
+  def test_upsample_bilinear2d_aa_precision_and_large_dim_fallback(self):
+    tpu_device = torch.device("tpu")
+    x_cpu = torch.randn(2, 3, 8, 8, dtype=torch.float32)
+    x_tpu = x_cpu.to(tpu_device)
+    out_cpu = torch.ops.aten._upsample_bilinear2d_aa(
+        x_cpu, [16, 16], False, None, None
+    )
+
+    out_default_tpu = torch.ops.aten._upsample_bilinear2d_aa(
+        x_tpu, [16, 16], False, None, None
+    )
+    self.assert_close(
+        golden_result=out_cpu, torch_tpu_result=out_default_tpu.cpu()
+    )
+
+    # Downsampling with align_corners=False, align_corners=True, and explicit scales.
+    down_cpu = torch.randn(2, 3, 16, 16, dtype=torch.float32)
+    down_tpu = down_cpu.to(tpu_device)
+    for align_corners, scales_h, scales_w in (
+        (False, None, None),
+        (True, None, None),
+        (False, 7.0 / 16.0, 7.0 / 16.0),
+    ):
+      down_out_cpu = torch.ops.aten._upsample_bilinear2d_aa(
+          down_cpu, [7, 7], align_corners, scales_h, scales_w
+      )
+      down_out_tpu = torch.ops.aten._upsample_bilinear2d_aa(
+          down_tpu, [7, 7], align_corners, scales_h, scales_w
+      )
+      self.assert_close(
+          golden_result=down_out_cpu, torch_tpu_result=down_out_tpu.cpu()
+      )
+
+    # Identity fast-path (input spatial size == output spatial size).
+    id_out_cpu = torch.ops.aten._upsample_bilinear2d_aa(
+        x_cpu, [8, 8], False, None, None
+    )
+    id_out_tpu = torch.ops.aten._upsample_bilinear2d_aa(
+        x_tpu, [8, 8], False, None, None
+    )
+    self.assert_close(
+        golden_result=id_out_cpu, torch_tpu_result=id_out_tpu.cpu()
+    )
+
+    for prec in (
+        torch.tpu.Precision.DEFAULT,
+        torch.tpu.Precision.HIGH,
+        torch.tpu.Precision.HIGHEST,
+    ):
+      with torch.tpu.precision(prec):
+        out_tpu = torch.ops.aten._upsample_bilinear2d_aa(
+            x_tpu, [16, 16], False, None, None
+        )
+      tol = 2e-2 if prec == torch.tpu.Precision.DEFAULT else 1e-4
+      self.assert_close(
+          golden_result=out_cpu,
+          torch_tpu_result=out_tpu.cpu(),
+          atol=tol,
+          rtol=tol,
+      )
+
+    # Spatial dimension > 4096 exercises the 1D Gather fallback path.
+    for shape, out_size in (
+        ((1, 1, 2, 4097), [4, 2048]),
+        ((1, 1, 4097, 2), [2048, 4]),
+    ):
+      large_cpu = torch.randn(*shape, dtype=torch.float32)
+      large_tpu = large_cpu.to(tpu_device)
+      large_out_cpu = torch.ops.aten._upsample_bilinear2d_aa(
+          large_cpu, out_size, False, None, None
+      )
+      large_out_tpu = torch.ops.aten._upsample_bilinear2d_aa(
+          large_tpu, out_size, False, None, None
+      )
+      self.assert_close(
+          golden_result=large_out_cpu, torch_tpu_result=large_out_tpu.cpu()
+      )
+
+    # Adversarial spatial shapes: 1x1 inputs/outputs, prime dimensions,
+    # extreme downsampling (support > input size), and asymmetric H/W scaling.
+    for in_shape, out_size in (
+        ((1, 2, 1, 1), [1, 1]),
+        ((1, 2, 1, 1), [4, 4]),
+        ((1, 2, 4, 4), [1, 1]),
+        ((2, 3, 13, 17), [7, 11]),
+        ((2, 3, 7, 11), [13, 17]),
+        ((1, 2, 64, 64), [2, 2]),
+        ((1, 2, 8, 32), [24, 6]),
+    ):
+      adv_cpu = torch.randn(*in_shape, dtype=torch.float32)
+      adv_tpu = adv_cpu.to(tpu_device)
+      for align_corners in (False, True):
+        adv_out_cpu = torch.ops.aten._upsample_bilinear2d_aa(
+            adv_cpu, out_size, align_corners, None, None
+        )
+        adv_out_tpu = torch.ops.aten._upsample_bilinear2d_aa(
+            adv_tpu, out_size, align_corners, None, None
+        )
+        self.assert_close(
+            golden_result=adv_out_cpu, torch_tpu_result=adv_out_tpu.cpu()
+        )
+
+    # Zero-batch empty tensor.
+    empty_cpu = torch.empty(0, 3, 8, 8, dtype=torch.float32)
+    empty_tpu = empty_cpu.to(tpu_device)
+    empty_out_cpu = torch.ops.aten._upsample_bilinear2d_aa(
+        empty_cpu, [4, 4], False, None, None
+    )
+    empty_out_tpu = torch.ops.aten._upsample_bilinear2d_aa(
+        empty_tpu, [4, 4], False, None, None
+    )
+    self.assertEqual(empty_out_tpu.shape, empty_out_cpu.shape)
+    self.assert_close(
+        golden_result=empty_out_cpu, torch_tpu_result=empty_out_tpu.cpu()
+    )
+
+    # Non-contiguous channels-last input.
+    cl_cpu = torch.randn(2, 3, 12, 10, dtype=torch.float32).to(
+        memory_format=torch.channels_last
+    )
+    cl_tpu = cl_cpu.to(tpu_device)
+    cl_out_cpu = torch.ops.aten._upsample_bilinear2d_aa(
+        cl_cpu, [6, 15], False, None, None
+    )
+    cl_out_tpu = torch.ops.aten._upsample_bilinear2d_aa(
+        cl_tpu, [6, 15], False, None, None
+    )
+    self.assert_close(
+        golden_result=cl_out_cpu, torch_tpu_result=cl_out_tpu.cpu()
+    )
+
+    # Pre-allocated out= tensor with mismatched initial shape resized in-place.
+    prealloc_cpu = torch.empty(0, dtype=torch.float32)
+    prealloc_tpu = torch.empty(0, dtype=torch.float32, device=tpu_device)
+    torch.ops.aten._upsample_bilinear2d_aa.out(
+        down_cpu, [7, 7], False, None, None, out=prealloc_cpu
+    )
+    torch.ops.aten._upsample_bilinear2d_aa.out(
+        down_tpu, [7, 7], False, None, None, out=prealloc_tpu
+    )
+    self.assertEqual(prealloc_tpu.shape, prealloc_cpu.shape)
+    self.assert_close(
+        golden_result=prealloc_cpu, torch_tpu_result=prealloc_tpu.cpu()
+    )
+
+    # Dtypes: bfloat16, float16, float32, float64.
+    for dtype, tol in (
+        (torch.bfloat16, 2e-2),
+        (torch.float16, 1e-2),
+        (torch.float32, 1e-4),
+        (torch.float64, 1e-5),
+    ):
+      dt_cpu = torch.randn(1, 2, 10, 12, dtype=dtype)
+      dt_tpu = dt_cpu.to(tpu_device)
+      cpu_in = (
+          dt_cpu.float() if dtype in (torch.bfloat16, torch.float16) else dt_cpu
+      )
+      dt_out_cpu = torch.ops.aten._upsample_bilinear2d_aa(
+          cpu_in, [5, 18], False, None, None
+      ).to(dtype)
+      dt_out_tpu = torch.ops.aten._upsample_bilinear2d_aa(
+          dt_tpu, [5, 18], False, None, None
+      )
+      self.assertEqual(dt_out_tpu.dtype, dtype)
+      self.assert_close(
+          golden_result=dt_out_cpu,
+          torch_tpu_result=dt_out_tpu.cpu(),
+          atol=tol,
+          rtol=tol,
+      )
+
   def test_bitwise_right_shift(self):
     tpu_device = torch.device("tpu")
     shift_by_int32 = torch.tensor([1, 2, 4, 5], dtype=torch.int32)

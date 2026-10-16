@@ -250,6 +250,11 @@ ACCURACY_OVERRIDES_VS_GPU = {
         torch.float16: {"rtol": 3.8e-3, "atol": 4e-3},
         torch.float32: {"rtol": 2.0e-5, "atol": 2.0e-5},
     },
+    "_upsample_bilinear2d_aa": {
+        torch.bfloat16: {"rtol": 4.7e-2, "atol": 3.7e-2},
+        torch.float16: {"rtol": 6.9e-3, "atol": 6.5e-3},
+        torch.float32: {"rtol": 1.7e-5, "atol": 2.5e-5},
+    },
     "abs": {
         torch.complex64: {"rtol": 2.0e-6, "atol": 2.0e-6},
         torch.float64: {"rtol": 4.7e-6, "atol": 1e-6},
@@ -638,6 +643,11 @@ ACCURACY_OVERRIDES_VS_GPU_COMPILED = {
         torch.bfloat16: {"rtol": 3.5e-2, "atol": 3.3e-2},
         torch.float16: {"rtol": 3.8e-3, "atol": 4e-3},
         torch.float32: {"rtol": 2.0e-5, "atol": 2.0e-5},
+    },
+    "_upsample_bilinear2d_aa": {
+        torch.bfloat16: {"rtol": 4.7e-2, "atol": 3.7e-2},
+        torch.float16: {"rtol": 6.9e-3, "atol": 6.5e-3},
+        torch.float32: {"rtol": 1.7e-5, "atol": 2.5e-5},
     },
     "abs": {
         torch.complex64: {"rtol": 2.0e-6, "atol": 2.0e-6},
@@ -3999,6 +4009,12 @@ class TestOps(op_testing.OpInfoTestBase):
   def test_upsample_bicubic2d_aa(self):
     self.do_test_op(
         "_upsample_bicubic2d_aa",
+        check_grad=False,
+    )
+
+  def test_upsample_bilinear2d_aa(self):
+    self.do_test_op(
+        "_upsample_bilinear2d_aa",
         check_grad=False,
     )
 

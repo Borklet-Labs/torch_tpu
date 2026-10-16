@@ -843,6 +843,7 @@ enum class OpName {
   kUpsampleBicubic2dAaOut,
   kUpsampleBicubic2dBackwardGradInput,
   kUpsampleBicubic2dOut,
+  kUpsampleBilinear2dAaOut,
   kUpsampleBilinear2dBackwardGradInput,
   kUpsampleBilinear2dOut,
   kUpsampleLinear1dBackwardGradInput,
@@ -2532,6 +2533,8 @@ ToString(  // NOLINT(google-readability-function-size)
       return "upsample_bicubic2d_backward.grad_input";
     case OpName::kUpsampleBicubic2dOut:
       return "upsample_bicubic2d.out";
+    case OpName::kUpsampleBilinear2dAaOut:
+      return "_upsample_bilinear2d_aa.out";
     case OpName::kUpsampleBilinear2dBackwardGradInput:
       return "upsample_bilinear2d_backward.grad_input";
     case OpName::kUpsampleBilinear2dOut:
