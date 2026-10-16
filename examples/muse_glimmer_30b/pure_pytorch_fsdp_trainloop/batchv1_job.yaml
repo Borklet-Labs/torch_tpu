@@ -20,14 +20,14 @@ spec:
   template:
     spec:
       nodeSelector:
-        cloud.google.com/gke-nodepool: torchtpu-v7x-4chip-pool  # <-NB! Update to your nodepool!
+        cloud.google.com/gke-nodepool: torchtpu-v7x-4chip-pool  # <-- NB! Update to your nodepool!
         cloud.google.com/gke-tpu-accelerator: tpu7x
         cloud.google.com/gke-tpu-topology: 2x2x1
       tolerations:
       - {effect: NoSchedule, key: "google.com/tpu", operator: Exists}
       containers:
       - name: muse-glimmer-fsdp-trainloop
-        image: us-docker.pkg.dev/ml-oss-artifacts-transient/torch-tpu-docker-container/torch-tpu:nightly
+        image: us-docker.pkg.dev/ml-oss-artifacts-published/torch-tpu-public-release-container/torch-tpu:latest
         command: ["/bin/sh", "-c"]
         args:
         - |

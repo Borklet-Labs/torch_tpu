@@ -5,14 +5,15 @@ This is a fully self-contained, without external dependencies (other than
 the full-size
 [Muse Glimmer 30B](https://huggingface.co/meta-models/Muse-Glimmer-30B) model.
 
-It runs distributed via FSDP on 4x Ironwood TPUs (i.e. 8 TensorCores).
+It runs distributed via FSDP on 4x Ironwood TPUs (i.e. 8 TensorCores), using
+torch.compile and activation checkpointing.
 
 This example is intentionally using only standard PyTorch features, ops, and
 modules like:
 
 -   nn.Linear, nn.Embedding, nn.RMSNorm
 -   F.silu, F.scaled_dot_product_attention, F.linear, etc
--   native PyTorch functional collectives
+-   native PyTorch distributed APIs (functional collectives)
 -   torch.compile
 -   torch.utils.checkpoint for activation checkpointing
 
@@ -27,34 +28,42 @@ All TPU-specific code is limited to the [launcher.py](launcher.py):
 ```python
 # This is a helpful utility that configures some environment
 # variables, necessary for correct TPU slice initialization.
+# Notably, this includes TORCH_TPU_TOPOLOGY and TORCH_TPU_SLICEBUILDER_ADDRESSES
 torch.tpu.distributed.set_tpu_launch_env(nproc_per_node=world_size)
 ```
 
 ```python
-# For TPUs, we muse use `tpu_dist` backend, instead of `nccl`.
+# For TPUs, we use `tpu_dist` backend, instead of `nccl`.
 # NOTE: in future TorchTPU versions, this will become automatic.
 torch.distributed.init_process_group("tpu_dist")
 ```
 
 ```python
 # The worker entrypoint is written to accept "tpu" or "cuda" device arg.
-# This is used only to determine torch.compile backend ("tpu" or "inductor").
+# This is used to determine the torch.compile backend ("tpu" or "inductor").
 worker.run_worker_trainloop(device="tpu")
+```
+
+Inside the per-worker code ([worker.py](worker.py)):
+
+```python
+# Select which device ("tpu" or "cuda") to initialize the model on:
+with torch.device(device):
+  m = model_fsdp.MuseGlimmer30B(config)
 ```
 
 This example is designed for simplicity and readability:
 
 -   it focuses on the LLM backbone only,
--   illustrates FSDP forward, loss backward, and optimizer step running on TPUs,
+-   illustrates FSDP forward, loss, backward, and optimizer step running on
+    TPUs,
 -   does *not* include data loading, tokenization, checkpoint loading/saving.
 
-For more details about this example, see our Muse Glimmer case study:
-
-TODO(vladbelous): link to case study, once ready.
+> [!TIP] For more details about how this example works, and our implementation
+> choices, see our
+> [Muse Glimmer case study](../../../docs/case_studies_muse_glimmer_30b_training.md)
 
 ## How to run
-
-TODO(vladbelous): review/update once the example lands in nightly
 
 The included [batchv1_job.yaml](./batchv1_job.yaml) provides a working starting
 point for running this on Kubernetes, using the standard `batch/v1.Job` API.
