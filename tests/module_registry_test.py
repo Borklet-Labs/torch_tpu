@@ -2402,6 +2402,267 @@ class ModuleRegistryTest(seed_test_utils.RepeatableTest):
     for param in model.parameters():
       self.assertEqual(param.dtype, torch.bfloat16)
 
+  def test_modernbert_dict_default_theta_and_custom_global_local_rope_theta(
+      self,
+  ):
+    raw_cfg = {
+        "model_type": "modernbert",
+        "architectures": ["ModernBertModel"],
+        "hidden_size": 64,
+        "intermediate_size": 128,
+        "num_hidden_layers": 2,
+        "num_attention_heads": 4,
+        "vocab_size": 256,
+        "pad_token_id": 0,
+        "bos_token_id": 1,
+        "eos_token_id": 2,
+        "cls_token_id": 3,
+        "sep_token_id": 4,
+    }
+    cfg = module_registry._instantiate_transformers_config_class(
+        module_registry.transformers.ModernBertConfig, raw_cfg
+    )
+    module_registry._sanitize_config(cfg)
+
+    self.assertIsInstance(cfg.rope_parameters, dict)
+    self.assertIn("full_attention", cfg.rope_parameters)
+    self.assertIn("sliding_attention", cfg.rope_parameters)
+    self.assertNotIn("rope_theta", cfg.rope_parameters)
+    self.assertNotIn("rope_type", cfg.rope_parameters)
+    self.assertEqual(
+        cfg.rope_parameters["full_attention"]["rope_theta"], 160000.0
+    )
+    self.assertEqual(
+        cfg.rope_parameters["sliding_attention"]["rope_theta"], 10000.0
+    )
+
+    model = module_registry.transformers.ModernBertModel(cfg)
+    self.assertEqual(
+        model.config.rope_parameters["full_attention"]["rope_theta"], 160000.0
+    )
+    self.assertEqual(
+        model.config.rope_parameters["sliding_attention"]["rope_theta"], 10000.0
+    )
+
+    custom_theta_cfg = {
+        **raw_cfg,
+        "global_rope_theta": 250000.0,
+        "local_rope_theta": 20000.0,
+    }
+    cfg_custom = module_registry._instantiate_transformers_config_class(
+        module_registry.transformers.ModernBertConfig, custom_theta_cfg
+    )
+    module_registry._sanitize_config(cfg_custom)
+    self.assertEqual(
+        cfg_custom.rope_parameters["full_attention"]["rope_theta"], 250000.0
+    )
+    self.assertEqual(
+        cfg_custom.rope_parameters["sliding_attention"]["rope_theta"], 20000.0
+    )
+
+  def test_nested_rope_parameters_with_scalar_top_level_rope_theta(self):
+    gemma3_cfg = module_registry._instantiate_transformers_config_class(
+        module_registry.transformers.Gemma3TextConfig,
+        {
+            "model_type": "gemma3_text",
+            "rope_theta": 500000.0,
+            "rope_parameters": {
+                "full_attention": {"type": "linear", "factor": 2.0},
+                "sliding_attention": {"type": "default"},
+            },
+        },
+    )
+    module_registry._sanitize_config(gemma3_cfg)
+    self.assertNotIn("rope_theta", gemma3_cfg.rope_parameters)
+    self.assertEqual(
+        gemma3_cfg.rope_parameters["full_attention"]["rope_type"], "linear"
+    )
+    self.assertEqual(
+        gemma3_cfg.rope_parameters["full_attention"]["rope_theta"], 500000.0
+    )
+    self.assertEqual(
+        gemma3_cfg.rope_parameters["sliding_attention"]["rope_theta"], 10000.0
+    )
+
+  def test_hybrid_rope_configs_with_empty_rope_parameters(self):
+    for cfg_cls, model_type, expected_global_theta in (
+        (module_registry.transformers.ModernBertConfig, "modernbert", 160000.0),
+        (
+            module_registry.transformers.Gemma3TextConfig,
+            "gemma3_text",
+            1000000.0,
+        ),
+    ):
+      with self.subTest(model_type=model_type):
+        cfg = module_registry._instantiate_transformers_config_class(
+            cfg_cls,
+            {"model_type": model_type, "rope_parameters": {}},
+        )
+        module_registry._sanitize_config(cfg)
+        self.assertNotIn("rope_theta", cfg.rope_parameters)
+        self.assertNotIn("rope_type", cfg.rope_parameters)
+        self.assertEqual(
+            cfg.rope_parameters["full_attention"]["rope_theta"],
+            expected_global_theta,
+        )
+        self.assertEqual(
+            cfg.rope_parameters["sliding_attention"]["rope_theta"], 10000.0
+        )
+
+  def test_hybrid_rope_configs_with_flat_rope_scaling_and_null_rope_theta(self):
+    for model_type, expected_global_theta, expected_sliding_theta in (
+        ("gemma3_text", 1000000.0, 10000.0),
+        ("olmo3", 500000.0, 500000.0),
+    ):
+      with self.subTest(model_type=model_type):
+        scaling_raw_cfg = {
+            "model_type": model_type,
+            "hidden_size": 64,
+            "intermediate_size": 128,
+            "num_hidden_layers": 2,
+            "num_attention_heads": 4,
+            "num_key_value_heads": 2,
+            "head_dim": 16,
+            "vocab_size": 128,
+            "rope_theta": None,
+            "rope_scaling": {"type": "linear", "factor": 8.0},
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+          cfg_path = pathlib.Path(tmpdir) / "config.json"
+          cfg_path.write_text(json.dumps(scaling_raw_cfg))
+          cfg = module_registry._load_and_sanitize_transformers_config(cfg_path)
+        rope_params = cfg.rope_parameters.unwrap()
+        self.assertIsInstance(rope_params, dict)
+        self.assertNotIn("rope_theta", rope_params)
+        self.assertIn("full_attention", rope_params)
+        self.assertIn("sliding_attention", rope_params)
+        self.assertEqual(rope_params["full_attention"]["rope_type"], "linear")
+        self.assertEqual(rope_params["full_attention"]["factor"], 8.0)
+        self.assertEqual(
+            rope_params["full_attention"]["rope_theta"],
+            expected_global_theta,
+        )
+        self.assertEqual(
+            rope_params["sliding_attention"]["rope_type"], "default"
+        )
+        self.assertEqual(
+            rope_params["sliding_attention"]["rope_theta"],
+            expected_sliding_theta,
+        )
+
+  def test_nested_rope_parameters_round_trip_and_wrapper_sanitize(self):
+    round_trip_cfg = module_registry._instantiate_transformers_config_class(
+        module_registry.transformers.ModernBertConfig,
+        {
+            "model_type": "modernbert",
+            "rope_parameters": {
+                "full_attention": {
+                    "rope_type": "default",
+                    "rope_theta": 200000.0,
+                },
+                "sliding_attention": {
+                    "rope_type": "default",
+                    "rope_theta": 15000.0,
+                },
+            },
+        },
+    )
+    module_registry._sanitize_config(round_trip_cfg)
+    self.assertNotIn("rope_theta", round_trip_cfg.rope_parameters)
+    self.assertEqual(
+        round_trip_cfg.rope_parameters["full_attention"]["rope_theta"], 200000.0
+    )
+    self.assertEqual(
+        round_trip_cfg.rope_parameters["sliding_attention"]["rope_theta"],
+        15000.0,
+    )
+
+    nested_wrapper = module_registry._ConfigWrapper({
+        "rope_parameters": {
+            "full_attention": {"type": "linear", "rope_theta": 160000.0},
+            "sliding_attention": {
+                "rope_type": "default",
+                "rope_theta": None,
+            },
+        },
+    })
+    module_registry._sanitize_rope_parameters(nested_wrapper)
+    nested_params = nested_wrapper.unwrap()["rope_parameters"]
+    self.assertNotIn("rope_theta", nested_params)
+    self.assertEqual(nested_params["full_attention"]["rope_type"], "linear")
+    self.assertEqual(nested_params["full_attention"]["rope_theta"], 160000.0)
+    self.assertEqual(nested_params["sliding_attention"]["rope_type"], "default")
+    self.assertNotIn("rope_theta", nested_params["sliding_attention"])
+
+  def test_nested_rope_scaling_promoted_to_rope_parameters(self):
+    nested_scaling_cfg = module_registry._instantiate_transformers_config_class(
+        module_registry.transformers.ModernBertConfig,
+        {
+            "model_type": "modernbert",
+            "rope_scaling": {
+                "full_attention": {"type": "linear", "factor": 2.0},
+                "sliding_attention": {"type": "default"},
+            },
+        },
+    )
+    module_registry._sanitize_config(nested_scaling_cfg)
+    self.assertEqual(
+        nested_scaling_cfg.rope_parameters["full_attention"]["rope_type"],
+        "linear",
+    )
+    self.assertEqual(
+        nested_scaling_cfg.rope_parameters["full_attention"]["rope_theta"],
+        160000.0,
+    )
+    self.assertEqual(
+        nested_scaling_cfg.rope_parameters["sliding_attention"]["rope_theta"],
+        10000.0,
+    )
+
+  def test_non_hybrid_rope_scaling_and_custom_converter_configs(self):
+    llama_cfg = module_registry._instantiate_transformers_config_class(
+        module_registry.transformers.LlamaConfig,
+        {
+            "model_type": "llama",
+            "rope_theta": 500000.0,
+            "rope_scaling": {"type": "linear", "factor": 2.0},
+        },
+    )
+    module_registry._sanitize_config(llama_cfg)
+    self.assertEqual(llama_cfg.rope_parameters["rope_type"], "linear")
+    self.assertEqual(llama_cfg.rope_parameters["factor"], 2.0)
+    self.assertEqual(llama_cfg.rope_parameters["rope_theta"], 500000.0)
+
+    empty_scaling_cfg = module_registry._instantiate_transformers_config_class(
+        module_registry.transformers.LlamaConfig,
+        {
+            "model_type": "llama",
+            "rope_scaling": {},
+            "rope_parameters": {
+                "rope_type": "linear",
+                "factor": 4.0,
+                "rope_theta": None,
+            },
+        },
+    )
+    module_registry._sanitize_config(empty_scaling_cfg)
+    self.assertEqual(empty_scaling_cfg.rope_parameters["rope_type"], "linear")
+    self.assertEqual(empty_scaling_cfg.rope_parameters["factor"], 4.0)
+    self.assertEqual(
+        empty_scaling_cfg.rope_parameters["rope_theta"],
+        empty_scaling_cfg.default_theta,
+    )
+
+    neox_cfg = module_registry._instantiate_transformers_config_class(
+        module_registry.transformers.GPTNeoXConfig,
+        {
+            "model_type": "gpt_neox",
+            "rotary_emb_base": 25000,
+        },
+    )
+    module_registry._sanitize_config(neox_cfg)
+    self.assertEqual(neox_cfg.rope_parameters["rope_theta"], 25000)
+
 
 if __name__ == "__main__":
   absltest.main()
