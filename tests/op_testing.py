@@ -1433,6 +1433,138 @@ def _sample_inputs_scaled_mm_rowwise(
     )
 
 
+# The hidden dim and the expert FFN dim of Qwen3-30B-A3B.
+_QWEN3_30B_A3B_DIM: Final[int] = 2048
+_QWEN3_30B_A3B_MOE_FFN_DIM: Final[int] = 768
+
+
+def _sample_inputs_scaled_grouped_mm_rowwise(
+    op_info: OpInfo,
+    device: torch.device | str,
+    dtype: torch.dtype,
+    requires_grad: bool = False,
+    **kwargs: Any,
+) -> Iterator[SampleInput]:
+  """Generates rowwise-scaled torch._scaled_grouped_mm inputs like torchao's.
+
+  Mirrors the grouped GEMMs of torchao's FP8 MoE training: the forward and the
+  input gradient multiply tokens of shape (M, K), grouped by `offs` along M,
+  with expert weights of shape (G, K, N), scaling the tokens per row and the
+  weights per expert and column. The weight gradient multiplies two 2D tensors
+  grouped by `offs` along the contraction dim, scaling each group's rows and
+  columns separately.
+
+  The Qwen3-30B-A3B samples keep the real accumulation depth K but slice N to
+  keep the golden files small.
+  """
+  del op_info, requires_grad, kwargs
+  if dtype != torch.float8_e4m3fn:
+    return
+
+  def quantize(hp: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    return _quantize_rowwise_to_float8(
+        hp, dtype, round_scales_to_power_of_2=True
+    )
+
+  def make_offs(group_sizes: Sequence[int]) -> torch.Tensor:
+    return torch.tensor(group_sizes, device=device).cumsum(0).to(torch.int32)
+
+  def make_2d_3d_sample(
+      name: str,
+      group_sizes: Sequence[int],
+      k: int,
+      n: int,
+      *,
+      use_fast_accum: bool = False,
+  ) -> SampleInput:
+    a_fp8, a_scale = quantize(torch.randn(sum(group_sizes), k, device=device))
+    # Quantizing the (G, N, K) weights along K and transposing them yields
+    # column-major (G, K, N) weights with (G, N) scales, as the GPU expects.
+    b_fp8, b_scale = quantize(
+        torch.randn(len(group_sizes), n, k, device=device) * k**-0.5
+    )
+    return SampleInput(
+        a_fp8,
+        args=(
+            b_fp8.transpose(-2, -1),
+            a_scale.squeeze(-1),
+            b_scale.squeeze(-1),
+        ),
+        kwargs={
+            "offs": make_offs(group_sizes),
+            "out_dtype": torch.bfloat16,
+            "use_fast_accum": use_fast_accum,
+        },
+        name=name,
+    )
+
+  def make_2d_2d_sample(
+      name: str,
+      group_sizes: Sequence[int],
+      m: int,
+      n: int,
+      *,
+      use_fast_accum: bool = False,
+  ) -> SampleInput:
+    # grad_w[g] = grad_out.t()[:, group g] @ x[group g, :] for each expert g.
+    k_total = sum(group_sizes)
+    a_hp = torch.randn(m, k_total, device=device)
+    b_hp = torch.randn(n, k_total, device=device) * k_total**-0.5
+    a_groups, a_scales, b_groups, b_scales = [], [], [], []
+    for a_group_hp, b_group_hp in zip(
+        a_hp.split(group_sizes, dim=1), b_hp.split(group_sizes, dim=1)
+    ):
+      a_group, a_group_scale = quantize(a_group_hp)
+      b_group, b_group_scale = quantize(b_group_hp)
+      a_groups.append(a_group)
+      a_scales.append(a_group_scale)
+      b_groups.append(b_group)
+      b_scales.append(b_group_scale)
+    return SampleInput(
+        torch.cat(a_groups, dim=1),
+        args=(
+            # Column-major (K, N), as the GPU expects.
+            torch.cat(b_groups, dim=1).t(),
+            # The scales of group g occupy [g * m, (g + 1) * m).
+            torch.cat(a_scales).squeeze(-1),
+            torch.cat(b_scales).squeeze(-1),
+        ),
+        kwargs={
+            "offs": make_offs(group_sizes),
+            "out_dtype": torch.bfloat16,
+            "use_fast_accum": use_fast_accum,
+        },
+        name=name,
+    )
+
+  # w1/w3 contract over the model dim and w2 over the expert FFN dim. Expert 2
+  # receives no tokens. Group sizes are multiples of 16 as the GPU kernels need.
+  yield make_2d_3d_sample(
+      f"qwen3_30b_a3b_k{_QWEN3_30B_A3B_DIM}",
+      (16, 32, 0, 16),
+      _QWEN3_30B_A3B_DIM,
+      32,
+  )
+  yield make_2d_3d_sample(
+      f"qwen3_30b_a3b_k{_QWEN3_30B_A3B_MOE_FFN_DIM}",
+      (32, 16, 0, 16),
+      _QWEN3_30B_A3B_MOE_FFN_DIM,
+      32,
+  )
+  yield make_2d_2d_sample("weight_grad", (64, 16, 128, 48), 32, 48)
+  # torchao's FP8 MoE training enables use_fast_accum in all grouped GEMMs.
+  yield make_2d_3d_sample(
+      f"qwen3_30b_a3b_k{_QWEN3_30B_A3B_DIM}_fast_accum",
+      (16, 32, 0, 16),
+      _QWEN3_30B_A3B_DIM,
+      32,
+      use_fast_accum=True,
+  )
+  yield make_2d_2d_sample(
+      "weight_grad_fast_accum", (64, 16, 128, 48), 32, 48, use_fast_accum=True
+  )
+
+
 def _sample_inputs_safe_softmax(
     opinfo: Any,
     device: str | torch.device,
@@ -2512,6 +2644,16 @@ _ADDITIONAL_TORCH_TPU_OPS: Final[Sequence[OpInfo]] = [
         dtypes=common_dtype._dispatch_dtypes((torch.float8_e4m3fn,)),  # pylint: disable=protected-access
         sample_inputs_func=_sample_inputs_scaled_mm_rowwise,
         supports_out=True,
+        # Quantized primitive without autograd formula.
+        supports_autograd=False,
+    ),
+    OpInfo(
+        "torch._scaled_grouped_mm",
+        variant_test_name="rowwise",
+        op=torch._scaled_grouped_mm,  # pylint: disable=protected-access
+        dtypes=common_dtype._dispatch_dtypes((torch.float8_e4m3fn,)),  # pylint: disable=protected-access
+        sample_inputs_func=_sample_inputs_scaled_grouped_mm_rowwise,
+        supports_out=False,
         # Quantized primitive without autograd formula.
         supports_autograd=False,
     ),

@@ -562,6 +562,9 @@ ACCURACY_OVERRIDES_VS_GPU = {
         torch.int8: {"atol": 3.6e-5},
         torch.uint8: {"atol": 3.6e-5},
     },
+    "torch._scaled_grouped_mm": {
+        torch.float8_e4m3fn: {"rtol": 9.4e-3, "atol": 4.7e-3},
+    },
     "torch._scaled_mm": {
         torch.float8_e4m3fn: {"rtol": 9.4e-3, "atol": 4.7e-3},
     },
@@ -3507,6 +3510,37 @@ class TestOps(op_testing.OpInfoTestBase):
         skip_if=lambda _, __, op_input: op_input.kwargs["use_fast_accum"],
         # Cover all 7 samples regardless of --max_samples_per_op_dtype.
         max_samples_per_op_dtype=7,
+    )
+
+  # Recorded on Hopper as PyTorch's CUDA rowwise _scaled_grouped_mm CUTLASS
+  # kernel (f8f8bf16_rowwise_grouped_mm) is Hopper SM90-only (rejects SM100+).
+  @op_testing.record_gpu_goldens_on(op_testing.GPU_SM90)
+  def test_scaled_grouped_mm_rowwise(self):
+    self.do_test_op(
+        "torch._scaled_grouped_mm",
+        variant_test_name="rowwise",
+        exclude_dtypes={
+            "cpu": ALL_NUMERIC_DTYPES,
+            "gpu": (
+                *UNQUANTIZED_NUMERIC_DTYPES,
+                # TODO(amainz): Enable once cl/995189060 lands rowwise scale
+                # lowering for torch._scaled_grouped_mm on TPU.
+                torch.float8_e4m3fn,
+            ),
+        },
+        check_out_variant=False,
+        check_grad=False,
+        # TODO(amainz): Bounded dynamism requires synchronized group offset,
+        # scale, and operand dimension marking.
+        check_dynamism=False,
+        # TODO(amainz): Enable compiled mode once cl/995189061 registers a TPU
+        # meta override that accepts non-col-major mat_b strides, and enable
+        # use_fast_accum samples once cl/990400735 lands.
+        skip_if=lambda _device, _variant, op_input: (
+            op_testing.is_compiled_mode() or op_input.kwargs["use_fast_accum"]
+        ),
+        # Cover all 5 samples regardless of --max_samples_per_op_dtype.
+        max_samples_per_op_dtype=5,
     )
 
   def test_scaled_mm_v2(self):
