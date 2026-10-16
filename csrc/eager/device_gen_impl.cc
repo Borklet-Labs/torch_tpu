@@ -322,9 +322,9 @@ c10::intrusive_ptr<DeviceGeneratorState> DeviceGeneratorState::clone() const {
 
 DeviceGenerators& DeviceGenerators::GetDefaultInstance() {
   // If TPU initialization failed, `deviceCount()` reports 0 devices, which
-  // would be cached below and make every generator operation (e.g. seeding in
-  // `torch.manual_seed()`) silently a no-op or fail with an unrelated error
-  // later. Surface the underlying initialization error instead.
+  // would be cached below and make every generator operation (e.g. sampling
+  // random numbers) fail with an unrelated error later. Surface the underlying
+  // initialization error instead.
   TT_THROW_IF_ERROR(PjrtBackend::GetInstance().EnsureInitialized());
   // We cannot use absl::NoDestructor here because the constructor is private.
   static auto* const kInstance = []() -> DeviceGenerators* {
@@ -759,7 +759,39 @@ at::Generator MakeDeviceGenerator(c10::DeviceIndex idx) {
   return DeviceGenerators::GetDefaultInstance().CreateGenerator(idx);
 }
 
+namespace {
+
+// Initializes the TPU so that its generators can be seeded.
+//
+// Returns the initialization error so that callers skip seeding instead of
+// raising, as a process can call `torch.manual_seed()` without ever using the
+// TPU, e.g. an HTTP client running next to a server that owns the TPU devices,
+// where initialization fails because the devices are busy. The initialization
+// error is raised once the process actually uses the TPU.
+//
+// TODO: b/572861883 - Defer seeding until the TPU is initialized, instead of
+// initializing the TPU here.
+absl::Status InitializeTpuForSeeding() {
+  const absl::Status status = PjrtBackend::GetInstance().EnsureInitialized();
+  if (PjrtBackend::GetInstance().IsInBadFork()) {
+    // Using the TPU in a forked child after the parent initialized it is a
+    // usage error, so don't skip seeding:
+    // `DeviceGenerators::GetDefaultInstance()` raises the fork error.
+    return absl::OkStatus();
+  }
+  TT_RETURN_IF_ERROR(status).SetPrepend()
+      << "skipping seeding the TPU generators because TPU initialization "
+         "failed. The error will be raised when the TPU is used: ";
+  return absl::OkStatus();
+}
+
+}  // namespace
+
 void SetManualSeed(uint64_t seed, c10::DeviceIndex idx) {
+  if (const absl::Status status = InitializeTpuForSeeding(); !status.ok()) {
+    ABSL_LOG_FIRST_N(WARNING, 1) << status;
+    return;
+  }
   auto& gen =
       DeviceGenerators::GetDefaultInstance().GetEagerDefaultGenerator(idx);
   // Ensure state write targets the specified device even if called from
@@ -769,6 +801,10 @@ void SetManualSeed(uint64_t seed, c10::DeviceIndex idx) {
 }
 
 void SetManualSeedAll(uint64_t seed) {
+  if (const absl::Status status = InitializeTpuForSeeding(); !status.ok()) {
+    ABSL_LOG_FIRST_N(WARNING, 1) << status;
+    return;
+  }
   const int num_devices = DeviceGenerators::GetDefaultInstance().num_devices();
   for (int i = 0; i < num_devices; ++i) {
     SetManualSeed(seed, i);

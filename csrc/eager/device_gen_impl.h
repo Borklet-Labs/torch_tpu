@@ -334,9 +334,15 @@ at::Generator MakeDeviceGenerator(c10::DeviceIndex idx = -1);
 
 // Sets the seed for the generator of the given device index. If idx is -1,
 // sets the seed for the generator of the current device.
+//
+// This initializes the TPU. If that fails, seeding is skipped with a warning;
+// the initialization error is raised when the TPU is used.
 void SetManualSeed(uint64_t seed, c10::DeviceIndex idx = -1);
 
 // Sets the seed for all TPU generators.
+//
+// This initializes the TPU. If that fails, seeding is skipped with a warning;
+// the initialization error is raised when the TPU is used.
 void SetManualSeedAll(uint64_t seed);
 
 }  // namespace torch_tpu
