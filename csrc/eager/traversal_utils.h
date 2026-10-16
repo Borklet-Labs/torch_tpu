@@ -24,9 +24,36 @@
 #include "absl/types/span.h"
 #include "csrc/common/cache_key.h"
 #include "csrc/eager/device_buffer.h"
+#include "csrc/eager/split_traversal.h"
 #include "csrc/eager/traversal.h"
 
 namespace torch_tpu {
+
+// Enum indicating whether automatic skinny collective offload is enabled.
+enum class SkinnySparseCoreOffload {
+  kEnabled,
+  kDisabled,
+};
+
+// Returns whether the automatic collective offload is enabled.
+// See kTorchTpuInternalSkinnyScOffloadEnvVar in env_vars.h for more details.
+SkinnySparseCoreOffload GetSkinnySparseCoreOffloadMode();
+
+// Configuration options for PrepareTraversals.
+struct PrepareTraversalsOptions {
+  // Whether to apply additional graph splitting. This can improve compile times
+  // and avoid HBM spikes from executables with many inputs and outputs.
+  GraphSplitMode graph_split_mode = GraphSplitMode::kSplitGraph;
+  // The core to pin the traversals to, or kUnpinned.
+  // If kUnpinned, the traversals may still be pinned depending on the value of
+  // skinny_sparse_core_offload_mode.
+  CorePinningMode core_pinning_mode = CorePinningMode::kUnpinned;
+  // Whether to automatically pin traversals that are singular collective ops
+  // ("skinny collectives") to the SparseCore. Ignored if CorePinningMode has
+  // an explicit pinning.
+  SkinnySparseCoreOffload skinny_sparse_core_offload_mode =
+      SkinnySparseCoreOffload::kDisabled;
+};
 
 // Given a list of nodes to execute, and a list of nodes to explicitly
 // materialize, returns a list of traversals that will do this work.
@@ -36,15 +63,14 @@ namespace torch_tpu {
 // different output.
 //
 // The number of returned traversals will depend on the OpSplitMode of the nodes
-// in the must_execute list. If there are no required splits, a single traversal
-// will be returned, potentially with multiple outputs.
+// in the must_execute list, as well as the options specified in `options`.
 //
 // The sequence of returned Traversals will be in a valid topological order and
 // will be pinned to the appropriate core as specified by `core_pinning_mode`.
 std::vector<absl_nonnull std::unique_ptr<Traversal>> PrepareTraversals(
     std::vector<SharedDeviceBufferList> must_execute,
     absl::Span<const SharedDeviceBufferList> nodes_to_materialize,
-    CorePinningMode core_pinning_mode);
+    const PrepareTraversalsOptions& options);
 
 }  // namespace torch_tpu
 

@@ -35,7 +35,6 @@
 #include "absl/base/nullability.h"
 #include "absl/base/optimization.h"
 #include "absl/base/thread_annotations.h"
-#include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/log/absl_check.h"
@@ -47,11 +46,8 @@
 #include "absl/types/span.h"
 #include "c10/core/Device.h"
 #include "c10/core/Stream.h"
-#include "csrc/common/cache_key.h"
 #include "csrc/common/compilation.h"
-#include "csrc/common/compilation_spec.h"
 #include "csrc/common/context_manager.h"
-#include "csrc/common/env_vars.h"
 #include "csrc/common/error_utils.h"
 #include "csrc/common/reroute_warnings.h"
 #include "csrc/common/shape.h"
@@ -61,14 +57,10 @@
 #include "csrc/eager/eager_mode.h"
 #include "csrc/eager/events_queue.h"
 #include "csrc/eager/execution_task.h"
-#include "csrc/eager/materialization_heuristics.h"
 #include "csrc/eager/split_traversal.h"
 #include "csrc/eager/structured_log_buffer.h"
-#include "csrc/eager/traversal.h"
 #include "csrc/eager/traversal_utils.h"
-#include "csrc/ops/op_names.h"
 #include "mlir/IR/MLIRContext.h"
-#include "tsl/profiler/lib/traceme.h"
 #include "xla/future.h"
 
 namespace torch_tpu {
@@ -82,260 +74,6 @@ struct MaterializationTask {
   c10::DeviceIndex device_index;
   c10::StreamId stream_id;
 };
-
-}  // namespace
-
-// PRECONDITION: executables must be a sequence that is compatible with the
-// arguments and composable, as they will be executed in order and the outputs
-// of an executable are the arguments to the next. The final execuatable returns
-// a complete set of outputs for each node in sequential blocks. That is, either
-// all outputs of a node appear contiguously and in the same order as in
-// results, or none of them do. Furthermore, the order of nodes must be
-// consistent between the execution and results. For example, if node A is size
-// 3, node B is size 1, and node C is size 2, then the output order must be [A0,
-// A1, A2, B1, C0, C1]. This is established by all Materialize() functions in
-// this file.
-
-namespace {
-
-// When preparing a list of Traversals into a sequence of ExecutionTasks,
-// some may fail. This struct holds the results, including the first error
-// encountered, if any.
-struct MaterializationStages {
-  std::vector<ExecutionTask> execution_tasks;
-  absl::Status first_error = absl::OkStatus();
-};
-
-// Returns the appropriate CompilationSpec for a split traversal.
-// If the global compilation mode is already FastRuntime (O2), we retain it.
-// Otherwise, if any deferred op in the traversal is an eligible convolution
-// that benefits from O2, we selectively promote it to FastRuntime.
-const CompilationSpec& GetCompilationSpecForTraversal(
-    const MaterializationSettings& materialization_settings,
-    const Traversal& traversal) {
-  const auto& compilation_specs =
-      materialization_settings.compilation_context->compilation_specs();
-  if (materialization_settings.compilation_mode !=
-      CompilationMode::kFastCompile) {
-    // Either we're already using O2, or the O2 spec is not applicable.
-    return compilation_specs.at(materialization_settings.compilation_mode);
-  }
-
-  const auto& execution_order = traversal.execution_order();
-
-  if (std::any_of(execution_order.begin(), execution_order.end(),
-                  [](const SharedDeviceBufferList& node) {
-                    const auto deferred_op = node->deferred_op();
-                    return deferred_op != nullptr &&
-                           IsFastRuntimeConvolutionCandidate(*deferred_op);
-                  })) {
-    return compilation_specs.at(CompilationMode::kFastRuntime);
-  }
-
-  return compilation_specs.at(materialization_settings.compilation_mode);
-}
-
-void SplitSingleTraversal(
-    absl_nonnull std::unique_ptr<Traversal> pre_split_traversal,
-    absl::flat_hash_set<const DeviceBufferList*>& scratch_set,
-    std::vector<absl_nonnull std::unique_ptr<Traversal>>&
-        post_split_traversals) {
-  const auto core_pinning_mode = pre_split_traversal->core_pinning_mode();
-  auto split_traversals =
-      SplitTraversal(std::move(pre_split_traversal), scratch_set);
-
-  // Retain the core pinning mode when splitting traversals.
-  if (core_pinning_mode != CorePinningMode::kUnpinned) {
-    for (auto& split_traversal : split_traversals) {
-      split_traversal->SetCorePinningMode(core_pinning_mode);
-    }
-  }
-  post_split_traversals.insert(
-      post_split_traversals.end(),
-      std::make_move_iterator(split_traversals.begin()),
-      std::make_move_iterator(split_traversals.end()));
-}
-
-bool DependsOnPlaceholder(
-    const SharedDeviceBufferList& node,
-    absl::flat_hash_map<const DeviceBufferList*, bool>& memo) {
-  if (node == nullptr) return false;
-  if (node->is_placeholder()) return true;
-  auto it = memo.find(node.get());
-  if (it != memo.end()) return it->second;
-
-  const auto deferred_op = node->deferred_op();
-  if (!deferred_op) {
-    memo[node.get()] = false;
-    return false;
-  }
-
-  memo[node.get()] = false;
-  for (const auto& input : deferred_op->inputs()) {
-    if (input.is_placeholder() ||
-        DependsOnPlaceholder(input.device_buffer_list(), memo)) {
-      memo[node.get()] = true;
-      return true;
-    }
-  }
-  return false;
-}
-
-bool OutputDependsOnPlaceholder(
-    const DeviceBufferRef& ref,
-    absl::flat_hash_map<const DeviceBufferList*, bool>& memo) {
-  if (ref.is_placeholder()) return true;
-  return DependsOnPlaceholder(ref.device_buffer_list(), memo);
-}
-
-void PruneTraversalPlaceholderOutputs(
-    absl_nonnull std::unique_ptr<Traversal> traversal,
-    absl::flat_hash_map<const DeviceBufferList*, bool>& memo,
-    std::vector<absl_nonnull std::unique_ptr<Traversal>>& clean_traversals,
-    absl::Status& first_error) {
-  std::vector<DeviceBufferRef> clean_outputs;
-  for (const auto& output : traversal->outputs()) {
-    if (!OutputDependsOnPlaceholder(output, memo)) {
-      clean_outputs.push_back(output);
-    }
-  }
-
-  if (clean_outputs.empty()) {
-    ABSL_VLOG(1) << "Skipping traversal containing only placeholder outputs";
-    return;
-  }
-
-  if (clean_outputs.size() == traversal->outputs().size()) {
-    clean_traversals.push_back(std::move(traversal));
-    return;
-  }
-
-  ABSL_VLOG(1) << "Pruning placeholder outputs from traversal: kept "
-               << clean_outputs.size() << " of " << traversal->outputs().size()
-               << " outputs";
-  absl::flat_hash_set<const DeviceBufferList* absl_nonnull> stopping_points;
-  stopping_points.reserve(traversal->arguments().size());
-  for (const DeviceBufferRef& arg : traversal->arguments()) {
-    stopping_points.insert(arg.device_buffer_list().get());
-  }
-  const auto core_pinning_mode = traversal->core_pinning_mode();
-  auto clean_traversal_or =
-      Traversal::Create(std::move(clean_outputs), stopping_points);
-  if (clean_traversal_or.ok()) {
-    if (core_pinning_mode != CorePinningMode::kUnpinned) {
-      (*clean_traversal_or)->SetCorePinningMode(core_pinning_mode);
-    }
-    clean_traversals.push_back(std::move(*clean_traversal_or));
-  } else if (first_error.ok()) {
-    first_error = clean_traversal_or.status();
-  }
-}
-
-bool HasAnyPlaceholderArgumentOrOutput(const Traversal& traversal) {
-  for (const DeviceBufferRef& arg : traversal.arguments()) {
-    if (ABSL_PREDICT_FALSE(arg.device_buffer_list()->is_placeholder())) {
-      return true;
-    }
-  }
-  for (const DeviceBufferRef& out : traversal.outputs()) {
-    if (ABSL_PREDICT_FALSE(out.device_buffer_list()->is_placeholder())) {
-      return true;
-    }
-  }
-  return false;
-}
-
-// Eager ops traced over placeholder tensors (e.g. aten::clone during
-// direct_compile) leave abandoned DeferredOps on the events queue. Drop any
-// output that transitively depends on a placeholder so the real ops sharing
-// this traversal can still materialize.
-//
-// Performance Optimization:
-//   Per-Traversal Fast Path (`HasAnyPlaceholderArgumentOrOutput`):
-//   Because placeholder buffers are leaf nodes (they have no DeferredOp), any
-//   placeholder in a traversal DAG must appear in `traversal.arguments()` or
-//   `traversal.outputs()`. Most traversals do not involve placeholders; we only
-//   construct the recursive DAG memoization map (`placeholder_memo`) and prune
-//   outputs if at least one traversal directly references a placeholder
-//   argument or output.
-std::vector<absl_nonnull std::unique_ptr<Traversal>>
-FilterPlaceholderDependentTraversals(
-    std::vector<absl_nonnull std::unique_ptr<Traversal>>&& traversals,
-    absl::Status& first_error) {
-  const bool any_has_placeholder =
-      std::any_of(traversals.begin(), traversals.end(),
-                  [](const absl_nonnull std::unique_ptr<Traversal>& traversal) {
-                    return HasAnyPlaceholderArgumentOrOutput(*traversal);
-                  });
-  if (!any_has_placeholder) {
-    return std::move(traversals);
-  }
-
-  absl::flat_hash_map<const DeviceBufferList*, bool> placeholder_memo;
-  std::vector<absl_nonnull std::unique_ptr<Traversal>> clean_traversals;
-  clean_traversals.reserve(traversals.size());
-
-  for (auto& traversal : traversals) {
-    if (!HasAnyPlaceholderArgumentOrOutput(*traversal)) {
-      clean_traversals.push_back(std::move(traversal));
-      continue;
-    }
-    PruneTraversalPlaceholderOutputs(std::move(traversal), placeholder_memo,
-                                     clean_traversals, first_error);
-  }
-  return clean_traversals;
-}
-
-// Converts a sequence of Traversals to a sequence of ExecutionTasks.
-// If graph_split_mode is kSplitGraph, then there may be more returned
-// tasks than there were original traversals; otherwise, there will be exactly
-// one ExecutionTask per traversal (provided all task creations succeed).
-MaterializationStages ApplySplitMode(
-    std::vector<absl_nonnull std::unique_ptr<Traversal>>&& traversals,
-    const MaterializationSettings& settings, mlir::MLIRContext& mlir_context) {
-  MaterializationStages result;
-  traversals = FilterPlaceholderDependentTraversals(std::move(traversals),
-                                                    result.first_error);
-
-  if (settings.graph_split_mode == GraphSplitMode::kSplitGraph) {
-    tsl::profiler::TraceMe t("SplitTraversal");
-    std::vector<absl_nonnull std::unique_ptr<Traversal>> post_split_traversals;
-    absl::flat_hash_set<const DeviceBufferList*> scratch_set;
-    for (auto& pre_split_traversal : traversals) {
-      SplitSingleTraversal(std::move(pre_split_traversal), scratch_set,
-                           post_split_traversals);
-    }
-    std::swap(traversals, post_split_traversals);
-  }
-
-  if (torch_tpu::GetBooleanEnvOnce<kTorchTpuInternalSkinnyScOffloadEnvVar>()
-          .value_or(false)) {
-    for (auto& traversal : traversals) {
-      if (traversal->core_pinning_mode() == CorePinningMode::kUnpinned &&
-          traversal->execution_order().size() == 1) {
-        auto deferred_op = traversal->execution_order()[0]->deferred_op();
-        if (deferred_op != nullptr && IsDistributedOp(deferred_op->op_name())) {
-          traversal->SetCorePinningMode(CorePinningMode::kSparseCore);
-        }
-      }
-    }
-  }
-
-  result.execution_tasks.reserve(traversals.size());
-  for (auto& split_traversal : traversals) {
-    const CompilationSpec& compilation_spec =
-        GetCompilationSpecForTraversal(settings, *split_traversal);
-    auto execution_task_or = ExecutionTask::FromTraversalWithLogging(
-        std::move(split_traversal), mlir_context, compilation_spec,
-        settings.reason);
-    if (execution_task_or.ok()) {
-      result.execution_tasks.push_back(std::move(*execution_task_or));
-    } else if (result.first_error.ok()) {
-      result.first_error = execution_task_or.status();
-    }
-  }
-  return result;
-}
 
 // Checks that all must_materialize nodes in the task have started
 // materializing. If any are not materializing, then those nodes are marked
@@ -392,30 +130,37 @@ std::vector<ExecutionTask> ProcessMaterializationTask(
   auto snapshots_to_materialize =
       PrepareSnapshotMaterializations(task.device_index, task.stream_id);
   for (auto& snapshot_to_materialize : snapshots_to_materialize) {
+    PrepareTraversalsOptions options{
+        .graph_split_mode = snapshot_to_materialize.settings.graph_split_mode,
+        .core_pinning_mode = snapshot_to_materialize.core_pinning_mode,
+        .skinny_sparse_core_offload_mode = GetSkinnySparseCoreOffloadMode(),
+    };
     auto traversals =
         PrepareTraversals(std::move(snapshot_to_materialize.must_execute),
-                          snapshot_to_materialize.must_materialize,
-                          snapshot_to_materialize.core_pinning_mode);
+                          snapshot_to_materialize.must_materialize, options);
 
-    MaterializationStages stages = ApplySplitMode(
-        std::move(traversals), snapshot_to_materialize.settings, mlir_context);
+    auto tasks_result = MakeExecutionTasks(
+        std::move(traversals), mlir_context,
+        *snapshot_to_materialize.settings.compilation_context,
+        snapshot_to_materialize.settings.compilation_mode,
+        snapshot_to_materialize.settings.reason);
 
-    if (stages.first_error.ok()) {
-      stages.first_error =
+    if (tasks_result.first_error.ok()) {
+      tasks_result.first_error =
           VerifyMustMaterialize(snapshot_to_materialize.must_materialize);
     }
 
-    if (!stages.first_error.ok()) {
-      snapshot_to_materialize.snapshot_promise.Set(stages.first_error);
+    if (!tasks_result.first_error.ok()) {
+      snapshot_to_materialize.snapshot_promise.Set(tasks_result.first_error);
     } else {
-      for (const auto& execution_task : stages.execution_tasks) {
+      for (const auto& execution_task : tasks_result.execution_tasks) {
         AppendExecutionTaskReadyFutures(execution_task,
                                         snapshot_to_materialize.futures);
       }
       if (snapshot_to_materialize.execution_task.has_value()) {
         AppendExecutionTaskReadyFutures(*snapshot_to_materialize.execution_task,
                                         snapshot_to_materialize.futures);
-        stages.execution_tasks.push_back(
+        tasks_result.execution_tasks.push_back(
             std::move(*snapshot_to_materialize.execution_task));
       }
       snapshot_to_materialize.snapshot_promise.Set(
@@ -424,12 +169,12 @@ std::vector<ExecutionTask> ProcessMaterializationTask(
     }
 
     if (flattened_execution_tasks.empty()) {
-      flattened_execution_tasks = std::move(stages.execution_tasks);
+      flattened_execution_tasks = std::move(tasks_result.execution_tasks);
     } else {
       flattened_execution_tasks.insert(
           flattened_execution_tasks.end(),
-          std::make_move_iterator(stages.execution_tasks.begin()),
-          std::make_move_iterator(stages.execution_tasks.end()));
+          std::make_move_iterator(tasks_result.execution_tasks.begin()),
+          std::make_move_iterator(tasks_result.execution_tasks.end()));
     }
   }
 

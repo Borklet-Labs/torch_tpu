@@ -30,8 +30,9 @@
 #include <vector>
 
 #include "absl/base/nullability.h"
+#include "absl/base/optimization.h"
+#include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
-#include "absl/log/absl_check.h"
 #include "absl/log/absl_log.h"
 #include "absl/log/absl_vlog_is_on.h"
 #include "absl/status/status.h"
@@ -52,6 +53,7 @@
 #include "csrc/common/to_string.h"
 #include "csrc/common/utils.h"
 #include "csrc/eager/device_buffer.h"
+#include "csrc/eager/materialization_heuristics.h"
 #include "csrc/eager/structured_log_buffer.h"
 #include "csrc/eager/traversal.h"
 #include "csrc/ops/op_names.h"
@@ -526,6 +528,32 @@ absl::StatusOr<PjRtBufferPointers> RunSequentialExecutables(
   return std::move(intermediate_results.back());
 }
 
+// Returns the appropriate CompilationSpec for a split traversal.
+// If the global compilation mode is already FastRuntime (O2), we retain it.
+// Otherwise, if any deferred op in the traversal is an eligible convolution
+// that benefits from O2, we selectively promote it to FastRuntime.
+const CompilationSpec& GetCompilationSpecForTraversal(
+    const Traversal& traversal, const CompilationContext& compilation_context,
+    const CompilationMode compilation_mode) {
+  const auto& compilation_specs = compilation_context.compilation_specs();
+  if (compilation_mode != CompilationMode::kFastCompile) {
+    // Either we're already using O2, or the O2 spec is not applicable.
+    return compilation_specs.at(compilation_mode);
+  }
+
+  const auto& execution_order = traversal.execution_order();
+
+  if (std::any_of(execution_order.begin(), execution_order.end(),
+                  [](const SharedDeviceBufferList& node) {
+                    const auto deferred_op = node->deferred_op();
+                    return deferred_op != nullptr &&
+                           IsFastRuntimeConvolutionCandidate(*deferred_op);
+                  })) {
+    return compilation_specs.at(CompilationMode::kFastRuntime);
+  }
+
+  return compilation_specs.at(compilation_mode);
+}
 }  // namespace
 
 absl::StatusOr<std::vector<SharedLoadedExecutableWithMetadata>>
@@ -691,6 +719,164 @@ absl::Status ExecutionTask::Run() {
     SetOutputNodesAsError(status);
   }
   return status;
+}
+
+namespace {
+
+bool DependsOnPlaceholder(
+    const SharedDeviceBufferList& node,
+    absl::flat_hash_map<const DeviceBufferList*, bool>& memo) {
+  if (node == nullptr) return false;
+  if (node->is_placeholder()) return true;
+  auto it = memo.find(node.get());
+  if (it != memo.end()) return it->second;
+
+  const auto deferred_op = node->deferred_op();
+  if (!deferred_op) {
+    memo[node.get()] = false;
+    return false;
+  }
+
+  memo[node.get()] = false;
+  for (const auto& input : deferred_op->inputs()) {
+    if (input.is_placeholder() ||
+        DependsOnPlaceholder(input.device_buffer_list(), memo)) {
+      memo[node.get()] = true;
+      return true;
+    }
+  }
+  return false;
+}
+
+bool OutputDependsOnPlaceholder(
+    const DeviceBufferRef& ref,
+    absl::flat_hash_map<const DeviceBufferList*, bool>& memo) {
+  if (ref.is_placeholder()) return true;
+  return DependsOnPlaceholder(ref.device_buffer_list(), memo);
+}
+
+void PruneTraversalPlaceholderOutputs(
+    absl_nonnull std::unique_ptr<Traversal> traversal,
+    absl::flat_hash_map<const DeviceBufferList*, bool>& memo,
+    std::vector<absl_nonnull std::unique_ptr<Traversal>>& clean_traversals,
+    absl::Status& first_error) {
+  std::vector<DeviceBufferRef> clean_outputs;
+  for (const auto& output : traversal->outputs()) {
+    if (!OutputDependsOnPlaceholder(output, memo)) {
+      clean_outputs.push_back(output);
+    }
+  }
+
+  if (clean_outputs.empty()) {
+    ABSL_VLOG(1) << "Skipping traversal containing only placeholder outputs";
+    return;
+  }
+
+  if (clean_outputs.size() == traversal->outputs().size()) {
+    clean_traversals.push_back(std::move(traversal));
+    return;
+  }
+
+  ABSL_VLOG(1) << "Pruning placeholder outputs from traversal: kept "
+               << clean_outputs.size() << " of " << traversal->outputs().size()
+               << " outputs";
+  absl::flat_hash_set<const DeviceBufferList* absl_nonnull> stopping_points;
+  stopping_points.reserve(traversal->arguments().size());
+  for (const DeviceBufferRef& arg : traversal->arguments()) {
+    stopping_points.insert(arg.device_buffer_list().get());
+  }
+  const auto core_pinning_mode = traversal->core_pinning_mode();
+  auto clean_traversal_or =
+      Traversal::Create(std::move(clean_outputs), stopping_points);
+  if (clean_traversal_or.ok()) {
+    if (core_pinning_mode != CorePinningMode::kUnpinned) {
+      (*clean_traversal_or)->SetCorePinningMode(core_pinning_mode);
+    }
+    clean_traversals.push_back(std::move(*clean_traversal_or));
+  } else if (first_error.ok()) {
+    first_error = clean_traversal_or.status();
+  }
+}
+
+bool HasAnyPlaceholderArgumentOrOutput(const Traversal& traversal) {
+  for (const DeviceBufferRef& arg : traversal.arguments()) {
+    if (ABSL_PREDICT_FALSE(arg.device_buffer_list()->is_placeholder())) {
+      return true;
+    }
+  }
+  for (const DeviceBufferRef& out : traversal.outputs()) {
+    if (ABSL_PREDICT_FALSE(out.device_buffer_list()->is_placeholder())) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Eager ops traced over placeholder tensors (e.g. aten::clone during
+// direct_compile) leave abandoned DeferredOps on the events queue. Drop any
+// output that transitively depends on a placeholder so the real ops sharing
+// this traversal can still materialize.
+//
+// Performance Optimization:
+//   Per-Traversal Fast Path (`HasAnyPlaceholderArgumentOrOutput`):
+//   Because placeholder buffers are leaf nodes (they have no DeferredOp), any
+//   placeholder in a traversal DAG must appear in `traversal.arguments()` or
+//   `traversal.outputs()`. Most traversals do not involve placeholders; we only
+//   construct the recursive DAG memoization map (`placeholder_memo`) and prune
+//   outputs if at least one traversal directly references a placeholder
+//   argument or output.
+std::vector<absl_nonnull std::unique_ptr<Traversal>>
+FilterPlaceholderDependentTraversals(
+    std::vector<absl_nonnull std::unique_ptr<Traversal>>&& traversals,
+    absl::Status& first_error) {
+  const bool any_has_placeholder =
+      std::any_of(traversals.begin(), traversals.end(),
+                  [](const absl_nonnull std::unique_ptr<Traversal>& traversal) {
+                    return HasAnyPlaceholderArgumentOrOutput(*traversal);
+                  });
+  if (!any_has_placeholder) {
+    return std::move(traversals);
+  }
+
+  absl::flat_hash_map<const DeviceBufferList*, bool> placeholder_memo;
+  std::vector<absl_nonnull std::unique_ptr<Traversal>> clean_traversals;
+  clean_traversals.reserve(traversals.size());
+
+  for (auto& traversal : traversals) {
+    if (!HasAnyPlaceholderArgumentOrOutput(*traversal)) {
+      clean_traversals.push_back(std::move(traversal));
+      continue;
+    }
+    PruneTraversalPlaceholderOutputs(std::move(traversal), placeholder_memo,
+                                     clean_traversals, first_error);
+  }
+  return clean_traversals;
+}
+
+}  // namespace
+
+MakeExecutionTasksResult MakeExecutionTasks(
+    std::vector<absl_nonnull std::unique_ptr<Traversal>>&& traversals,
+    mlir::MLIRContext& mlir_context,
+    const CompilationContext& compilation_context,
+    CompilationMode compilation_mode, MaterializationReason reason) {
+  MakeExecutionTasksResult result;
+  traversals = FilterPlaceholderDependentTraversals(std::move(traversals),
+                                                    result.first_error);
+
+  result.execution_tasks.reserve(traversals.size());
+  for (auto& split_traversal : traversals) {
+    const CompilationSpec& compilation_spec = GetCompilationSpecForTraversal(
+        *split_traversal, compilation_context, compilation_mode);
+    auto execution_task_or = ExecutionTask::FromTraversalWithLogging(
+        std::move(split_traversal), mlir_context, compilation_spec, reason);
+    if (execution_task_or.ok()) {
+      result.execution_tasks.push_back(std::move(*execution_task_or));
+    } else if (result.first_error.ok()) {
+      result.first_error = execution_task_or.status();
+    }
+  }
+  return result;
 }
 
 }  // namespace torch_tpu

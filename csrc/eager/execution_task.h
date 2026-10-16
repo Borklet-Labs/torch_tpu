@@ -129,6 +129,26 @@ class ExecutionTask {
   CompiledKernel compiled_kernel_;
 };
 
+// The result of attempting to make a batch of ExecutionTasks from a list of
+// deferred DeviceBufferLists.
+struct MakeExecutionTasksResult {
+  // All execution tasks that were successfully created.
+  // These must be executed in order.
+  std::vector<ExecutionTask> execution_tasks;
+  // If any execution task failed to be created (typically due to a failed
+  // compilation), the first error is stored here.
+  absl::Status first_error = absl::OkStatus();
+};
+
+// Converts a sequence of Traversals to a sequence of ExecutionTasks.
+// There will be one ExecutionTask per traversal, unless there are any
+// task creation failures, in which case first_error will be set.
+MakeExecutionTasksResult MakeExecutionTasks(
+    std::vector<absl_nonnull std::unique_ptr<Traversal>>&& traversals,
+    mlir::MLIRContext& mlir_context,
+    const CompilationContext& compilation_context,
+    CompilationMode compilation_mode, MaterializationReason reason);
+
 }  // namespace torch_tpu
 
 #endif  // TORCH_TPU_CSRC_EAGER_EXECUTION_TASK_H_

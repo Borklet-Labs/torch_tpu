@@ -17,6 +17,7 @@
 #include "csrc/eager/traversal_utils.h"
 
 #include <algorithm>
+#include <iterator>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -29,12 +30,14 @@
 #include "absl/log/absl_log.h"
 #include "absl/types/span.h"
 #include "csrc/common/cache_key.h"
+#include "csrc/common/env_vars.h"
 #include "csrc/eager/device_buffer.h"
+#include "csrc/eager/split_traversal.h"
 #include "csrc/eager/traversal.h"
 #include "csrc/ops/op_names.h"
+#include "tsl/profiler/lib/traceme.h"
 
 namespace torch_tpu {
-
 namespace {
 
 // Lightweight matcher for target DeviceBufferList pointers during
@@ -81,7 +84,6 @@ class NodeMatcher {
 bool PrepareSingleNodeTraversal(
     SharedDeviceBufferList& device_buffer_list,
     absl::Span<const SharedDeviceBufferList> nodes_to_materialize,
-    CorePinningMode core_pinning_mode,
     std::vector<absl_nonnull std::unique_ptr<Traversal>>& traversals) {
   const auto deferred_op = device_buffer_list->deferred_op();
   if (deferred_op == nullptr) return false;
@@ -103,9 +105,6 @@ bool PrepareSingleNodeTraversal(
       Traversal::CreateFromExecutionOrder(single_node, single_node);
   ABSL_CHECK_OK(traversal_or);  // CRASH_OK=internal logic error
   auto traversal = std::move(*traversal_or);
-  if (core_pinning_mode != CorePinningMode::kUnpinned) {
-    traversal->SetCorePinningMode(core_pinning_mode);
-  }
   traversals.push_back(std::move(traversal));
   return true;
 }
@@ -167,7 +166,6 @@ void FinishTraversal(
     std::vector<SharedDeviceBufferList>& execution_order,
     DefinedNodeMap& defined_node_map,
     std::vector<SharedDeviceBufferList>& output_nodes,
-    CorePinningMode core_pinning_mode,
     std::vector<absl_nonnull std::unique_ptr<Traversal>>& traversals) {
   if (execution_order.empty()) {
     ABSL_CHECK(defined_node_map.empty())  // CRASH_OK
@@ -209,10 +207,6 @@ void FinishTraversal(
   execution_order.clear();
   defined_node_map.clear();
   output_nodes.clear();
-  if (core_pinning_mode != CorePinningMode::kUnpinned) {
-    (*traversal_or)->SetCorePinningMode(core_pinning_mode);
-  }
-
   traversals.push_back(std::move(*traversal_or));
 }
 
@@ -288,12 +282,9 @@ void AppendMustMaterializeConstants(
   }
 }
 
-}  // namespace
-
-std::vector<absl_nonnull std::unique_ptr<Traversal>> PrepareTraversals(
+std::vector<absl_nonnull std::unique_ptr<Traversal>> PrepareInitialTraversals(
     std::vector<SharedDeviceBufferList> must_execute,
-    absl::Span<const SharedDeviceBufferList> nodes_to_materialize,
-    CorePinningMode core_pinning_mode) {
+    absl::Span<const SharedDeviceBufferList> nodes_to_materialize) {
   NodeMatcher nodes_to_materialize_set(nodes_to_materialize);
   std::vector<absl_nonnull std::unique_ptr<Traversal>> traversals;
 
@@ -303,7 +294,7 @@ std::vector<absl_nonnull std::unique_ptr<Traversal>> PrepareTraversals(
 
   if (must_execute.size() == 1 &&
       PrepareSingleNodeTraversal(must_execute[0], nodes_to_materialize,
-                                 core_pinning_mode, traversals)) {
+                                 traversals)) {
     return traversals;
   }
 
@@ -331,7 +322,7 @@ std::vector<absl_nonnull std::unique_ptr<Traversal>> PrepareTraversals(
 
     if (IsSplitBefore(split_mode)) {
       FinishTraversal(execution_order, defined_node_map, output_nodes,
-                      core_pinning_mode, traversals);
+                      traversals);
     }
 
     ProcessDeferredOpEvent(std::move(device_buffer_list), *deferred_op,
@@ -340,17 +331,85 @@ std::vector<absl_nonnull std::unique_ptr<Traversal>> PrepareTraversals(
 
     if (IsSplitAfter(split_mode)) {
       FinishTraversal(execution_order, defined_node_map, output_nodes,
-                      core_pinning_mode, traversals);
+                      traversals);
     }
   }
 
   AppendMustMaterializeConstants(nodes_to_materialize, defined_node_map,
                                  execution_order);
-  FinishTraversal(execution_order, defined_node_map, output_nodes,
-                  core_pinning_mode, traversals);
+  FinishTraversal(execution_order, defined_node_map, output_nodes, traversals);
   ABSL_VLOG(1) << "[PrepareTraversals] Created " << traversals.size()
                << " traversals to materialize " << nodes_to_materialize.size()
                << " nodes.";
   return traversals;
 }
+
+void ApplyGraphSplitMode(
+    std::vector<absl_nonnull std::unique_ptr<Traversal>>& traversals,
+    const GraphSplitMode graph_split_mode) {
+  if (graph_split_mode == GraphSplitMode::kFullGraph) {
+    return;
+  }
+  tsl::profiler::TraceMe t("SplitTraversal");
+  std::vector<absl_nonnull std::unique_ptr<Traversal>> post_split_traversals;
+  absl::flat_hash_set<const DeviceBufferList*> scratch_set;
+  for (auto& pre_split_traversal : traversals) {
+    auto split_traversals =
+        SplitTraversal(std::move(pre_split_traversal), scratch_set);
+    post_split_traversals.insert(
+        post_split_traversals.end(),
+        std::make_move_iterator(split_traversals.begin()),
+        std::make_move_iterator(split_traversals.end()));
+  }
+  std::swap(traversals, post_split_traversals);
+}
+
+void ApplyCorePinning(
+    std::vector<absl_nonnull std::unique_ptr<Traversal>>& traversals,
+    const CorePinningMode core_pinning_mode,
+    const SkinnySparseCoreOffload skinny_sparse_core_offload_mode) {
+  if (core_pinning_mode != CorePinningMode::kUnpinned) {
+    for (auto& traversal : traversals) {
+      traversal->SetCorePinningMode(core_pinning_mode);
+    }
+    return;
+  }
+  if (skinny_sparse_core_offload_mode == SkinnySparseCoreOffload::kDisabled) {
+    return;
+  }
+
+  // We have CorePinningMode::kUnpinned && SkinnySparseCoreOffload::kEnabled.
+  // Find all skinny collective traversals and pin them to the SparseCore.
+  for (auto& traversal : traversals) {
+    if (traversal->execution_order().size() == 1) {
+      auto deferred_op = traversal->execution_order()[0]->deferred_op();
+      if (deferred_op != nullptr && IsDistributedOp(deferred_op->op_name())) {
+        traversal->SetCorePinningMode(CorePinningMode::kSparseCore);
+      }
+    }
+  }
+}
+
+}  // namespace
+
+std::vector<absl_nonnull std::unique_ptr<Traversal>> PrepareTraversals(
+    std::vector<SharedDeviceBufferList> must_execute,
+    absl::Span<const SharedDeviceBufferList> nodes_to_materialize,
+    const PrepareTraversalsOptions& options) {
+  auto traversals =
+      PrepareInitialTraversals(std::move(must_execute), nodes_to_materialize);
+  ApplyGraphSplitMode(traversals, options.graph_split_mode);
+  ApplyCorePinning(traversals, options.core_pinning_mode,
+                   options.skinny_sparse_core_offload_mode);
+  return traversals;
+}
+
+SkinnySparseCoreOffload GetSkinnySparseCoreOffloadMode() {
+  if (torch_tpu::GetBooleanEnvOnce<kTorchTpuInternalSkinnyScOffloadEnvVar>()
+          .value_or(false)) {
+    return SkinnySparseCoreOffload::kEnabled;
+  }
+  return SkinnySparseCoreOffload::kDisabled;
+}
+
 }  // namespace torch_tpu

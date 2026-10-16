@@ -23,6 +23,7 @@
 #include "csrc/common/shape.h"
 #include "csrc/common/status_test_utils.h"
 #include "csrc/eager/device_buffer.h"
+#include "csrc/eager/split_traversal.h"
 #include "csrc/ops/op_builder_utils.h"
 #include "csrc/ops/op_names.h"
 #include "csrc/ops/python_context.h"
@@ -41,7 +42,7 @@ absl::StatusOr<DynamicMlirOpResults> DummyBuilder(
 }
 
 TEST(PrepareTraversalsTest, NothingToExecute) {
-  EXPECT_THAT(PrepareTraversals({}, {}, CorePinningMode::kUnpinned),
+  EXPECT_THAT(PrepareTraversals({}, {}, PrepareTraversalsOptions()),
               testing::IsEmpty());
 }
 
@@ -54,16 +55,16 @@ TEST(PrepareTraversalsTest, SingleNode) {
   auto ref_a = refs_a[0];
   auto list_a = refs_a[0].device_buffer_list();
 
-  auto actual = PrepareTraversals({list_a}, {}, CorePinningMode::kUnpinned);
+  auto actual = PrepareTraversals({list_a}, {}, PrepareTraversalsOptions());
   ASSERT_EQ(actual.size(), 1);
   EXPECT_THAT(actual[0]->execution_order(), testing::ElementsAre(list_a));
   EXPECT_THAT(actual[0]->outputs(), testing::ElementsAre(ref_a));
 }
 
-TEST(PrepareTraversalsTest, MultiNodes) {
+TEST(PrepareTraversalsTest, MultiNodesFullGraph) {
   ScopedPythonContextCapturer capturer(OpName::kEmpty);
   Shape shape(Dimensions{8}, mlir::ElementType::F32);
-  // Three ops: a -> b, c
+  // Three ops: a -> b, a -> c
   TT_ASSERT_OK_AND_ASSIGN(auto refs_a, DeviceBufferList::CreateDeferred(
                                            OpName::kAdd, DummyBuilder, {},
                                            OpParamCacheKeys::Empty(), {shape}));
@@ -75,18 +76,124 @@ TEST(PrepareTraversalsTest, MultiNodes) {
   auto ref_b = refs_b[0];
   auto list_b = refs_b[0].device_buffer_list();
   TT_ASSERT_OK_AND_ASSIGN(auto refs_c, DeviceBufferList::CreateDeferred(
-                                           OpName::kAdd, DummyBuilder, {},
+                                           OpName::kAdd, DummyBuilder, {ref_a},
                                            OpParamCacheKeys::Empty(), {shape}));
   auto ref_c = refs_c[0];
   auto list_c = refs_c[0].device_buffer_list();
 
-  auto actual = PrepareTraversals({list_a, list_b, list_c}, {},
-                                  CorePinningMode::kUnpinned);
+  auto actual = PrepareTraversals(
+      {list_a, list_b, list_c}, {},
+      PrepareTraversalsOptions{.graph_split_mode = GraphSplitMode::kFullGraph});
   // Compiles as a single traversal with multiple outputs: b and c.
+  // a is used within the traversal and is not "must materialize" so is not
+  // an output.
   ASSERT_EQ(actual.size(), 1);
   EXPECT_THAT(actual[0]->execution_order(),
               testing::ElementsAre(list_a, list_b, list_c));
   EXPECT_THAT(actual[0]->outputs(), testing::ElementsAre(ref_b, ref_c));
+}
+
+TEST(PrepareTraversalsTest, MultiNodesFullGraphWithMustMaterialize) {
+  ScopedPythonContextCapturer capturer(OpName::kEmpty);
+  Shape shape(Dimensions{8}, mlir::ElementType::F32);
+  // Three ops: a -> b, a -> c
+  TT_ASSERT_OK_AND_ASSIGN(auto refs_a, DeviceBufferList::CreateDeferred(
+                                           OpName::kAdd, DummyBuilder, {},
+                                           OpParamCacheKeys::Empty(), {shape}));
+  auto ref_a = refs_a[0];
+  auto list_a = refs_a[0].device_buffer_list();
+  TT_ASSERT_OK_AND_ASSIGN(auto refs_b, DeviceBufferList::CreateDeferred(
+                                           OpName::kAdd, DummyBuilder, {ref_a},
+                                           OpParamCacheKeys::Empty(), {shape}));
+  auto ref_b = refs_b[0];
+  auto list_b = refs_b[0].device_buffer_list();
+  TT_ASSERT_OK_AND_ASSIGN(auto refs_c, DeviceBufferList::CreateDeferred(
+                                           OpName::kAdd, DummyBuilder, {ref_a},
+                                           OpParamCacheKeys::Empty(), {shape}));
+  auto ref_c = refs_c[0];
+  auto list_c = refs_c[0].device_buffer_list();
+
+  // List a as "must_materialize"
+  auto actual = PrepareTraversals(
+      {list_a, list_b, list_c}, {list_a},
+      PrepareTraversalsOptions{.graph_split_mode = GraphSplitMode::kFullGraph});
+  // Compiles as a single traversal with multiple outputs: a, b, and c.
+  // Even though a is used within the traversal, it is also marked as
+  // must_materialize, so it is included as an output.
+  ASSERT_EQ(actual.size(), 1);
+  EXPECT_THAT(actual[0]->execution_order(),
+              testing::ElementsAre(list_a, list_b, list_c));
+  EXPECT_THAT(actual[0]->outputs(), testing::ElementsAre(ref_a, ref_b, ref_c));
+}
+
+TEST(PrepareTraversalsTest, MultiNodesSplitGraph) {
+  ScopedPythonContextCapturer capturer(OpName::kEmpty);
+  Shape shape(Dimensions{8}, mlir::ElementType::F32);
+  // Three ops: a -> b, a -> c
+  TT_ASSERT_OK_AND_ASSIGN(auto refs_a, DeviceBufferList::CreateDeferred(
+                                           OpName::kAdd, DummyBuilder, {},
+                                           OpParamCacheKeys::Empty(), {shape}));
+  auto ref_a = refs_a[0];
+  auto list_a = refs_a[0].device_buffer_list();
+  TT_ASSERT_OK_AND_ASSIGN(auto refs_b, DeviceBufferList::CreateDeferred(
+                                           OpName::kAdd, DummyBuilder, {ref_a},
+                                           OpParamCacheKeys::Empty(), {shape}));
+  auto ref_b = refs_b[0];
+  auto list_b = refs_b[0].device_buffer_list();
+  TT_ASSERT_OK_AND_ASSIGN(auto refs_c, DeviceBufferList::CreateDeferred(
+                                           OpName::kAdd, DummyBuilder, {ref_a},
+                                           OpParamCacheKeys::Empty(), {shape}));
+  auto ref_c = refs_c[0];
+  auto list_c = refs_c[0].device_buffer_list();
+
+  auto actual =
+      PrepareTraversals({list_a, list_b, list_c}, {},
+                        PrepareTraversalsOptions{
+                            .graph_split_mode = GraphSplitMode::kSplitGraph});
+  // Compiles as three separate traversals, one each for a, b, and c.
+  // b and c are split into single outputs, and a is materialized to avoid
+  // re-execution.
+  ASSERT_EQ(actual.size(), 3);
+  EXPECT_THAT(actual[0]->execution_order(), testing::ElementsAre(list_a));
+  EXPECT_THAT(actual[0]->outputs(), testing::ElementsAre(ref_a));
+  EXPECT_THAT(actual[1]->execution_order(), testing::ElementsAre(list_b));
+  EXPECT_THAT(actual[1]->outputs(), testing::ElementsAre(ref_b));
+  EXPECT_THAT(actual[2]->execution_order(), testing::ElementsAre(list_c));
+  EXPECT_THAT(actual[2]->outputs(), testing::ElementsAre(ref_c));
+}
+
+TEST(PrepareTraversalsTest, MultiNodesSplitGraphAllAlreadyOutputs) {
+  ScopedPythonContextCapturer capturer(OpName::kEmpty);
+  Shape shape(Dimensions{8}, mlir::ElementType::F32);
+  // Three ops: a -> b, a -> c
+  TT_ASSERT_OK_AND_ASSIGN(auto refs_a, DeviceBufferList::CreateDeferred(
+                                           OpName::kAdd, DummyBuilder, {},
+                                           OpParamCacheKeys::Empty(), {shape}));
+  auto ref_a = refs_a[0];
+  auto list_a = refs_a[0].device_buffer_list();
+  TT_ASSERT_OK_AND_ASSIGN(auto refs_b, DeviceBufferList::CreateDeferred(
+                                           OpName::kAdd, DummyBuilder, {ref_a},
+                                           OpParamCacheKeys::Empty(), {shape}));
+  auto ref_b = refs_b[0];
+  auto list_b = refs_b[0].device_buffer_list();
+  TT_ASSERT_OK_AND_ASSIGN(auto refs_c, DeviceBufferList::CreateDeferred(
+                                           OpName::kAdd, DummyBuilder, {ref_a},
+                                           OpParamCacheKeys::Empty(), {shape}));
+  auto ref_c = refs_c[0];
+  auto list_c = refs_c[0].device_buffer_list();
+
+  // Force everything to materialize but still specify kSplitGraph.
+  auto actual =
+      PrepareTraversals({list_a, list_b, list_c}, {list_a, list_b, list_c},
+                        PrepareTraversalsOptions{
+                            .graph_split_mode = GraphSplitMode::kSplitGraph});
+  // Because there are no additional materialization points necessary to
+  // prevent re-execution, we can compile as a single traversal, even though
+  // kSplitGraph is specified.
+  ASSERT_EQ(actual.size(), 1);
+  EXPECT_THAT(actual[0]->execution_order(),
+              testing::ElementsAre(list_a, list_b, list_c));
+  EXPECT_THAT(actual[0]->outputs(), testing::ElementsAre(ref_a, ref_b, ref_c));
 }
 
 TEST(PrepareTraversalsTest, OpSplitMode) {
@@ -111,9 +218,11 @@ TEST(PrepareTraversalsTest, OpSplitMode) {
   auto ref_c = refs_c[0];
   auto list_c = refs_c[0].device_buffer_list();
 
-  auto actual = PrepareTraversals({list_a, list_b, list_c}, {},
-                                  CorePinningMode::kUnpinned);
-  // Compiles as a three separate traversals, one each for a, b, and c.
+  auto actual = PrepareTraversals(
+      {list_a, list_b, list_c}, {},
+      PrepareTraversalsOptions{.graph_split_mode = GraphSplitMode::kFullGraph});
+  // Compiles as a three separate traversals, one each for a, b, and c,
+  // even though kFullGraph is specified; OpSplitMode takes precedence.
   ASSERT_EQ(actual.size(), 3);
   EXPECT_THAT(actual[0]->execution_order(), testing::ElementsAre(list_a));
   EXPECT_THAT(actual[0]->outputs(), testing::ElementsAre(ref_a));
@@ -149,7 +258,7 @@ TEST(PrepareTraversalsTest, MustMaterializeConstant) {
   // Prepare traversals specifying c as must-execute and a as must-materialize.
   // Leave b unspecified.
   auto actual =
-      PrepareTraversals({list_c}, {list_a}, CorePinningMode::kUnpinned);
+      PrepareTraversals({list_c}, {list_a}, PrepareTraversalsOptions());
   // Compiles as a single traversal.
   // b is prepended before c as it is a required input to a must-execute node.
   // a is appended at the end as it is a must-materialize node but is otherwise
@@ -158,6 +267,95 @@ TEST(PrepareTraversalsTest, MustMaterializeConstant) {
   EXPECT_THAT(actual[0]->execution_order(),
               testing::ElementsAre(list_b, list_c, list_a));
   EXPECT_THAT(actual[0]->outputs(), testing::ElementsAre(ref_c, ref_a));
+}
+
+TEST(PrepareTraversalsTest, ExplicitCorePinning) {
+  ScopedPythonContextCapturer capturer(OpName::kEmpty);
+  Shape shape(Dimensions{8}, mlir::ElementType::F32);
+  TT_ASSERT_OK_AND_ASSIGN(auto refs_a, DeviceBufferList::CreateDeferred(
+                                           OpName::kAdd, DummyBuilder, {},
+                                           OpParamCacheKeys::Empty(), {shape}));
+  auto ref_a = refs_a[0];
+  auto list_a = refs_a[0].device_buffer_list();
+
+  auto actual =
+      PrepareTraversals({list_a}, {},
+                        PrepareTraversalsOptions{
+                            .core_pinning_mode = CorePinningMode::kSparseCore});
+  ASSERT_EQ(actual.size(), 1);
+  EXPECT_THAT(actual[0]->execution_order(), testing::ElementsAre(list_a));
+  EXPECT_THAT(actual[0]->outputs(), testing::ElementsAre(ref_a));
+  EXPECT_EQ(actual[0]->core_pinning_mode(), CorePinningMode::kSparseCore);
+}
+
+TEST(PrepareTraversalsTest, AutoSkinnySparseCoreOffload) {
+  ScopedPythonContextCapturer capturer(OpName::kEmpty);
+  Shape shape(Dimensions{8}, mlir::ElementType::F32);
+  // Dispatch a skinny collective op and a regular op.
+  TT_ASSERT_OK_AND_ASSIGN(
+      auto refs_a,
+      DeviceBufferList::CreateDeferred(
+          OpName::kDistributedAllReduce, DummyBuilder, {},
+          OpParamCacheKeys::Empty(), {shape}, OpSplitMode::kSplitBoth));
+  auto ref_a = refs_a[0];
+  auto list_a = refs_a[0].device_buffer_list();
+
+  TT_ASSERT_OK_AND_ASSIGN(auto refs_b, DeviceBufferList::CreateDeferred(
+                                           OpName::kAdd, DummyBuilder, {},
+                                           OpParamCacheKeys::Empty(), {shape}));
+  auto ref_b = refs_b[0];
+  auto list_b = refs_b[0].device_buffer_list();
+
+  auto actual = PrepareTraversals(
+      {list_a, list_b}, {},
+      PrepareTraversalsOptions{.skinny_sparse_core_offload_mode =
+                                   SkinnySparseCoreOffload::kEnabled});
+  // The skinny collective is split out and pinned to the SparseCore.
+  // The regular op is left unpinned.
+  ASSERT_EQ(actual.size(), 2);
+  EXPECT_THAT(actual[0]->execution_order(), testing::ElementsAre(list_a));
+  EXPECT_THAT(actual[0]->outputs(), testing::ElementsAre(ref_a));
+  EXPECT_EQ(actual[0]->core_pinning_mode(), CorePinningMode::kSparseCore);
+  EXPECT_THAT(actual[1]->execution_order(), testing::ElementsAre(list_b));
+  EXPECT_THAT(actual[1]->outputs(), testing::ElementsAre(ref_b));
+  EXPECT_EQ(actual[1]->core_pinning_mode(), CorePinningMode::kUnpinned);
+}
+
+TEST(PrepareTraversalsTest,
+     AutoSkinnySparseCoreOffloadDoesNotOverrideExplicitPinning) {
+  ScopedPythonContextCapturer capturer(OpName::kEmpty);
+  Shape shape(Dimensions{8}, mlir::ElementType::F32);
+  // Dispatch a skinny collective op and a regular op.
+  TT_ASSERT_OK_AND_ASSIGN(
+      auto refs_a,
+      DeviceBufferList::CreateDeferred(
+          OpName::kDistributedAllReduce, DummyBuilder, {},
+          OpParamCacheKeys::Empty(), {shape}, OpSplitMode::kSplitBoth));
+  auto ref_a = refs_a[0];
+  auto list_a = refs_a[0].device_buffer_list();
+
+  TT_ASSERT_OK_AND_ASSIGN(auto refs_b, DeviceBufferList::CreateDeferred(
+                                           OpName::kAdd, DummyBuilder, {},
+                                           OpParamCacheKeys::Empty(), {shape}));
+  auto ref_b = refs_b[0];
+  auto list_b = refs_b[0].device_buffer_list();
+
+  // Explicitly pin to TensorCore.
+  auto actual =
+      PrepareTraversals({list_a, list_b}, {},
+                        PrepareTraversalsOptions{
+                            .core_pinning_mode = CorePinningMode::kTensorCore,
+                            .skinny_sparse_core_offload_mode =
+                                SkinnySparseCoreOffload::kEnabled});
+  // The skinny collective is split out, but both traversals are pinned to the
+  // TensorCore; the auto-offload is ignored.
+  ASSERT_EQ(actual.size(), 2);
+  EXPECT_THAT(actual[0]->execution_order(), testing::ElementsAre(list_a));
+  EXPECT_THAT(actual[0]->outputs(), testing::ElementsAre(ref_a));
+  EXPECT_EQ(actual[0]->core_pinning_mode(), CorePinningMode::kTensorCore);
+  EXPECT_THAT(actual[1]->execution_order(), testing::ElementsAre(list_b));
+  EXPECT_THAT(actual[1]->outputs(), testing::ElementsAre(ref_b));
+  EXPECT_EQ(actual[1]->core_pinning_mode(), CorePinningMode::kTensorCore);
 }
 
 }  // namespace
