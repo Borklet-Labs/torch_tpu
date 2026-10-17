@@ -16210,6 +16210,52 @@ class OpsGradUnitTest(TorchTpuVsCpuTestBase):
 
     self.assert_close_tpu_vs_cpu(fn_train)
 
+  @parameterized.product(
+      device=["tpu", "cpu"],  # CPU is the upstream control.
+      requires_grad=[False, True],
+      has_weight=[False, True],
+  )
+  def test_rms_norm_fake_symbolic_shapes(
+      self, device, requires_grad, has_weight
+  ):
+    """Tests rms_norm on symbolic-shape FakeTensors doesn't throw or guard."""
+    x = torch.randn(3, 5, 16, device=device, requires_grad=requires_grad)
+    inputs = [(x, (True, True, False))]
+    if has_weight:
+      weight = torch.randn(16, device=device, requires_grad=requires_grad)
+      inputs.append((weight, (False,)))
+      fn = lambda x_fake, w_fake: torch.rms_norm(x_fake, [16], w_fake, 1e-6)
+    else:
+      fn = lambda x_fake: torch.rms_norm(x_fake, [16], None, 1e-6)
+
+    specialized = run_with_dynamic_dims(fn, inputs, no_grad=not requires_grad)
+    self.assertEmpty(specialized)
+
+  @parameterized.parameters("tpu", "cpu")  # CPU is the upstream control.
+  def test_rms_norm_compile_dynamic_shapes(self, device):
+    """Tests compiled rms_norm recompiles only once for dynamic batch/seq."""
+    torch._dynamo.reset()
+    self.addCleanup(torch._dynamo.reset)
+    counter = dynamo_testing.CompileCounter()
+
+    @torch.compile(backend=counter, fullgraph=True)
+    def fn(x, w):
+      return torch.nn.functional.rms_norm(x, (16,), w, 1e-6)
+
+    torch.manual_seed(42)
+    w = torch.randn(16)
+    for n in (3, 5, 7):
+      x = torch.randn(n, n + 2, 16)
+      out = fn(x.to(device), w.to(device))
+      utils.assert_close(
+          out.cpu(),
+          torch.nn.functional.rms_norm(x, (16,), w, 1e-6),
+          rtol=1e-5,
+          atol=1e-5,
+      )
+    # One static frame, then one dynamic frame that serves all later sizes.
+    self.assertEqual(counter.frame_count, 2)
+
   def test_max_pool2d_with_indices(self):
     """Tests nn.functional.max_pool2d_float32_sample54."""
     device = torch.device("tpu")

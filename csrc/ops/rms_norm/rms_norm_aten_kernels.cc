@@ -33,13 +33,15 @@
 #include "ATen/ops/pow.h"
 #include "ATen/ops/rsqrt.h"
 #include "ATen/ops/zeros.h"
+#include "absl/algorithm/container.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "c10/core/DispatchKeySet.h"
 #include "c10/core/GradMode.h"
+#include "c10/core/SymIntArrayRef.h"
 #include "c10/core/impl/LocalDispatchKeySet.h"
-#include "csrc/common/aten_utils.h"
+#include "csrc/common/const_tensor.h"
 #include "csrc/common/dimension_types.h"
 #include "csrc/common/dtype.h"
 #include "csrc/common/error_utils.h"
@@ -77,10 +79,13 @@ double GetRmsNormEpsilon(std::optional<double> eps,
   return static_cast<double>(std::numeric_limits<float>::epsilon());
 }
 
-absl::Status ValidateRmsNormInputs(const at::Tensor& input,
+// Takes ConstTensor so that the validation neither throws on nor specializes
+// the symbolic shapes of the FakeTensors that torch.compile traces with.
+absl::Status ValidateRmsNormInputs(const ConstTensor& input,
                                    at::IntArrayRef normalized_shape,
-                                   const std::optional<at::Tensor>& weight) {
-  TT_RET_CHECK(input.numel() == 0 || IsFloatingPoint(input),
+                                   const std::optional<ConstTensor>& weight) {
+  const bool input_is_empty = input.sym_numel() == 0;
+  TT_RET_CHECK(input_is_empty || input.is_floating_point(),
                error::kInvalidArgument)
       << "expected the input dtype to be floating point, got "
       << ToString(input.scalar_type());
@@ -89,18 +94,19 @@ absl::Status ValidateRmsNormInputs(const at::Tensor& input,
       << "the normalized shape must have >= 1 dimensions";
 
   const int64_t normalized_ndim = normalized_shape.size();
-  const int64_t input_ndim = input.dim();
+  TT_ASSIGN_OR_RETURN(const int64_t input_ndim, input.dim());
   TT_RET_CHECK(normalized_ndim <= input_ndim, error::kInvalidArgument)
       << "expected the normalized shape to have <= " << input_ndim
       << " dimensions, got " << normalized_ndim;
 
-  const auto input_trailing_shape =
-      input.sizes().slice(input_ndim - normalized_ndim);
-  TT_RET_CHECK(input_trailing_shape.equals(normalized_shape),
+  TT_ASSIGN_OR_RETURN(const c10::SymIntArrayRef input_sizes, input.sym_sizes());
+  // Like upstream, this guards only on the normalized (trailing) dimensions.
+  TT_RET_CHECK(absl::c_equal(input_sizes.slice(input_ndim - normalized_ndim),
+                             normalized_shape),
                error::kInvalidArgument)
       << "expected input trailing dimensions to match normalized_shape "
       << ToString(normalized_shape) << ", got input of shape "
-      << ToString(input.sizes());
+      << ToString(input_sizes);
 
   if (weight.has_value() && weight->defined()) {
     // Upstream _fused_rms_norm_cuda skips RmsNormKernelImpl (and its dtype
@@ -108,25 +114,27 @@ absl::Status ValidateRmsNormInputs(const at::Tensor& input,
     // ops_test exercises for bool/int32/int64 in subtest4. However, never allow
     // mixed-dtype non-floating-point weight (e.g. empty float input with int32
     // weight).
-    TT_RET_CHECK(IsFloatingPoint(*weight) ||
-                     (input.numel() == 0 &&
-                      weight->scalar_type() == input.scalar_type()),
-                 error::kInvalidArgument)
+    TT_RET_CHECK(
+        weight->is_floating_point() ||
+            (input_is_empty && weight->scalar_type() == input.scalar_type()),
+        error::kInvalidArgument)
         << "expected the weight dtype to be floating point, got "
         << ToString(weight->scalar_type());
-    TT_RET_CHECK(weight->sizes().equals(normalized_shape),
+    TT_ASSIGN_OR_RETURN(const c10::SymIntArrayRef weight_sizes,
+                        weight->sym_sizes());
+    TT_RET_CHECK(absl::c_equal(weight_sizes, normalized_shape),
                  error::kInvalidArgument)
         << "expected weight to be of same shape as normalized_shape "
         << ToString(normalized_shape) << ", got weight of shape "
-        << ToString(weight->sizes());
+        << ToString(weight_sizes);
   }
 
   return absl::OkStatus();
 }
 
-void ValidateRmsNormInputsOrThrow(const at::Tensor& input,
+void ValidateRmsNormInputsOrThrow(const ConstTensor& input,
                                   at::IntArrayRef normalized_shape,
-                                  const std::optional<at::Tensor>& weight) {
+                                  const std::optional<ConstTensor>& weight) {
   internal::ScopedOpName scoped_op_name(OpName::kRmsNorm);
   try {
     TT_THROW_IF_ERROR(ValidateRmsNormInputs(input, normalized_shape, weight));
