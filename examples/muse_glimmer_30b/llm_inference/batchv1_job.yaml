@@ -1,0 +1,53 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Public Reference Kubernetes Job manifest for single-device Muse Glimmer 30B LLM inference on TPU v7x
+# Slice topology: 2x2x1 (1 physical VM / 4 TPU chips)
+#
+# Settings to customize:
+# - cloud.google.com/gke-nodepool: Name of your GKE 4-chip TPU node pool (e.g. torchtpu-v7x-4chip-pool).
+# - image: TorchTPU Docker image URI in Artifact Registry.
+# - command args: customize launch.sh options (e.g. "bash ./launch.sh dynamic", "bash ./launch.sh static --random-weights").
+
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: muse-glimmer-inference
+spec:
+  template:
+    spec:
+      nodeSelector:
+        cloud.google.com/gke-nodepool: torchtpu-v7x-4chip-pool  # <-NB! Update to your nodepool!
+        cloud.google.com/gke-tpu-accelerator: tpu7x
+        cloud.google.com/gke-tpu-topology: 2x2x1
+      tolerations:
+      - {effect: NoSchedule, key: "google.com/tpu", operator: Exists}
+      containers:
+      - name: muse-glimmer-inference
+        image: us-docker.pkg.dev/ml-oss-artifacts-transient/torch-tpu-docker-container/torch-tpu:nightly
+        command: ["/bin/bash", "-c"]
+        args:
+        - |
+          set -ex
+          cd /workspace/examples/muse_glimmer_30b/llm_inference || cd examples/muse_glimmer_30b/llm_inference
+          bash ./launch.sh
+        resources: {limits: {google.com/tpu: "4"}, requests: {google.com/tpu: "4"}}
+        volumeMounts:
+        - {name: dshm, mountPath: /dev/shm}
+      volumes:
+      - {name: dshm, emptyDir: {medium: Memory}}
+      restartPolicy: Never
+      terminationGracePeriodSeconds: 5
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 900
