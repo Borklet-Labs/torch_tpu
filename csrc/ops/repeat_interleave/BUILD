@@ -29,6 +29,7 @@ torch_tpu_cc_library(
     hdrs = ["repeat_interleave_aten_kernels.h"],
     deps = [
         "//csrc/common:aten_utils",
+        "//csrc/common:const_tensor",
         "//csrc/common:dimension_types",
         "//csrc/common:dtype",
         "//csrc/common:error_utils",

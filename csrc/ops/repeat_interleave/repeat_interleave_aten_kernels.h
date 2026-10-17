@@ -43,7 +43,7 @@ at::Tensor& AtenRepeatInterleaveTensorOut(
 at::Tensor AtenRepeatInterleaveAutograd(const at::Tensor& self,
                                         const at::Tensor& repeats,
                                         std::optional<int64_t> dim,
-                                        std::optional<int64_t> output_size);
+                                        std::optional<c10::SymInt> output_size);
 
 at::Tensor AtenRepeatInterleaveSelfIntAutograd(
     const at::Tensor& self, c10::SymInt repeats, std::optional<int64_t> dim,

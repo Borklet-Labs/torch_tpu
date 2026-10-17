@@ -33,6 +33,7 @@
 #include "c10/core/SymIntArrayRef.h"
 #include "c10/core/WrapDimMinimal.h"
 #include "csrc/common/aten_utils.h"
+#include "csrc/common/const_tensor.h"
 #include "csrc/common/dimension_types.h"
 #include "csrc/common/dtype.h"
 #include "csrc/common/error_utils.h"
@@ -1022,25 +1023,31 @@ namespace {
 // Attempts to extract a scalar repeat count when `repeats` is a 1-element
 // tensor. Returns `false` if `repeats` is multi-element or if its value cannot
 // be determined without device synchronization during symbolic tracing.
-bool TryExtractScalarRepeatCount(const at::Tensor& self,
-                                 const at::Tensor& repeats,
-                                 std::optional<int64_t> dim,
-                                 std::optional<int64_t> output_size,
-                                 int64_t& repeats_val) {
-  if (repeats.numel() != 1) {
+// Returns an error if `dim` is out of range for `self` (any `dim` is for a
+// 0-dim `self`).
+// Takes `ConstTensor`s so that symbolic shapes are read without being
+// specialized.
+absl::StatusOr<bool> TryExtractScalarRepeatCount(
+    const ConstTensor& self, const ConstTensor& repeats,
+    std::optional<int64_t> dim, const std::optional<c10::SymInt>& output_size,
+    c10::SymInt& repeats_val) {
+  if (repeats.sym_numel() != 1) {
     return false;
   }
   if (output_size.has_value()) {
-    int64_t dim_size = self.numel();
+    c10::SymInt dim_size;
     if (dim.has_value()) {
-      const int64_t wrapped_dim = c10::maybe_wrap_dim(*dim, self.dim());
-      dim_size = self.size(wrapped_dim);
+      TT_ASSIGN_OR_RETURN(dim_size, self.sym_size(*dim));
+    } else {
+      dim_size = self.sym_numel();
     }
-    repeats_val = dim_size > 0 ? (*output_size / dim_size) : 0;
+    repeats_val = dim_size > 0 ? (*output_size / dim_size) : c10::SymInt(0);
     return true;
   }
   if (!IsFakeOrFunctorchTensor(repeats)) {
-    const auto stats = ComputeRepeatsSumAndMinOnHost(repeats);
+    // Reading the values of `repeats` needs the underlying tensor. This only
+    // happens for real (non-fake) data, whose shapes are concrete.
+    const auto stats = ComputeRepeatsSumAndMinOnHost(repeats.UnsafeToTensor());
     if (!stats.ok()) {
       return false;
     }
@@ -1072,26 +1079,31 @@ bool TryExtractScalarRepeatCount(const at::Tensor& self,
 //      requiring a custom scatter-add backward kernel.
 //   3. Variable Multi-Element Repeats in Inference Mode:
 //      Invokes the native `PrivateUse1` kernel `AtenRepeatInterleave`.
-at::Tensor AtenRepeatInterleaveAutograd(const at::Tensor& self,
-                                        const at::Tensor& repeats,
-                                        std::optional<int64_t> dim,
-                                        std::optional<int64_t> output_size) {
+at::Tensor AtenRepeatInterleaveAutograd(
+    const at::Tensor& self, const at::Tensor& repeats,
+    std::optional<int64_t> dim, std::optional<c10::SymInt> output_size) {
   if ((c10::GradMode::is_enabled() && self.requires_grad()) ||
       IsFakeOrFunctorchTensor(self)) {
-    int64_t repeats_val = 0;
-    if (TryExtractScalarRepeatCount(self, repeats, dim, output_size,
-                                    repeats_val)) {
-      return AtenRepeatInterleaveSelfIntAutograd(
-          self, repeats_val, dim,
-          output_size.has_value() ? std::optional<c10::SymInt>(*output_size)
-                                  : std::nullopt);
+    c10::SymInt repeats_val = 0;
+    TT_ASSIGN_OR_THROW(const bool has_scalar_repeat_count,
+                       TryExtractScalarRepeatCount(self, repeats, dim,
+                                                   output_size, repeats_val));
+    if (has_scalar_repeat_count) {
+      return AtenRepeatInterleaveSelfIntAutograd(self, repeats_val, dim,
+                                                 output_size);
     }
     at::Tensor input = dim.has_value() ? self : self.flatten();
     const int64_t d = dim.value_or(0);
-    at::Tensor repeat_indices = at::repeat_interleave(repeats, output_size);
+    at::Tensor repeat_indices =
+        at::repeat_interleave_symint(repeats, output_size);
     return input.index_select(d, repeat_indices);
   }
-  return AtenRepeatInterleave(self, repeats, dim, output_size);
+  // `self` holds real data here, so `output_size` is a concrete value.
+  return AtenRepeatInterleave(
+      self, repeats, dim,
+      output_size.has_value()
+          ? std::optional<int64_t>(output_size->guard_int(__FILE__, __LINE__))
+          : std::nullopt);
 }
 
 }  // namespace torch_tpu

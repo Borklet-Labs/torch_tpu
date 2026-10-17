@@ -14,6 +14,7 @@
 
 """Unit tests for ops."""
 
+from collections.abc import Callable, Sequence
 import concurrent
 import contextlib
 import dataclasses
@@ -37,6 +38,7 @@ from absl.testing import flagsaver
 from absl.testing import parameterized
 from scipy import stats
 import torch
+from torch._dynamo import testing as dynamo_testing
 from torch._subclasses import fake_tensor
 from torch.fx.experimental import symbolic_shapes
 from torch.nn.attention import flex_attention
@@ -89,6 +91,51 @@ def set_default_dtype(dtype):
     yield
   finally:
     torch.set_default_dtype(original_dtype)
+
+
+def run_with_dynamic_dims(
+    fn: Callable[..., Any],
+    inputs: Sequence[tuple[torch.Tensor, Sequence[bool]]],
+    no_grad: bool = False,
+) -> set[str]:
+  """Runs `fn` on FakeTensors with backed symbolic dims.
+
+  Args:
+    fn: The function to run.
+    inputs: `(tensor, dynamic)` pairs. `fn` gets a FakeTensor made from
+      `tensor`, whose dim `j` is symbolic iff `dynamic[j]` is true.
+    no_grad: Whether to run `fn` under `torch.no_grad()`.
+
+  Returns:
+    The names (`arg{i}.dim{j}`) of the symbolic dims that running `fn`
+    specialized to a constant.
+  """
+  shape_env = symbolic_shapes.ShapeEnv()
+  mode = fake_tensor.FakeTensorMode(shape_env=shape_env)
+  fakes = []
+  symbols = {}
+  for i, (tensor, dynamic) in enumerate(inputs):
+    context = symbolic_shapes.StatelessSymbolicContext(
+        dynamic_sizes=[
+            symbolic_shapes.DimDynamic.DYNAMIC
+            if d
+            else symbolic_shapes.DimDynamic.STATIC
+            for d in dynamic
+        ]
+    )
+    fake = mode.from_tensor(tensor, symbolic_context=context)
+    fakes.append(fake)
+    for j, size in enumerate(fake.shape):
+      if isinstance(size, torch.SymInt):
+        symbols[f"arg{i}.dim{j}"] = size.node.expr
+  grad_context = torch.no_grad() if no_grad else contextlib.nullcontext()
+  with mode, grad_context:
+    fn(*fakes)
+  return {
+      name
+      for name, expr in symbols.items()
+      if shape_env.replace(expr).is_number
+  }
 
 
 class OpsUnitTest(TorchTpuVsCpuTestBase):
@@ -7523,6 +7570,98 @@ class OpsUnitTest(TorchTpuVsCpuTestBase):
       return x.grad
 
     self.assert_close_tpu_vs_cpu(_backward)
+
+  @parameterized.named_parameters(
+      dict(
+          testcase_name="constant_output_size_no_grad",
+          fn=lambda x, r: torch.repeat_interleave(x, r, dim=0, output_size=6),
+          x_dynamic=(True, True),
+          repeats=[2],
+          no_grad=True,
+      ),
+      dict(
+          testcase_name="constant_output_size_requires_grad",
+          fn=lambda x, r: torch.repeat_interleave(x, r, dim=0, output_size=6),
+          x_dynamic=(True, True),
+          repeats=[2],
+          requires_grad=True,
+      ),
+      dict(
+          testcase_name="constant_output_size_no_dim",
+          fn=lambda x, r: torch.repeat_interleave(x, r, output_size=24),
+          x_dynamic=(True, True),
+          repeats=[2],
+      ),
+      dict(
+          testcase_name="symbolic_output_size",
+          fn=lambda x, r: torch.repeat_interleave(
+              x, r, dim=0, output_size=x.shape[0] * 2
+          ),
+          x_dynamic=(True, True),
+          repeats=[2],
+      ),
+      dict(
+          testcase_name="dynamic_repeats_length",
+          fn=lambda x, r: torch.repeat_interleave(
+              x, r, dim=0, output_size=x.shape[0] * 2
+          ),
+          x_dynamic=(True, False),
+          repeats=[2, 2, 2],
+      ),
+      dict(
+          testcase_name="no_output_size",
+          fn=lambda x, r: torch.repeat_interleave(x, r, dim=0),
+          x_dynamic=(True, True),
+          repeats=[2],
+      ),
+  )
+  def test_repeat_interleave_tensor_symbolic_shapes(
+      self, fn, x_dynamic, repeats, no_grad=False, requires_grad=False
+  ):
+    # `repeat_interleave.self_Tensor` must neither throw on nor specialize the
+    # symbolic dims of `self`, `repeats` and `output_size`. CPU is the control.
+    for device in ("cpu", "tpu"):
+      with self.subTest(device=device):
+        x = torch.randn(3, 4, device=device, requires_grad=requires_grad)
+        r = torch.tensor(repeats, dtype=torch.int64, device=device)
+        specialized = run_with_dynamic_dims(
+            fn,
+            [(x, x_dynamic), (r, (len(repeats) > 1,))],
+            no_grad=no_grad,
+        )
+        self.assertEmpty(specialized)
+
+  @parameterized.named_parameters(
+      ("one_element_repeats", False),
+      ("per_row_repeats", True),
+  )
+  def test_repeat_interleave_tensor_symbolic_output_size_compile(
+      self, per_row_repeats
+  ):
+    # Automatic dynamic shapes compile one static and one dynamic frame. A
+    # specialized `output_size` would recompile for every new size.
+    def fn(x, r):
+      return torch.repeat_interleave(x, r, dim=0, output_size=x.shape[0] * 2)
+
+    self.addCleanup(torch._dynamo.reset)
+    for device in ("cpu", "tpu"):
+      with self.subTest(device=device):
+        torch._dynamo.reset()
+        counter = dynamo_testing.CompileCounter()
+        compiled_fn = torch.compile(fn, backend=counter, fullgraph=True)
+        for n in (3, 5, 7):
+          x = torch.randn(n, 4, device=device)
+          r = torch.full(
+              (n if per_row_repeats else 1,),
+              2,
+              dtype=torch.int64,
+              device=device,
+          )
+          utils.assert_close(
+              compiled_fn(x, r).cpu(),
+              torch.repeat_interleave(x.cpu(), r.cpu(), dim=0),
+          )
+        self.assertEqual(counter.frame_count, 2)
 
   def test_tensor_to_tpu_with_default_device(self):
     """Tests that a tensor can be moved to TPU with a default device set."""
