@@ -31,7 +31,7 @@ def _():
 @app.cell(hide_code=True)
 def _(mo):
   mo.md(r"""
-    # Muse Glimmer 30B: iterative decoding
+    # Muse Glimmer 30B: autoregressive decoding
     <!-- Link to colab and to generated notebook -->
     [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google-pytorch/torch_tpu/blob/main/docs/notebooks/case_studies_muse_glimmer_30b_inference.ipynb)
 
@@ -475,11 +475,16 @@ def _(mo):
   mo.md(r"""
     ## 3. Loading pretrained weights and tokenizer
 
-    This section defines how to load the Hugging Face `Muse-Glimmer-30B` tokenizer and weights into `MuseGlimmer30B`:
+    This section defines how to load the `Muse-Glimmer-30B` tokenizer and pretrained weights into `MuseGlimmer30B`. The checkpoint can come from one of two places:
 
-    1. **Checkpoint location:** Only the needed files are downloaded from the Hugging Face Hub repo `MODEL_NAME`. Set `MUSE_GLIMMER_CHECKPOINT_DIR` to use a local copy instead.
-    2. **Direct loading:** Text decoder tensors are copied from the `.safetensors` files straight into `m.state_dict()`, without building the Hugging Face model.
-    3. **Fast partial loading:** Tensors are read in parallel, and only for the layers in `Config(num_layers=...)`, so `USE_FULL_MODEL = False` (see the top of the notebook) loads 4 layers instead of 52.
+    1. **A local copy of the checkpoint:** Set the `MUSE_GLIMMER_CHECKPOINT_DIR` environment variable to a directory that contains the checkpoint files. In a notebook, you can run `os.environ["MUSE_GLIMMER_CHECKPOINT_DIR"] = "/path/to/checkpoint"` before the next cell. If the variable is set but the directory doesn't exist, loading fails instead of falling back to a download.
+    2. **The Hugging Face Hub (default):** If `MUSE_GLIMMER_CHECKPOINT_DIR` isn't set, the files are downloaded from the Hub repo `MODEL_NAME` (`meta-models/Muse-Glimmer-30B`). Downloads are cached, so later runs reuse them.
+
+    Either way, the weights are loaded the same way:
+
+    * **Only the configured layers are read.** Tensors are loaded only for the layers in `Config(num_layers=...)`, so `USE_FULL_MODEL = False` (see the top of the notebook) loads 4 layers instead of 52.
+    * **Tensors are copied straight into the model.** Text decoder tensors are copied from the `.safetensors` files directly into `m.state_dict()`, without building the Hugging Face model.
+    * **Tensors are read in parallel.** Small batches of tensors are read concurrently and copied to the TPU before the next batch is read, which keeps host memory use low.
     """)
   return
 
@@ -737,7 +742,7 @@ def _(
 @app.cell(hide_code=True)
 def _(mo):
   mo.md(r"""
-    ## 5. Iterative decoding with `StaticCache`
+    ## 5. Autoregressive decoding with `StaticCache`
 
     With `StaticCache` and `torch.compile(muse_model, dynamic=False)`:
 
@@ -784,7 +789,7 @@ def _(
 @app.cell(hide_code=True)
 def _(mo):
   mo.md(r"""
-    ## 6. Iterative decoding with `DynamicCache`
+    ## 6. Autoregressive decoding with `DynamicCache`
 
     `DynamicCache` appends each new key and value with `torch.cat`, so the KV cache length changes on every decode step. With `dynamic=False`, every new length would trigger a recompilation. This section compiles the same model with dynamic shapes instead, so one compiled graph handles the growing cache.
 
