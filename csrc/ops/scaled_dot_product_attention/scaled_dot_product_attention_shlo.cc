@@ -121,109 +121,6 @@ SdpaPromotionType GetSdpaPromotionType(
   return SdpaPromotionType::kNone;
 }
 
-// Returns true if the attention tensor has enough elements (>500k) and sequence
-// lengths aligned to TPU tiles (128, or 32 for sequences >= 2048) so that 3D
-// reciprocal precomputation fuses cleanly without unaligned broadcast spills.
-bool IsSdpaSequenceAlignedAndLarge(mlir::MlirOp query, mlir::MlirOp key) {
-  constexpr int64_t kMinTotalElements = 500000;
-  constexpr int64_t kDefaultSeqLenAlignment = 128;
-  constexpr int64_t kLargeSeqLenThreshold = 2048;
-  constexpr int64_t kLargeSeqLenAlignment = 32;
-
-  const auto query_shape = GetTensorTypeOrDie(query).getShape();
-  const auto key_shape = GetTensorTypeOrDie(key).getShape();
-
-  int64_t total_elements = 1;
-  for (const int64_t dim : query_shape) {
-    if (dim <= 0) {
-      return false;
-    }
-    total_elements *= dim;
-  }
-  for (const int64_t dim : key_shape) {
-    if (dim <= 0) {
-      return false;
-    }
-  }
-  if (total_elements < kMinTotalElements) {
-    return false;
-  }
-
-  const int query_rank = query_shape.size();
-  const int key_rank = key_shape.size();
-  if (query_rank < 2 || key_rank < 2) {
-    return false;
-  }
-
-  const int64_t seq_len_q = query_shape[query_rank - 2];
-  const int64_t seq_len_kv = key_shape[key_rank - 2];
-  const bool is_multiple_of_128 = (seq_len_q % kDefaultSeqLenAlignment == 0) &&
-                                  (seq_len_kv % kDefaultSeqLenAlignment == 0);
-  const bool is_large_multiple_of_32 =
-      (seq_len_q >= kLargeSeqLenThreshold &&
-       seq_len_kv >= kLargeSeqLenThreshold) &&
-      (seq_len_q % kLargeSeqLenAlignment == 0) &&
-      (seq_len_kv % kLargeSeqLenAlignment == 0);
-  return is_multiple_of_128 || is_large_multiple_of_32;
-}
-
-// Returns true when XLA's MatchSoftmax rewriter can fuse forward SDPA into the
-// VMEM-tiled online-softmax custom call (requires aligned sequences <= 8192 and
-// head_dim >= 128 to saturate the 128x128 TPU MXU systolic array). When true,
-// forward SDPA must emit canonical Div(exp, Broadcast(sum_exp)) rather than
-// Mul(exp, Broadcast(inv_sum_exp)) so MatchSoftmax pattern matching succeeds.
-bool CanUseXlaOnlineSoftmax(mlir::MlirOp query, mlir::MlirOp key) {
-  if (!IsSdpaSequenceAlignedAndLarge(query, key)) {
-    return false;
-  }
-  constexpr int64_t kMaxOnlineSoftmaxSeqLen = 8192;
-  constexpr int64_t kMinMxuHeadDim = 128;
-
-  const auto query_shape = GetTensorTypeOrDie(query).getShape();
-  const auto key_shape = GetTensorTypeOrDie(key).getShape();
-  const int query_rank = query_shape.size();
-  const int key_rank = key_shape.size();
-  const int64_t seq_len_q = query_shape[query_rank - 2];
-  const int64_t seq_len_kv = key_shape[key_rank - 2];
-  const int64_t head_dim = query_shape[query_rank - 1];
-
-  return seq_len_q <= kMaxOnlineSoftmaxSeqLen &&
-         seq_len_kv <= kMaxOnlineSoftmaxSeqLen && head_dim >= kMinMxuHeadDim;
-}
-
-bool CanUseXlaOnlineSoftmaxForward(mlir::MlirOp query, mlir::MlirOp key,
-                                   bool has_mask_or_causal) {
-  if (!IsSdpaSequenceAlignedAndLarge(query, key)) {
-    return false;
-  }
-  if (CanUseXlaOnlineSoftmax(query, key)) {
-    return true;
-  }
-  if (!has_mask_or_causal) {
-    return false;
-  }
-  constexpr int64_t kMinMaskedOnlineSoftmaxSeqLen = 2048;
-  constexpr int64_t kMaxOnlineSoftmaxSeqLen = 8192;
-  constexpr int64_t kMinMaskedOnlineSoftmaxHeadDim = 64;
-
-  const auto query_shape = GetTensorTypeOrDie(query).getShape();
-  const auto key_shape = GetTensorTypeOrDie(key).getShape();
-  const int query_rank = query_shape.size();
-  const int key_rank = key_shape.size();
-  const int64_t seq_len_q = query_shape[query_rank - 2];
-  const int64_t seq_len_kv = key_shape[key_rank - 2];
-  const int64_t head_dim = query_shape[query_rank - 1];
-  const bool is_power_of_two_head_dim =
-      head_dim >= kMinMaskedOnlineSoftmaxHeadDim &&
-      (head_dim & (head_dim - 1)) == 0;
-
-  return is_power_of_two_head_dim &&
-         seq_len_q >= kMinMaskedOnlineSoftmaxSeqLen &&
-         seq_len_kv >= kMinMaskedOnlineSoftmaxSeqLen &&
-         seq_len_q <= kMaxOnlineSoftmaxSeqLen &&
-         seq_len_kv <= kMaxOnlineSoftmaxSeqLen;
-}
-
 mlir::MlirOp ConvertElementTypeIfNeeded(mlir::MlirOp op,
                                         mlir::Type target_type) {
   if (GetTensorTypeOrDie(op).getElementType() != target_type) {
@@ -541,27 +438,12 @@ absl::StatusOr<MlirOpResults<2>> BuildScaledDotProductFusedAttentionShloOp(
         shifted_attn_logits, builder.getOpBuilder().getF32Type());
   }
 
-  // Softmax along the last dimension (Lk). Emit canonical Div when XLA's
-  // online-softmax pattern matcher applies (including masked/causal attention
-  // with power-of-two head_dim >= 64 and sequences in [2048, 8192]), or when
-  // sequences are unaligned, and 3D reciprocal multiplication otherwise (e.g.
-  // ultra-long sequences > 8192 or unmasked head_dim < 128).
+  // Softmax along the last dimension (Lk).
   mlir::MlirOp exp_val = mlir::stablehlo::Exp(logits);
   mlir::MlirOp sum_exp = SumReduce(builder, exp_val, /*dimension=*/3);
-  mlir::MlirOp softmax;
-  if (IsSdpaSequenceAlignedAndLarge(query_mlir, key_mlir) &&
-      !CanUseXlaOnlineSoftmaxForward(query_mlir, key_mlir,
-                                     is_causal || mask_mlir.has_value())) {
-    auto one = MakeConstantLike(sum_exp, 1.0);
-    mlir::MlirOp inv_sum_exp = mlir::stablehlo::Div(one, sum_exp);
-    TT_ASSIGN_OR_RETURN(mlir::MlirOp inv_sum_exp_broadcasted,
-                        BroadcastIfNeeded(inv_sum_exp, exp_val, {0, 1, 2}));
-    softmax = mlir::stablehlo::Mul(exp_val, inv_sum_exp_broadcasted);
-  } else {
-    TT_ASSIGN_OR_RETURN(mlir::MlirOp sum_exp_broadcasted,
-                        BroadcastIfNeeded(sum_exp, exp_val, {0, 1, 2}));
-    softmax = mlir::stablehlo::Div(exp_val, sum_exp_broadcasted);
-  }
+  TT_ASSIGN_OR_RETURN(mlir::MlirOp sum_exp_broadcasted,
+                      BroadcastIfNeeded(sum_exp, exp_val, {0, 1, 2}));
+  mlir::MlirOp softmax = mlir::stablehlo::Div(exp_val, sum_exp_broadcasted);
 
   if (is_row_all_masked.has_value()) {
     TT_ASSIGN_OR_RETURN(
@@ -827,10 +709,7 @@ BuildScaledDotProductAttentionBackward(absl::Span<mlir::MlirOp> inputs,
   }
   const auto softmax_calc_type = GetTensorTypeOrDie(logits).getElementType();
 
-  // Softmax using previously computed sum_exp. Use 3D reciprocal multiplication
-  // when sequence dimensions are aligned to TPU tiles and outside the
-  // online-softmax regime (avoiding multi-output convolution fusion buffer
-  // materialization of 4D FP32 softmax tensors across GQA backward layers).
+  // Softmax using previously computed sum_exp.
   mlir::MlirOp sum_exp_converted =
       ConvertElementTypeIfNeeded(sum_exp_3d, softmax_calc_type);
   auto zero_sum_exp_converted = MakeConstantLike(sum_exp_converted, 0.0);
@@ -842,21 +721,10 @@ BuildScaledDotProductAttentionBackward(absl::Span<mlir::MlirOp> inputs,
       is_zero_sum_exp, one_sum_exp_converted, sum_exp_converted);
 
   mlir::MlirOp exp_val = mlir::stablehlo::Exp(logits);
-  mlir::MlirOp softmax;
-  if (IsSdpaSequenceAlignedAndLarge(query_mlir, key_mlir) &&
-      !CanUseXlaOnlineSoftmax(query_mlir, key_mlir)) {
-    auto one = MakeConstantLike(safe_sum_exp, 1.0);
-    mlir::MlirOp inv_sum_exp = mlir::stablehlo::Div(one, safe_sum_exp);
-    TT_ASSIGN_OR_RETURN(mlir::MlirOp inv_sum_exp_broadcasted,
-                        BroadcastIfNeeded(inv_sum_exp, logits,
-                                          /*broadcast_dimensions=*/{0, 1, 2}));
-    softmax = mlir::stablehlo::Mul(exp_val, inv_sum_exp_broadcasted);
-  } else {
-    TT_ASSIGN_OR_RETURN(mlir::MlirOp sum_exp_broadcasted,
-                        BroadcastIfNeeded(safe_sum_exp, logits,
-                                          /*broadcast_dimensions=*/{0, 1, 2}));
-    softmax = mlir::stablehlo::Div(exp_val, sum_exp_broadcasted);
-  }
+  TT_ASSIGN_OR_RETURN(mlir::MlirOp sum_exp_broadcasted,
+                      BroadcastIfNeeded(safe_sum_exp, logits,
+                                        /*broadcast_dimensions=*/{0, 1, 2}));
+  mlir::MlirOp softmax = mlir::stablehlo::Div(exp_val, sum_exp_broadcasted);
 
   if (is_row_all_masked.has_value()) {
     TT_ASSIGN_OR_RETURN(mlir::MlirOp is_masked_broadcasted,
