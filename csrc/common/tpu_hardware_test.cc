@@ -21,33 +21,24 @@
 #include <unistd.h>
 
 #include <cerrno>
-#include <cstddef>
 #include <cstdio>
 #include <fstream>
 #include <ios>
-#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
 
 #include "absl/log/absl_check.h"
-#include "absl/status/status_matchers.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
-#include "csrc/common/error_utils.h"
-#include "gmock/gmock.h"
 #include "gtest/gtest.h"
 
 namespace torch_tpu {
 namespace {
 
-using absl_testing::IsOkAndHolds;
-using absl_testing::StatusIs;
-using testing::HasSubstr;
-
-// Scoped temporary directory mimicking /sys/bus/pci/devices, /dev (including
-// /dev/vfio, /dev/vfio/devices and /dev/accel) and /dev_borg.
+// Scoped temporary directory mimicking /dev (including /dev/vfio,
+// /dev/vfio/devices and /dev/accel), /dev_borg and /proc/devices.
 class ScopedFakeHardwareDir {
  public:
   ScopedFakeHardwareDir() {
@@ -58,7 +49,6 @@ class ScopedFakeHardwareDir {
     const char* dir = mkdtemp(buf.data());
     ABSL_CHECK_NE(dir, nullptr);
     root_ = dir;
-    pci_devices_dir_ = absl::StrCat(root_, "/pci_devices");
     dev_dir_ = absl::StrCat(root_, "/dev");
     vfio_dir_ = absl::StrCat(dev_dir_, "/vfio");
     vfio_devices_dir_ = absl::StrCat(vfio_dir_, "/devices");
@@ -71,20 +61,13 @@ class ScopedFakeHardwareDir {
   ScopedFakeHardwareDir(const ScopedFakeHardwareDir&) = delete;
   ScopedFakeHardwareDir& operator=(const ScopedFakeHardwareDir&) = delete;
 
-  [[nodiscard]] const std::string& pci_devices_dir() const {
-    return pci_devices_dir_;
-  }
   [[nodiscard]] const std::string& dev_dir() const { return dev_dir_; }
-  [[nodiscard]] const std::string& vfio_dir() const { return vfio_dir_; }
   [[nodiscard]] const std::string& dev_borg_dir() const {
     return dev_borg_dir_;
   }
   [[nodiscard]] const std::string& proc_devices() const {
     return proc_devices_;
   }
-
-  // Creates an empty PCI devices directory.
-  void AddPciDevicesDir() { MakeDir(pci_devices_dir_); }
 
   // Adds a file named `name` to the fake /dev directory.
   void AddDevNode(std::string_view name) {
@@ -121,25 +104,6 @@ class ScopedFakeHardwareDir {
     // A block device major must not count as a character device major.
     absl::StrAppend(&contents, "\nBlock devices:\n  7 loop\n");
     WriteFile(proc_devices_, contents);
-  }
-
-  // Adds a PCI device entry. If `iommu_group` is set, adds an `iommu_group`
-  // symlink to it, as the kernel does.
-  void AddPciDevice(std::string_view address, std::string_view vendor,
-                    std::string_view device,
-                    std::optional<std::string_view> iommu_group) {
-    MakeDir(pci_devices_dir_);
-    const std::string device_dir = absl::StrCat(pci_devices_dir_, "/", address);
-    MakeDir(device_dir);
-    WriteFile(absl::StrCat(device_dir, "/vendor"), absl::StrCat(vendor, "\n"));
-    WriteFile(absl::StrCat(device_dir, "/device"), absl::StrCat(device, "\n"));
-    if (iommu_group.has_value()) {
-      const std::string target =
-          absl::StrCat("../../../kernel/iommu_groups/", *iommu_group);
-      ABSL_CHECK_EQ(symlink(target.c_str(),
-                            absl::StrCat(device_dir, "/iommu_group").c_str()),
-                    0);
-    }
   }
 
   // Adds a VFIO group node for `iommu_group`.
@@ -208,7 +172,6 @@ class ScopedFakeHardwareDir {
   }
 
   std::string root_;
-  std::string pci_devices_dir_;
   std::string dev_dir_;
   std::string vfio_dir_;
   std::string vfio_devices_dir_;
@@ -222,77 +185,6 @@ class ScopedFakeHardwareDir {
   ABSL_CHECK_EQ(stat(path, &st), 0);
   ABSL_CHECK(S_ISCHR(st.st_mode));
   return static_cast<int>(major(st.st_rdev));
-}
-
-TEST(CountTpuDevicesViaSysfsTest, ReturnsErrorWithoutPciDevicesDir) {
-  ScopedFakeHardwareDir fake;
-  EXPECT_THAT(CountTpuDevicesViaSysfs(fake.pci_devices_dir(), fake.vfio_dir()),
-              StatusIs(error::kUnavailable,
-                       HasSubstr("cannot open the PCI devices directory")));
-}
-
-TEST(CountTpuDevicesViaSysfsTest, ReturnsZeroWithEmptyPciDevicesDir) {
-  ScopedFakeHardwareDir fake;
-  fake.AddPciDevicesDir();
-  EXPECT_THAT(CountTpuDevicesViaSysfs(fake.pci_devices_dir(), fake.vfio_dir()),
-              IsOkAndHolds(0));
-}
-
-TEST(CountTpuDevicesViaSysfsTest, IgnoresNonGoogleVendor) {
-  ScopedFakeHardwareDir fake;
-  fake.AddPciDevice("0000:00:04.0", "0x8086", "0x005e", "7");
-  fake.AddVfioGroup("7");
-  EXPECT_THAT(CountTpuDevicesViaSysfs(fake.pci_devices_dir(), fake.vfio_dir()),
-              IsOkAndHolds(0));
-}
-
-TEST(CountTpuDevicesViaSysfsTest, CountsTpuDevicesWithVfioGroup) {
-  ScopedFakeHardwareDir fake;
-  fake.AddPciDevice("0000:00:04.0", "0x1ae0", "0x0063", "0");
-  fake.AddPciDevice("0000:00:05.0", "0x1ae0", "0x006f", "1");
-  fake.AddVfioGroup("0");
-  fake.AddVfioGroup("1");
-  EXPECT_THAT(CountTpuDevicesViaSysfs(fake.pci_devices_dir(), fake.vfio_dir()),
-              IsOkAndHolds(2));
-}
-
-TEST(CountTpuDevicesViaSysfsTest, IgnoresTpuDeviceWithoutVfioGroup) {
-  ScopedFakeHardwareDir fake;
-  // Group 3 has no /dev/vfio node.
-  fake.AddPciDevice("0000:00:04.0", "0x1ae0", "0x0076", "3");
-  // No iommu_group symlink at all.
-  fake.AddPciDevice("0000:00:05.0", "0x1ae0", "0x0076", std::nullopt);
-  fake.AddVfioGroup("4");
-  EXPECT_THAT(CountTpuDevicesViaSysfs(fake.pci_devices_dir(), fake.vfio_dir()),
-              IsOkAndHolds(0));
-}
-
-TEST(CountTpuDevicesViaSysfsTest, IgnoresUnknownGoogleDeviceId) {
-  ScopedFakeHardwareDir fake;
-  fake.AddPciDevice("0000:00:04.0", "0x1ae0", "0x0001", "0");
-  fake.AddVfioGroup("0");
-  EXPECT_THAT(CountTpuDevicesViaSysfs(fake.pci_devices_dir(), fake.vfio_dir()),
-              IsOkAndHolds(0));
-}
-
-TEST(CountTpuDevicesViaSysfsTest, CountsAllKnownTpuDeviceIds) {
-  ScopedFakeHardwareDir fake;
-  const std::vector<std::string> device_ids = {
-      "0x0062",  // TPU v5p
-      "0x0063",  // TPU v5e
-      "0x006f",  // TPU v6e
-      "0x0076",  // TPU v7
-      "0x007c",  // TPU v8t
-      "0x0083",  // TPU v8i
-  };
-  for (size_t i = 0; i < device_ids.size(); ++i) {
-    const std::string group = absl::StrCat(i);
-    fake.AddPciDevice(absl::StrCat("0000:00:0", i, ".0"), "0x1ae0",
-                      device_ids[i], group);
-    fake.AddVfioGroup(group);
-  }
-  EXPECT_THAT(CountTpuDevicesViaSysfs(fake.pci_devices_dir(), fake.vfio_dir()),
-              IsOkAndHolds(static_cast<int>(device_ids.size())));
 }
 
 TEST(HasTpuDeviceNodesTest, ReturnsFalseWithoutDevDirs) {

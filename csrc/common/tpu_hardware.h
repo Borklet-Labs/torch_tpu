@@ -18,30 +18,7 @@
 
 #include <string_view>
 
-#include "absl/status/statusor.h"
-
 namespace torch_tpu {
-
-// Counts the TPU devices on this host that are exposed via VFIO, by scanning
-// the PCI devices in `pci_devices_dir` for known TPU vendor/device IDs and
-// checking that each device's IOMMU group exists in `vfio_dir`. Does not
-// initialize the TPU runtime.
-//
-// Returns an error only if `pci_devices_dir` cannot be opened or read. Devices
-// whose sysfs entries cannot be read are skipped. The count does NOT include:
-// - TPUs whose PCI device ID is not in the known list (e.g. future
-//   generations);
-// - TPUs whose IOMMU group is not exposed under `vfio_dir`, which is normal in
-//   containers that expose only the VFIO groups allocated to them;
-// - TPUs bound to a non-VFIO driver (e.g. reached via /dev/accel*).
-// So a count of 0 does not mean that the host has no TPUs, and this function is
-// unsuitable for deciding that TPUs are absent; see HasTpuDeviceNodes().
-//
-// Mirrors `_scan_pci_tpus()` in torch_tpu/_internal/utils/hardware.py; keep the
-// two in sync.
-absl::StatusOr<int> CountTpuDevicesViaSysfs(
-    std::string_view pci_devices_dir = "/sys/bus/pci/devices",
-    std::string_view vfio_dir = "/dev/vfio");
 
 // Returns whether any device node through which libtpu could reach a TPU
 // exists:
@@ -54,8 +31,8 @@ absl::StatusOr<int> CountTpuDevicesViaSysfs(
 //   compute accelerator subsystem, e.g. /dev/accel/accel0) that is a character
 //   device whose major is registered in `proc_devices` (i.e. backed by a
 //   driver).
-// Unlike CountTpuDevicesViaSysfs(), this does not depend on PCI device IDs, so
-// it also covers unknown TPU generations. Returns true if a directory exists
+// This does not depend on PCI device IDs, so it also covers unknown TPU
+// generations. Returns true if a directory exists
 // but cannot be listed, or if an accel character device exists but
 // `proc_devices` cannot be read, since the absence of TPU device nodes cannot
 // be established then. Does not initialize the TPU runtime.

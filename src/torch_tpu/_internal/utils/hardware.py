@@ -285,7 +285,6 @@ TpuSpec.V8T = TpuSpec(
 
 # The `TpuSpec` of each TPU PCI device ID. Verified IDs from
 # util/platforminfo/pci_ids.h.
-# Keep in sync with `kTpuPciDeviceIds` in torch_tpu/csrc/common/tpu_hardware.cc.
 _TPU_SPEC_BY_PCI_DEVICE_ID: Final[Mapping[str, TpuSpec]] = (
     immutabledict.immutabledict({
         "0x0062": TpuSpec.V5P,
@@ -372,9 +371,6 @@ def get_hbm_bytes_per_device() -> int | None:
 def _scan_pci_tpus() -> tuple[int, TpuSpec | None]:
   """Scans PCI bus for TPU devices.
 
-  The device count logic is mirrored in C++ by `CountTpuDevicesViaSysfs()` in
-  torch_tpu/csrc/common/tpu_hardware.cc; keep the two in sync.
-
   Returns:
     A tuple of (count, tpu_spec). `count` is the number of TPU devices exposed
     via VFIO. `tpu_spec` is the `TpuSpec` of the first of them, or None if VFIO
@@ -417,7 +413,23 @@ def _scan_pci_tpus() -> tuple[int, TpuSpec | None]:
     version="0.2.1", reason="Use torch.accelerator.device_count() instead."
 )
 def get_tpu_device_count() -> int:
-  """Returns the number of TPU devices found on the system.
+  """Returns how many physical TPU PCI devices are attached to this host.
+
+  Does not initialize the PJRT runtime. Counts the PCI devices in
+  `/sys/bus/pci/devices` with Google's vendor ID and a TPU device ID in
+  `_TPU_SPEC_BY_PCI_DEVICE_ID` whose IOMMU group is exposed under `/dev/vfio`.
+  Devices whose sysfs entries can't be read are skipped, and if
+  `/sys/bus/pci/devices` can't be read at all, this returns 0. The count does
+  NOT include:
+
+  - TPUs whose PCI device ID isn't in `_TPU_SPEC_BY_PCI_DEVICE_ID`, e.g. future
+    generations;
+  - TPUs whose IOMMU group isn't exposed under `/dev/vfio`, which is normal in
+    containers that expose only the VFIO groups allocated to them;
+  - TPUs bound to a non-VFIO driver, e.g. reached through `/dev/accel*`.
+
+  So 0 doesn't mean the host has no TPUs. It's also not the number of devices
+  the PJRT runtime will use, which can be smaller.
 
   Deprecated: code outside TorchTPU should call
   `torch.accelerator.device_count()` instead, which returns this count until the

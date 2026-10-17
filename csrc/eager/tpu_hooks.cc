@@ -121,6 +121,10 @@ class TpuDeviceGuardImpl final : public c10::impl::DeviceGuardImplInterface {
               c10::EventFlag flag) const override;
   void block(void* event, const c10::Stream& stream) const override;
   bool queryEvent(void* event) const override;
+  // Returns how many addressable PJRT TPU devices this process's runtime owns,
+  // initializing the runtime first if needed (0 if initialization fails). If
+  // the runtime isn't initialized and no TPU device is reachable (no TPU device
+  // nodes and no custom device paths), returns 0 without initializing it.
   c10::DeviceIndex deviceCount() const noexcept override;
   bool queryStream(const c10::Stream& stream) const override;
   void synchronizeStream(const c10::Stream& stream) const override;
