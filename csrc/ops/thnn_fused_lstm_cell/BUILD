@@ -43,6 +43,7 @@ torch_tpu_cc_library(
         "//csrc/ops/reductions",
         "//csrc/ops/reductions:reduction_utils",
         "//shims/torch:aten_headers",
+        "//shims/torch/c10/core:base_headers",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",

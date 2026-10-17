@@ -26,6 +26,7 @@
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
+#include "c10/core/ScalarType.h"
 #include "csrc/common/aten_utils.h"
 #include "csrc/common/cache_key.h"
 #include "csrc/common/dtype.h"
@@ -203,6 +204,16 @@ absl::StatusOr<std::array<mlir::MlirOp, 2>> BuildLstmCellBackwardShlo(
 absl::Status ValidateThnnFusedLstmCellInputs(const at::Tensor& input_gates,
                                              const at::Tensor& hidden_gates,
                                              const at::Tensor& cx) {
+  TT_RET_CHECK(c10::isFloatingType(input_gates.scalar_type()),
+               error::kPythonNotImplementedError)
+      << "not implemented for " << ToString(input_gates.scalar_type());
+  TT_RET_CHECK(input_gates.scalar_type() == hidden_gates.scalar_type() &&
+                   input_gates.scalar_type() == cx.scalar_type(),
+               error::kInvalidArgument)
+      << "expected all inputs to have the same dtype, got input_gates: "
+      << ToString(input_gates.scalar_type())
+      << ", hidden_gates: " << ToString(hidden_gates.scalar_type())
+      << ", cx: " << ToString(cx.scalar_type());
   TT_RET_CHECK(input_gates.sizes() == hidden_gates.sizes(),
                error::kInvalidArgument)
       << "expected size of argument #1 'input_gates' to match size of "

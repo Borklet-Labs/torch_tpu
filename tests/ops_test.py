@@ -4159,14 +4159,10 @@ class TestOps(op_testing.OpInfoTestBase):
   def test_thnn_fused_lstm_cell(self):
     self.do_test_op(
         "_thnn_fused_lstm_cell",
-        # TODO(b/540345869): succeeded on TPU but failed on GPU for complex64.
-        # CUDA kernel is not implemented for this dtype.
         exclude_dtypes=(
-            _if_tpu_vs_gpu_compiled(
-                (torch.complex64,) + FLOAT_DTYPES,
-                (torch.complex64,),
-            )
+            _if_tpu_vs_gpu_compiled(FLOAT_DTYPES, ())
             + INTEGRAL_DTYPES
+            + COMPLEX_DTYPES
         ),
         check_dynamism=False,
     )
