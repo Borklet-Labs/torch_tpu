@@ -62,7 +62,7 @@ exclude_docs: |
     public_apis.md
 
 nav:
-  - Home: markdown/index.md
+  - Home: index.md
   - Get started with TorchTPU:
     - intro_to_torchtpu.md
     - get_started_on_a_vm.md
@@ -96,7 +96,7 @@ plugins:
   - table-reader
   - redirects:
       redirect_maps:
-        index.md: markdown/index.md
+        index.md: index.md
 
 
 markdown_extensions:
