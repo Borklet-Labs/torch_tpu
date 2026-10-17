@@ -20,6 +20,7 @@ from absl.testing import absltest
 import torch
 from torch_tpu._internal.utils import test_utils
 from perflab import device_utils
+from perflab import mode as mode_lib
 from perflab import target as target_lib
 from perflab import torch_device_ops
 from tests import seed_test_utils
@@ -80,24 +81,47 @@ class TorchDeviceOpsTest(seed_test_utils.RepeatableTest):
     for out in (None, {"n": 3}, torch.ones(4)):
       with self.subTest(out=out):
         with self.assertRaisesRegex(  # ASSERT_RAISES_OK=benchmark
-            ValueError, "returned no TPU tensors"
+            ValueError,
+            "returned no TPU tensors, .* a failed TorchTPU execution only"
+            " marks its outputs as failed",
         ):
           ops.check_result(out)
     mock_synchronize.assert_not_called()
 
   @mock.patch.object(device_utils, "synchronize", autospec=True)
+  def test_check_result_validates_cpu_outputs_without_tpu_sync(
+      self, mock_synchronize
+  ):
+    target = target_lib.make_target(platform=target_lib.Platform.CPU)
+    ops = torch_device_ops.TorchDeviceOps(target)
+
+    ops.check_result({"logits": torch.ones(4, device=ops.device)})
+    # As in the FakeTensorMode CPU smoke test.
+    with mode_lib.fake_tensor_context():
+      ops.check_result({"logits": torch.ones(4, device=ops.device)})
+
+    for bad_out in (None, {"n": 3}):
+      with self.subTest(bad_out=bad_out):
+        with self.assertRaisesRegex(  # ASSERT_RAISES_OK=benchmark
+            ValueError,
+            "returned no CPU tensors, .* the TPU run checks the step's outputs"
+            " to detect failures",
+        ):
+          ops.check_result(bad_out)
+
+    mock_synchronize.assert_not_called()
+
+  @mock.patch.object(device_utils, "synchronize", autospec=True)
   @mock.patch("torch.accelerator")
-  def test_check_result_ignores_non_tpu_targets(
+  def test_check_result_ignores_cuda_targets(
       self, mock_accelerator, mock_synchronize
   ):
     mock_accelerator.device_count.return_value = 1
-    for platform in (target_lib.Platform.B200_1, target_lib.Platform.CPU):
-      with self.subTest(platform=platform):
-        target = target_lib.make_target(platform=platform)
-        ops = torch_device_ops.TorchDeviceOps(target)
+    target = target_lib.make_target(platform=target_lib.Platform.B200_1)
+    ops = torch_device_ops.TorchDeviceOps(target)
 
-        ops.check_result({"logits": mock.sentinel.logits})
-        ops.check_result(None)
+    ops.check_result({"logits": mock.sentinel.logits})
+    ops.check_result(None)
 
     mock_synchronize.assert_not_called()
 

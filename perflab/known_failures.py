@@ -72,18 +72,36 @@ KNOWN_FAILURES: tuple[KnownFailure, ...] = (
     #
     # TODO(b/571695076): Remove once the 4096 parameter training step fits.
     #
-    # Both the eager-optimized and compiled training steps exceed the XLA:TPU
-    # entry computation parameter limit.
+    # The eager-default, eager-optimized and compiled training steps exceed the
+    # XLA:TPU entry computation parameter limit.
     KnownFailure(
         benchmark="synthetic_4096_params_training",
         framework=mode_lib.Framework.TORCH,
         device_kind=target_lib.DeviceKind.TPU,
-        run_modes=frozenset(
-            {common.RunMode.EAGER_OPTIMIZED, common.RunMode.COMPILED}
-        ),
+        run_modes=frozenset({
+            common.RunMode.EAGER_DEFAULT,
+            common.RunMode.EAGER_OPTIMIZED,
+            common.RunMode.COMPILED,
+        }),
         reason=(
             "the fused forward, backward and AdamW step needs more XLA"
             " parameters (~20.5k) than supported (~16.3k)"
+        ),
+    ),
+    # TODO(b/574632209): Remove once the XLA:TPU HLO shape mismatch in
+    # `qwen3_8_L147_split1_bwd` is fixed.
+    # Repro: //perflab:distributed_dev_benchmarks_ws8
+    #   --test_filter=qwen3_8_27b_4_layers_simple_fsdp_training_compiled
+    KnownFailure(
+        benchmark="qwen3_8_27b_4_layers_simple_fsdp_training",
+        framework=mode_lib.Framework.TORCH,
+        device_kind=target_lib.DeviceKind.TPU,
+        run_modes=frozenset({common.RunMode.COMPILED}),
+        reason=(
+            "XLA:TPU HLO shape mismatch in qwen3_8_L147_split1_bwd: Expected"
+            " instruction to have shape equal to bf16[2048,2048,2048], actual"
+            " shape is bf16[2048,2048,1] on multiply(%slice, %silu_backward)"
+            " (b/574632209)"
         ),
     ),
     # TODO(b/574560944): Remove once XLA:TPU cl/1000409835 lands. It fixes the
@@ -325,7 +343,28 @@ KNOWN_FAILURES: tuple[KnownFailure, ...] = (
     # models. The Triton wheel used in OSS is not affected.
     # copybara:uncomment_begin(internal builds only)
     # KnownFailure(
+        # benchmark="blip_image_captioning_base_train_gen",
+        # framework=mode_lib.Framework.TORCH,
+        # device_kind=target_lib.DeviceKind.CUDA,
+        # run_modes=frozenset({common.RunMode.COMPILED}),
+        # reason="LLVM cannot select v2i16 [su]mul_lohi in a Triton kernel",
+    # ),
+    # KnownFailure(
         # benchmark="conformer_training",
+        # framework=mode_lib.Framework.TORCH,
+        # device_kind=target_lib.DeviceKind.CUDA,
+        # run_modes=frozenset({common.RunMode.COMPILED}),
+        # reason="LLVM cannot select v2i16 [su]mul_lohi in a Triton kernel",
+    # ),
+    # KnownFailure(
+        # benchmark="dinov2_small_forward_gen",
+        # framework=mode_lib.Framework.TORCH,
+        # device_kind=target_lib.DeviceKind.CUDA,
+        # run_modes=frozenset({common.RunMode.COMPILED}),
+        # reason="LLVM cannot select v2i16 [su]mul_lohi in a Triton kernel",
+    # ),
+    # KnownFailure(
+        # benchmark="dinov2_small_train_gen",
         # framework=mode_lib.Framework.TORCH,
         # device_kind=target_lib.DeviceKind.CUDA,
         # run_modes=frozenset({common.RunMode.COMPILED}),
@@ -360,6 +399,13 @@ KNOWN_FAILURES: tuple[KnownFailure, ...] = (
         # reason="LLVM cannot select v2i16 [su]mul_lohi in a Triton kernel",
     # ),
     # KnownFailure(
+        # benchmark="glucose_base_ja_v2_train_gen",
+        # framework=mode_lib.Framework.TORCH,
+        # device_kind=target_lib.DeviceKind.CUDA,
+        # run_modes=frozenset({common.RunMode.COMPILED}),
+        # reason="LLVM cannot select v2i16 [su]mul_lohi in a Triton kernel",
+    # ),
+    # KnownFailure(
         # benchmark="gpt2_train_gen",
         # framework=mode_lib.Framework.TORCH,
         # device_kind=target_lib.DeviceKind.CUDA,
@@ -368,6 +414,13 @@ KNOWN_FAILURES: tuple[KnownFailure, ...] = (
     # ),
     # KnownFailure(
         # benchmark="lahja_sa_ahmad_v1_forward_gen",
+        # framework=mode_lib.Framework.TORCH,
+        # device_kind=target_lib.DeviceKind.CUDA,
+        # run_modes=frozenset({common.RunMode.COMPILED}),
+        # reason="LLVM cannot select v2i16 [su]mul_lohi in a Triton kernel",
+    # ),
+    # KnownFailure(
+        # benchmark="qwen3_8_27b_4_layers_simple_fsdp_training",
         # framework=mode_lib.Framework.TORCH,
         # device_kind=target_lib.DeviceKind.CUDA,
         # run_modes=frozenset({common.RunMode.COMPILED}),
@@ -388,6 +441,20 @@ KNOWN_FAILURES: tuple[KnownFailure, ...] = (
         # reason="LLVM cannot select v2i16 [su]mul_lohi in a Triton kernel",
     # ),
     # KnownFailure(
+        # benchmark="timm_vit_small_dino_forward",
+        # framework=mode_lib.Framework.TORCH,
+        # device_kind=target_lib.DeviceKind.CUDA,
+        # run_modes=frozenset({common.RunMode.COMPILED}),
+        # reason="LLVM cannot select v2i16 [su]mul_lohi in a Triton kernel",
+    # ),
+    # KnownFailure(
+        # benchmark="timm_vit_small_dino_training",
+        # framework=mode_lib.Framework.TORCH,
+        # device_kind=target_lib.DeviceKind.CUDA,
+        # run_modes=frozenset({common.RunMode.COMPILED}),
+        # reason="LLVM cannot select v2i16 [su]mul_lohi in a Triton kernel",
+    # ),
+    # KnownFailure(
         # benchmark="tiny_doc_qa_vision_encoder_decoder_forward_gen",
         # framework=mode_lib.Framework.TORCH,
         # device_kind=target_lib.DeviceKind.CUDA,
@@ -396,6 +463,13 @@ KNOWN_FAILURES: tuple[KnownFailure, ...] = (
     # ),
     # KnownFailure(
         # benchmark="wan_2_2_ti2v_5b_training",
+        # framework=mode_lib.Framework.TORCH,
+        # device_kind=target_lib.DeviceKind.CUDA,
+        # run_modes=frozenset({common.RunMode.COMPILED}),
+        # reason="LLVM cannot select v2i16 [su]mul_lohi in a Triton kernel",
+    # ),
+    # KnownFailure(
+        # benchmark="yolos_small_forward_gen",
         # framework=mode_lib.Framework.TORCH,
         # device_kind=target_lib.DeviceKind.CUDA,
         # run_modes=frozenset({common.RunMode.COMPILED}),

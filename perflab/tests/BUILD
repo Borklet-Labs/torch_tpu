@@ -274,6 +274,7 @@ torch_tpu_py_test(
     tags = ["requires-tpu-v5lite"],
     deps = [
         "//perflab:device_utils",
+        "//perflab:mode",
         "//perflab:target",
         "//perflab:torch_device_ops",
         "//shims/absl_py/testing:absltest",

@@ -95,23 +95,36 @@ class TorchDeviceOps:
     torch.accelerator.synchronize(); it only marks its outputs as failed.
     Synchronizing on the outputs raises that failure.
 
+    On CPU (including FakeTensorMode smoke tests), this still validates that the
+    step returned at least one CPU tensor so step return-contract regressions
+    are caught before reaching TPU. On CUDA, `await_result` already raises on
+    failure, so this is a no-op.
+
     Args:
-      out: The step's output. On TPU it must contain a TPU tensor.
+      out: The step's output. On TPU and CPU it must contain a tensor on the
+        target device.
 
     Raises:
-      ValueError: If the target is a TPU and out contains no TPU tensors.
+      ValueError: If the target is TPU or CPU and out contains no tensors on the
+        target device.
     """
-    if self.target.device_kind != target_lib.DeviceKind.TPU:
+    if self.target.device_kind == target_lib.DeviceKind.CUDA:
       return
-    tensors = device_utils.collect_tensors_on("tpu", out)
+    tensors = device_utils.collect_tensors_on(self.device.type, out)
     if not tensors:
+      device_label = self.device.type.upper()
+      if self.target.device_kind == target_lib.DeviceKind.TPU:
+        reason = "a failed TorchTPU execution only marks its outputs as failed"
+      else:
+        reason = "the TPU run checks the step's outputs to detect failures"
       raise ValueError(
-          "The step returned no TPU tensors, so its success can't be"
-          " verified: a failed TorchTPU execution only marks its outputs as"
-          " failed. Return the step's TPU outputs (e.g. the logits or the"
-          f" loss) from the step function. Got: {type(out).__name__}."
+          f"The step returned no {device_label} tensors, so its success can't"
+          f" be verified: {reason}. Return the step's {device_label} outputs"
+          " (e.g. the logits or the loss) from the step function. Got:"
+          f" {type(out).__name__}."
       )
-    device_utils.synchronize("tpu", tensors)
+    if self.target.device_kind == target_lib.DeviceKind.TPU:
+      device_utils.synchronize("tpu", tensors)
 
   def reset_peak_memory(self) -> None:
     """Reset the peak-memory counter."""
