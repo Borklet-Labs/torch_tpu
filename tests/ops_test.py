@@ -4150,12 +4150,9 @@ class TestOps(op_testing.OpInfoTestBase):
   def test_thnn_fused_gru_cell(self):
     self.do_test_op(
         "_thnn_fused_gru_cell",
-        # TODO(b/540346402): succeeded on TPU but failed on GPU for complex64.
-        # CUDA kernel is not implemented for this dtype.
-        exclude_dtypes={
-            "cpu": INTEGRAL_DTYPES,
-            "gpu": (torch.complex64,) + INTEGRAL_DTYPES,
-        },
+        # Exclude integral and complex dtypes: unsupported on TPU and GPU.
+        # Error parity is verified in errors_test.py.
+        exclude_dtypes=(INTEGRAL_DTYPES + COMPLEX_DTYPES),
         check_dynamism=False,
     )
 

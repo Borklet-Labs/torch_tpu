@@ -952,6 +952,16 @@ class OpsUnitTest(TorchTpuVsCpuTestBase):
         backward=True,
     )
 
+  def test_thnn_fused_gru_cell_zero_batch(self):
+    """Verifies that _thnn_fused_gru_cell handles zero batch size."""
+    device = torch.device("tpu")
+    ig = torch.randn(0, 24, device=device)
+    hg = torch.randn(0, 24, device=device)
+    hx = torch.randn(0, 8, device=device)
+    hy, ws = torch.ops.aten._thnn_fused_gru_cell(ig, hg, hx)
+    self.assertEqual(hy.shape, (0, 8))
+    self.assertEqual(ws.shape, (0, 40))
+
   def test_ldexp_integer_promotion(self):
     """Tests that ldexp promotes integer base and exponent to float."""
     self.assert_close_tpu_vs_cpu(

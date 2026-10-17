@@ -26,6 +26,7 @@
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
+#include "c10/core/ScalarType.h"
 #include "csrc/common/aten_utils.h"
 #include "csrc/common/cache_key.h"
 #include "csrc/common/dtype.h"
@@ -227,9 +228,13 @@ absl::StatusOr<std::array<mlir::MlirOp, 3>> BuildGruCellBackwardShlo(
                                      grad_hx};
 }
 
+// Validates input tensor dimensions and data types for the fused GRU cell.
 absl::Status ValidateThnnFusedGruCellInputs(const at::Tensor& input_gates,
                                             const at::Tensor& hidden_gates,
                                             const at::Tensor& hx) {
+  TT_RET_CHECK(c10::isFloatingType(input_gates.scalar_type()),
+               error::kPythonNotImplementedError)
+      << "not implemented for " << ToString(input_gates.scalar_type());
   TT_RET_CHECK(input_gates.sizes() == hidden_gates.sizes(),
                error::kInvalidArgument)
       << "expected size of argument #1 'input_gates' to match size of "

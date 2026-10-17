@@ -11436,6 +11436,32 @@ Device-side assertion tracking was not enabled by user.""",
     ):
       torch.ops.aten._thnn_fused_lstm_cell(ig, hg, cx)
 
+  def test_thnn_fused_gru_cell_complex_dtype(self):
+    """Checks that _thnn_fused_gru_cell rejects complex dtypes."""
+    device = et.device()
+    ig = torch.randn(2, 24, device=device, dtype=torch.complex64)
+    hg = torch.randn(2, 24, device=device, dtype=torch.complex64)
+    hx = torch.randn(2, 8, device=device, dtype=torch.complex64)
+    with et.assert_raises_message(
+        NotImplementedError,
+        tpu="""thnn_fused_gru_cell(): not implemented for complex64""",
+        gpu=""""_thnn_fused_gru_cell_cuda" not implemented for 'ComplexFloat'""",
+    ):
+      torch.ops.aten._thnn_fused_gru_cell(ig, hg, hx)
+
+  def test_thnn_fused_gru_cell_integral_dtype(self):
+    """Checks that _thnn_fused_gru_cell rejects integral dtypes."""
+    device = et.device()
+    ig = torch.randint(0, 10, (2, 24), device=device, dtype=torch.int32)
+    hg = torch.randint(0, 10, (2, 24), device=device, dtype=torch.int32)
+    hx = torch.randint(0, 10, (2, 8), device=device, dtype=torch.int32)
+    with et.assert_raises_message(
+        NotImplementedError,
+        tpu="""thnn_fused_gru_cell(): not implemented for int32""",
+        gpu=""""_thnn_fused_gru_cell_cuda" not implemented for 'Int'""",
+    ):
+      torch.ops.aten._thnn_fused_gru_cell(ig, hg, hx)
+
   def test_thnn_fused_gru_cell_invalid_gate_sizes(self):
     device = et.device()
     ig = torch.randn(2, 24, device=device)
