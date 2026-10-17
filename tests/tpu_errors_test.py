@@ -5655,7 +5655,7 @@ class EnvironmentErrorsTest(et.TpuOnlyErrorTestBase):
     # `TORCH_TPU_SLICEBUILDER_ADDRESSES`); keep them from leaking into other
     # tests.
     with (
-        mock.patch.dict(os.environ),
+        mock.patch.dict(os.environ, {"TORCH_TPU_TOPOLOGY": "1,1,1"}),
         mock.patch.dict(env_utils._resolved_values),  # pylint: disable=protected-access
         mock.patch.object(mp, "spawn", mock_spawn),
     ):
