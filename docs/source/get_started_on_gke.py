@@ -33,8 +33,6 @@ def _(mo):
 
     # Get started with TorchTPU on GKE
 
-    [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google-pytorch/torch_tpu/blob/main/docs/notebooks/1_basics_3_get_started_on_gke.ipynb)
-
     This tutorial walks through running PyTorch workloads on a Google
     Kubernetes Engine (GKE) TPU cluster in three parts:
 

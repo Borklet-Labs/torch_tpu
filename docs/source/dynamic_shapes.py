@@ -32,8 +32,9 @@ def _():
 def _(mo):
   mo.md(r"""
     # Dynamic shapes
+    
    <!-- Link to colab and to generated notebook -->
-  [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google-pytorch/torch_tpu/blob/main/docs/notebooks/dynamic_shapes.ipynb) | [View on github](https://github.com/google-pytorch/torch_tpu/blob/main/docs/notebooks/dynamic_shapes.ipynb)  | [Markdown](https://github.com/google-pytorch/torch_tpu/blob/main/docs/dynamic_shapes.md)
+   [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google-pytorch/torch_tpu/blob/main/docs/notebooks/dynamic_shapes.ipynb)
     
 
     When you compile a model with `torch.compile(model)`, TorchTPU lowers the computation to StableHLO and compiles it with the XLA compiler (see [How TorchTPU works](how_torchtpu_works.py)). The XLA compiler is traditionally designed around **statically known tensor shapes** so that High Bandwidth Memory (HBM) buffers can be laid out ahead of time, operator pipelines can be fused, and matrix multiplications can be tiled for the TPU's systolic arrays (MXUs). When input tensor dimensions vary across calls in a `torch.compile` workload, compiling for each exact shape would invalidate Dynamo's shape guards and trigger a costly full XLA recompilation on every new shape.
@@ -42,7 +43,7 @@ def _(mo):
 
     ## How dynamic shapes are handled by TorchTPU
 
-    When you compile a model or function with `torch.compile(model, dynamic=None)` (as input shapes vary across calls) or explicitly mark dynamic dimensions with `torch._dynamo.mark_dynamic`, Dynamo traces the computation and produces an FX graph where changing dimensions are represented as symbolic integer variables (`torch.SymInt`) instead of fixed constants. TorchTPU handles these symbolic dimensions as follows:
+    When you compile a model or function with default dynamism, that is `torch.compile(model, dynamic=None)` (as input shapes vary across calls) or explicitly mark dynamic dimensions with `torch._dynamo.mark_dynamic`, Dynamo traces the computation and produces an FX graph where changing dimensions are represented as symbolic integer variables (`torch.SymInt`) instead of fixed constants. TorchTPU handles these symbolic dimensions as follows:
 
     ### Compilation
 
@@ -74,7 +75,7 @@ def _(mo):
 
     With static-shape compilation (`dynamic=False`), Dynamo guards on the exact sequence length of the KV cache. Every decode step changes the tensor shape, invalidates the guard, and triggers a **full XLA recompilation on every generated token**—turning millisecond decode steps into multi-second compilations unless you rewrite the model to preallocate static buffers and perform in-place mutations.
 
-    **Bounded dynamism** (`dynamic=None`) solves this without requiring model rewrites: as the KV cache grows across decode steps (`S + 1`, `S + 2`, ...), all shapes within the compiled bucket (`<= 128`, `<= 256`, ...) reuse the same XLA executable.
+    **Bounded dynamism** solves this without requiring model rewrites: as the KV cache grows across decode steps (`S + 1`, `S + 2`, ...), all shapes within the compiled bucket (`<= 128`, `<= 256`, ...) reuse the same XLA executable.
 
     For a hands-on walkthrough applying bounded dynamism to a full LLM decode loop (and comparing against static KV cache preallocation), see [LLM inference end-to-end](case_studies_muse_glimmer_30b_inference.py).
     """)
@@ -86,7 +87,7 @@ def _(mo):
   mo.md(r"""
     ## Example: Autoregressive loop with a growing tensor
 
-    To see how static compilation (`dynamic=False`) and bounded dynamism (`dynamic=None`) behave in practice, consider a minimal autoregressive loop where each step appends a new token along the sequence dimension (`dim=2`) using `torch.cat`:
+    To see how static compilation (`dynamic=False`) and bounded dynamism using default dynamism (`dynamic=None`) behave in practice, consider a minimal autoregressive loop where each step appends a new token along the sequence dimension (`dim=2`) using `torch.cat`:
     """)
   return
 
@@ -227,6 +228,7 @@ def _(mo):
     * **Views as model inputs:** Support for passing tensor views directly as inputs to the compiled model is limited.
     * **Data-dependent dynamism:** Operations whose output shapes depend on runtime tensor values (such as `torch.nonzero`) are not supported.
     * **Custom kernels:** Bounded dynamic shapes are not supported with custom TPU kernels (such as Pallas kernels registered via `torch.tpu.pallas.jax_op`).
+    * **dynamic=True:** torch.compile() *dynamic=True* mode is not supported.
     """)
   return
 

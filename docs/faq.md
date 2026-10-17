@@ -8,6 +8,14 @@ backend for [Google Cloud TPUs](https://cloud.google.com/tpu) and zero JAX
 runtime dependencies, and existing PyTorch workloads run out of the box with
 trivial code changes (e.g., `.to("cuda")` → `.to("tpu")`)
 
+## What is the difference between TorchAX and TorchTPU?
+
+TorchAX (also known as torch_xla2) is an implementation that intercepts PyTorch
+operations at the Python level and lowers them into XLA (often via JAX). While
+TorchAX has been used heavily for inference benchmarking and prototyping,
+TorchTPU is the new official standard for a drop-in, PyTorch-native experience
+on TPUs.
+
 ## What is happening to PyTorch/XLA?
 
 PyTorch/XLA is deprecated and replaced by
@@ -15,10 +23,11 @@ PyTorch/XLA is deprecated and replaced by
 
 ## Is TorchTPU replacing JAX?
 
-No. TorchTPU is designed to complement JAX by providing a native PyTorch entry
-point to Cloud TPUs. It allows developers with existing PyTorch codebases to run
-directly on TPUs with zero or minimal rewrites, eliminating the need to rewrite
-models in JAX or manage separate codebases for GPU and TPU infrastructure.
+No. TorchTPU is designed to complement the TPU ecosystem by providing a native
+PyTorch entry point to Cloud TPUs. It allows developers with existing PyTorch
+codebases to run directly on TPUs with zero or minimal rewrites, eliminating the
+need to rewrite models in JAX or manage separate codebases for GPU and TPU
+infrastructure.
 
 *   **When to think of TorchTPU?** If you have existing PyTorch codebase, want
     multi-hardware portability (GPU/TPU) without refactoring, using
@@ -39,21 +48,6 @@ You can also use the tag "TPU" at
 Yes, community engagement is extremely important for us, and we'll be sharing
 details for such forums. Additionally, we plan to host monthly office hours.
 
-## What performance can I expect when onboarding standard models?
-
-At the time of writing, we have validated out-of-box execution on 5,000 most
-downloaded Hugging Face models, including:
-
-*   **LLMs:** LLama, DeepSeek, Mistral, Gemma, Qwen, GPT, OPT, BLOOM, Falcon,
-    StableML
-*   **Audio/Speech:** Whisper, Wav2Vec2, Hubert & MMS
-*   **Vision:** DinoV2, SigLIP, CLIP, Swin Transformer & ConvNeXt, ViT, ResNet &
-    DETR
-*   **Text Encoders & Search:** BERT, ALBERT & Electra, RoBERTa, DeBERTa, T5,
-    MT5 & Flan-T5
-
-For more details, please refer to our published [Case studies](./index.md).
-
 ## What support does TorchTPU provide for kernel development?
 
 Refer to [TorchTPU Custom Kernel support](./custom_kernels.md).
@@ -61,7 +55,7 @@ Refer to [TorchTPU Custom Kernel support](./custom_kernels.md).
 ## Which TPU generations are actively supported? What's the plan for future hardware support?
 
 TorchTPU actively supports v5e, v5p, Trillium (TPU v6e) and Ironwood (TPU v7x).
-Validation and optimization for TPU v8 and future chips will continue as part of
+Validation and optimization for TPU v8 and future chips is ongoing as part of
 our roadmap.
 
 ## Where can we find TorchTPU's supported features & future roadmap?

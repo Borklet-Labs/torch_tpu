@@ -33,7 +33,7 @@ def _(mo):
   mo.md(r"""
     # Muse Glimmer 30B: iterative decoding
     <!-- Link to colab and to generated notebook -->
-    [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google-pytorch/torch_tpu/blob/main/docs/notebooks/case_studies_muse_glimmer_30b_inference.ipynb) | [View on GitHub](https://github.com/google-pytorch/torch_tpu/blob/main/docs/notebooks/case_studies_muse_glimmer_30b_inference.ipynb) | [Markdown](https://github.com/google-pytorch/torch_tpu/blob/main/docs/case_studies_muse_glimmer_30b_inference.md)
+    [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google-pytorch/torch_tpu/blob/main/docs/notebooks/case_studies_muse_glimmer_30b_inference.ipynb)
 
     This guide walks through autoregressive LLM inference on TPU with TorchTPU, using the **Muse Glimmer** architecture and pretrained Hugging Face weights. It compares two KV caches that share one model: a preallocated **`StaticCache`** compiled with static shapes (`dynamic=False`), and a growing **`DynamicCache`** compiled with dynamic shapes (`dynamic=None`).
 

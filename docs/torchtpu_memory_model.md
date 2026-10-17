@@ -91,7 +91,6 @@ metadata allows for active interpretation between PyTorch's existing CUDA-like
 API and the realities of XLA's functional design and the TPU hardware.
 
 ## `torch.Tensor`
-
 A `torch.Tensor` can be thought of as two things simultaneously.
 
 First, a `torch.Tensor` is a *physical* representation of an access pattern on
@@ -246,7 +245,6 @@ or even full-model rewrites, with manual specification of TPU buffer behavior.
 This can be used to ensure optimal donation and in-place update behavior.
 
 ## Takeaways
-
 When working with TorchTPU, users should know the following key facts:
 
 *   **PyTorch code will produce the same logical result on both CUDA and

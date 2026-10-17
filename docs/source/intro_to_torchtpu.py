@@ -32,7 +32,7 @@ def _(mo):
     # Introduction to TorchTPU
 
     <!-- Link to colab and to generated notebook -->
-    [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google-pytorch/torch_tpu/blob/main/docs/notebooks/intro_to_torchtpu.ipynb) | [View on github](https://github.com/google-pytorch/torch_tpu/blob/main/docs/notebooks/intro_to_torchtpu.ipynb)  | [Markdown](https://github.com/google-pytorch/torch_tpu/blob/main/docs/intro_to_torchtpu.md)
+    [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google-pytorch/torch_tpu/blob/main/docs/notebooks/intro_to_torchtpu.ipynb)
 
     TorchTPU is an open-source, native PyTorch backend for [Google Cloud TPUs](https://cloud.google.com/tpu), developed in collaboration between Google and the PyTorch team at Meta. With TorchTPU, developers can run existing PyTorch workloads on TPU hardware with minimal code changes and scale training and inference workloads from a single chip to multi-slice TPU pods.
 
@@ -46,7 +46,7 @@ def _(mo):
 
     ## Quickstart: Running on TPU
 
-    In the following cell, you can see a simple example of a PyTorch program running on TPU. You can run [this example on Colab](colab_link.md) by enabling the TPU runtime.
+    In the following cell, you can see a simple example of a PyTorch program running on TPU. You can run [this example on Colab](https://colab.research.google.com/github/google-pytorch/torch_tpu/blob/main/docs/notebooks/intro_to_torchtpu.ipynb) by enabling the TPU runtime.
     """)
   return
 
@@ -88,15 +88,15 @@ def _(mo):
 
     ## Known limitations and future work
 
-    As an early product, TorchTPU does currently have known limitations that will be addressed over time. While our initial release delivers robust, out-of-the-box coverage for major workloads, TorchTPU is a collaborative, community-driven effort. Please review our [feature set and roadmap](./6_reference_1_supported_feature_set.md) to see what is on the horizon, or jump right in by [submitting PRs](https://github.com/google-pytorch/torch_tpu) on GitHub to help us resolve these limitations. This is a community project, and we'd love to hear from you and invite you to collaborate with us via [GitHub](https://github.com/google-pytorch/torch_tpu), [https://discuss.pytorch.org/c/tpu](https://discuss.pytorch.org/c/tpu), [https://dev-discuss.pytorch.org/c/tpu/](https://dev-discuss.pytorch.org/c/tpu/) and [torchtpu-feedback@google.com](mailto:torchtpu-feedback@google.com).
+    As an early product, TorchTPU does currently have known limitations that will be addressed over time. While our initial release delivers robust, out-of-the-box coverage for major workloads, TorchTPU is a collaborative, community-driven effort. Please review our [feature set and roadmap](./feature_set.md) to see what is on the horizon, or jump right in by [submitting PRs](https://github.com/google-pytorch/torch_tpu) on GitHub to help us resolve these limitations. This is a community project, and we'd love to hear from you and invite you to collaborate with us via [GitHub](https://github.com/google-pytorch/torch_tpu), [https://discuss.pytorch.org/c/tpu](https://discuss.pytorch.org/c/tpu), [https://dev-discuss.pytorch.org/c/tpu/](https://dev-discuss.pytorch.org/c/tpu/) and [torchtpu-feedback@google.com](mailto:torchtpu-feedback@google.com).
 
     * Dynamic Shapes cause recompilations
-      * `torch.compile` sets `dynamic=False` by default on TorchTPU. `dynamic=None` or `dynamic=True` are not yet supported for production. [See discussion on dynamic shapes](./2_in_depth_6_dynamic_shapes.md)
+      * `torch.compile` sets `dynamic=False` by default on TorchTPU. `dynamic=None` or `dynamic=True` are not yet supported for production. [See discussion on dynamic shapes](./dynamic_shapes.md)
       * As example, running decode/generate step on Hugging Face LLMs will involve recompilations at each step unless bounded dynamism is enabled.
-    * View ops may be expensive on TPU (see [TorchTPU memory model](./2_in_depth_2_torchtpu_and_tpu_memory_model.md)
-    * MPMD with collectives is supported for functionality, but it will not reach peak performance yet. Collective overlap with compute has [some constraints](./2_in_depth_6_distributed.md):
+    * View ops may be expensive on TPU (see [TorchTPU memory model](./torchtpu_memory_model.md)
+    * MPMD with collectives is supported for functionality, but it will not reach peak performance yet. Collective overlap with compute has [some constraints](./distributed_support.md):
       * Full stream support with offload will come in the near future.
-      * Use SimpleFSDP with `torch.compile()` as opposed to FSDPv2 with eager or `torch.compile` mode [FSDP best practices](./3_practical_examples_3_fsdp_best_practices.md)
+      * Use SimpleFSDP with `torch.compile()` as opposed to FSDPv2 with eager or `torch.compile` mode [FSDP best practices](./case_studies_fsdp.md)
       * Use the `spmd_safe` decorator on regions **users guarantee** to be exactly the same is the recommended way to get peak performance from XLA optimizations on communicating modules (i.e., to enable compute/communication overlap)
     * TorchTPU does not currently have native FlexAttention support
     * Current generation TPUs do not support matmul accumulation in lower precision than fp32 (e.g., tf32).
@@ -116,7 +116,7 @@ def _(mo):
 
     This documentation suite is organized into four structured sections to help you move from first setup to distributed production deployment:
       * **Get Started:** Step-by-step walkthroughs to configure your environment and deploy workloads on [a VM](./get_started_on_a_vm.md) or [through GKE](./get_started_on_gke.md).
-      * **In-Depth:** Deep dives into the [TPU memory model](./torchtpu_memory_model.md), [distributed execution](./distributed_execution.md), and the different [execution modes](./torchtpu_execution_model.md).
+      * **In-Depth:** Deep dives into the [TPU memory model](./torchtpu_memory_model.md), [distributed execution](./distributed_support.md), and the different [execution modes](./torchtpu_execution_model.md).
       * **Case studies:** End-to-end recipes covering optimizations for the [Flux model](./case_studies_flux.md), training [Muse Glimmer](./case_studies_muse_glimmer_30b_training.md), [End-to-end LLM inference](./case_studies_muse_glimmer_30b_inference.md) and the effective application of [FSDP](./case_studies_fsdp.md).
       * **Analyze your workload:** [Profiling](./performance_profiling_with_xprof.md), managing [numerical precision](./numerical_precision.md)
 

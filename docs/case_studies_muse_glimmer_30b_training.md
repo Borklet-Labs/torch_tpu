@@ -215,9 +215,6 @@ SparseCore, both in forward and in joint forward+backward passes – which in th
 case turns out to be enough to achieve nearly perfect communications /
 computation overlap.
 
-> TODO: add detailed xprof trace of how XLA ends up overlapping collectives with
-> computations here.
-
 ## Chunkwise fused LM head + cross-entropy loss
 
 The example by default uses local batch size 8 and sequence length 5120. If we

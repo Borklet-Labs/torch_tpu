@@ -61,6 +61,9 @@ exclude_docs: |
     **/BUILD
     public_apis.md
 
+hooks:
+  - mkdocs_hooks.py
+
 nav:
   - Home: index.md
   - Get started with TorchTPU:
@@ -85,7 +88,6 @@ nav:
   - Analyze your workload:
     - numerical_precision.md
     - performance_profiling_with_xprof.md
-#    - tpu_monitoring.md
 
 plugins:
   - search
@@ -94,9 +96,6 @@ plugins:
   - glightbox
   - open-in-new-tab
   - table-reader
-  - redirects:
-      redirect_maps:
-        index.md: index.md
 
 
 markdown_extensions:

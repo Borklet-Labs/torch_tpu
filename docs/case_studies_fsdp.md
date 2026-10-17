@@ -21,6 +21,7 @@ In this guide, you will learn:
 
 ## 1. Choosing an FSDP approach
 
+```
 On TPU, performance comes from compiling the whole training step into a single
 XLA program with `torch.compile(backend="tpu")`. When the XLA compiler sees all
 forward, backward, and collective operations at once, it can schedule
@@ -29,15 +30,18 @@ profitable.
 
 Choose an FSDP approach based on how well it composes with whole-graph
 compilation:
+```
 
 <!-- mdformat off(reason: standard GFM table rendering in Critique and Code Search) -->
-| Approach | When to use it | Example |
-| :------- | :------------- | :------ |
-| **SimpleFSDP** (`simple_fsdp.data_parallel`) | **Recommended default.** You want FSDP or HSDP without changing the model definition.| [`fsdp_to_simple_fsdp/`](https://github.com/google-pytorch/torch_tpu/tree/main/examples/fsdp/fsdp_to_simple_fsdp) |
-| **Manual FSDP** (manual collectives) | You own the model code and want the communication code next to the computation for performance tuning. | [`manual/`](https://github.com/google-pytorch/torch_tpu/tree/main/examples/fsdp/manual) |
-| **PyTorch FSDPv2** (`fully_shard`) | Existing code that has not been migrated yet. It works, but its runtime hooks cause graph breaks.| [Migration guide](https://github.com/google-pytorch/torch_tpu/blob/main/examples/fsdp/fsdp_to_simple_fsdp/fsdp_to_simple_fsdp.md) |
+    | Approach | When to use it | Example |
+    | :------- | :------------- | :------ |
+    | **SimpleFSDP** (`simple_fsdp.data_parallel`) | **Recommended default.** You want FSDP or HSDP without changing the model definition.| [`fsdp_to_simple_fsdp/`](https://github.com/google-pytorch/torch_tpu/tree/main/examples/fsdp/fsdp_to_simple_fsdp) |
+    | **Manual FSDP** (manual collectives) | You own the model code and want the communication code next to the computation for performance tuning. | [`manual/`](https://github.com/google-pytorch/torch_tpu/tree/main/examples/fsdp/manual) |
+    | **PyTorch FSDPv2** (`fully_shard`) | Existing code that has not been migrated yet. It works, but its runtime hooks cause graph breaks and for competitive performance requires upcoming support for stream offload to the TPU’s SparseCore.
+.| [Migration guide](https://github.com/google-pytorch/torch_tpu/blob/main/examples/fsdp/fsdp_to_simple_fsdp/fsdp_to_simple_fsdp.md) |
 <!-- mdformat on -->
 
+```
 SimpleFSDP and manual FSDP both express the collectives as part of the traced
 graph, so XLA can optimize them together with the rest of the step. PyTorch
 FSDPv2 (`fully_shard`) relies on Python pre-forward and post-backward hooks.
@@ -47,13 +51,14 @@ compiled.
 For a side-by-side comparison of compiled FSDPv2 and compiled SimpleFSDP, see
 the
 [FSDPv2 to SimpleFSDP tutorial](https://github.com/google-pytorch/torch_tpu/blob/main/examples/fsdp/fsdp_to_simple_fsdp/fsdp_to_simple_fsdp.md).
+```
 
 ## 2. Recommended: SimpleFSDP
 
 [`simple_fsdp`](https://github.com/google-pytorch/torch_tpu/blob/main/examples/fsdp/simple_fsdp.py)
-is a compile-first FSDP implementation. It was introduced in TorchTitan, and a
-self-contained copy that depends only on PyTorch is provided in
-`examples/fsdp/simple_fsdp.py`.
+is as FSDP implementation designed to work with `torch.compile`. It was
+introduced in TorchTitan, and a self-contained copy that depends only on PyTorch
+is provided in `examples/fsdp/simple_fsdp.py`.
 
 SimpleFSDP stores each parameter as a sharded `DTensor`. When a parameter is
 accessed, a parametrization calls `DTensor.redistribute` to all-gather it. The
@@ -73,10 +78,11 @@ To learn how to use SimpleFSDP, see:
 ## 3. Alternative: Manual FSDP
 
 If you control the model definition, you can write FSDP directly with manual
-collectives (`torch.distributed._functional_collectives`). Each layer stores
-only its weight shard and all-gathers the full weight in forward. Functional
-collectives have autograd formulas, so the backward of the all-gather is a
-reduce-scatter, and you don't need to write a custom `torch.autograd.Function`.
+collectives (`torch.distributed._functional_collectives`) and `torch.compile`.
+Each layer stores only its weight shard and all-gathers the full weight in
+forward. Functional collectives have autograd formulas, so the backward of the
+all-gather is a reduce-scatter, and you don't need to write a custom
+`torch.autograd.Function`.
 
 This keeps the communication code next to the computation code, which can make
 performance tuning easier. The tradeoff is that you must change the model

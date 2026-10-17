@@ -25,3 +25,10 @@ body[data-md-color-scheme="slate"] .md-nav__item--section > label.md-nav__link .
   color: rgba(255, 255, 255, 0.8) !important;
   font-weight: 700;
 }
+
+/* Remove bullet discs from nested link lists inside landing-page grid cards */
+.md-typeset .grid.cards > ul > li > ul {
+  list-style: none;
+  margin-left: 0;
+  padding-left: 0;
+}

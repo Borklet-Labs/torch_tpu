@@ -30,6 +30,9 @@ def _():
 def _(mo):
   mo.md(r"""
     # FLUX optimization
+    
+    <!-- Link to colab and to generated notebook -->
+    [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google-pytorch/torch_tpu/blob/main/docs/notebooks/case_studies_flux.ipynb)
 
     This case study walks through how we took a reference PyTorch implementation of the [FLUX](https://github.com/black-forest-labs/flux) diffusion transformer `DoubleStreamBlock` and made a training step **1.48x faster** on Cloud TPU with TorchTPU at a sequence length of 32,768.
 

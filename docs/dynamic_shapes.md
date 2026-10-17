@@ -3,10 +3,6 @@
 <!-- Link to colab and to generated notebook -->
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google-pytorch/torch_tpu/blob/main/docs/notebooks/dynamic_shapes.ipynb)
-|
-[View on github](https://github.com/google-pytorch/torch_tpu/blob/main/docs/notebooks/dynamic_shapes.ipynb)
-|
-[Markdown](https://github.com/google-pytorch/torch_tpu/blob/main/docs/dynamic_shapes.md)
 
 When you compile a model with `torch.compile(model)`, TorchTPU lowers the
 computation to StableHLO and compiles it with the XLA compiler (see
@@ -26,12 +22,12 @@ XLA.
 
 \## How dynamic shapes are handled by TorchTPU
 
-When you compile a model or function with `torch.compile(model, dynamic=None)`
-(as input shapes vary across calls) or explicitly mark dynamic dimensions with
-`torch._dynamo.mark_dynamic`, Dynamo traces the computation and produces an FX
-graph where changing dimensions are represented as symbolic integer variables
-(`torch.SymInt`) instead of fixed constants. TorchTPU handles these symbolic
-dimensions as follows:
+When you compile a model or function with default dynamism, that is
+`torch.compile(model, dynamic=None)` (as input shapes vary across calls) or
+explicitly mark dynamic dimensions with `torch._dynamo.mark_dynamic`, Dynamo
+traces the computation and produces an FX graph where changing dimensions are
+represented as symbolic integer variables (`torch.SymInt`) instead of fixed
+constants. TorchTPU handles these symbolic dimensions as follows:
 
 \### Compilation
 
@@ -91,10 +87,9 @@ generated token**—turning millisecond decode steps into multi-second
 compilations unless you rewrite the model to preallocate static buffers and
 perform in-place mutations.
 
-**Bounded dynamism** (`dynamic=None`) solves this without requiring model
-rewrites: as the KV cache grows across decode steps (`S + 1`, `S + 2`, ...), all
-shapes within the compiled bucket (`<= 128`, `<= 256`, ...) reuse the same XLA
-executable.
+**Bounded dynamism** solves this without requiring model rewrites: as the KV
+cache grows across decode steps (`S + 1`, `S + 2`, ...), all shapes within the
+compiled bucket (`<= 128`, `<= 256`, ...) reuse the same XLA executable.
 
 For a hands-on walkthrough applying bounded dynamism to a full LLM decode loop
 (and comparing against static KV cache preallocation), see
@@ -102,10 +97,10 @@ For a hands-on walkthrough applying bounded dynamism to a full LLM decode loop
 
 ## Example: Autoregressive loop with a growing tensor
 
-To see how static compilation (`dynamic=False`) and bounded dynamism
-(`dynamic=None`) behave in practice, consider a minimal autoregressive loop
-where each step appends a new token along the sequence dimension (`dim=2`) using
-`torch.cat`:
+To see how static compilation (`dynamic=False`) and bounded dynamism using
+default dynamism (`dynamic=None`) behave in practice, consider a minimal
+autoregressive loop where each step appends a new token along the sequence
+dimension (`dim=2`) using `torch.cat`:
 
 ```python
 import time
@@ -252,3 +247,4 @@ in mind when applying it to your models:
     runtime tensor values (such as `torch.nonzero`) are not supported.
 *   **Custom kernels:** Bounded dynamic shapes are not supported with custom TPU
     kernels (such as Pallas kernels registered via `torch.tpu.pallas.jax_op`).
+*   **dynamic=True:** torch.compile() *dynamic=True* mode is not supported.
