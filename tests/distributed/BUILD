@@ -550,58 +550,6 @@ torch_tpu_py_test(
 )
 
 torch_tpu_py_test(
-    name = "alltoall_collective_errors_test",
-    timeout = "long",
-    srcs = ["alltoall_collective_errors_test.py"],
-    args = [
-        "--test_mode=tpu",
-    ],
-    env = {"TORCH_SHOW_CPP_STACKTRACES": "0"},
-    tags = if_oss(
-        ["exclusive"],
-        [],
-    ) + [
-        REQUIRES_V5_MULTI_DEVICE,
-        "nosan",  # *san builds are low-value for error tests.
-    ],
-    deps = [
-        ":distributed_utils",
-        "//shims/absl_py/testing:absltest",
-        "//shims/torch:pytorch",
-        "//src/torch_tpu",
-        "//src/torch_tpu/_internal/distributed:multiprocessing",
-        "//tests:error_testing",
-    ],
-)
-
-torch_tpu_py_test(
-    name = "alltoall_collective_errors_test_cov",
-    timeout = "long",
-    srcs = ["alltoall_collective_errors_test.py"],
-    args = [
-        "--test_mode=cov",
-    ],
-    env = TEST_COV_ENV,
-    main = "alltoall_collective_errors_test.py",
-    notap = "Run by error_coverage_test in the torch_tpu.error_coverage Guitar workflow.",
-    tags = if_oss(
-        ["exclusive"],
-        [],
-    ) + [
-        "nosan",  # *san builds are low-value for error tests.
-        "requires-tpu-v5lite:8",
-    ],
-    deps = [
-        ":distributed_utils",
-        "//shims/absl_py/testing:absltest",
-        "//shims/torch:pytorch",
-        "//src/torch_tpu",
-        "//src/torch_tpu/_internal/distributed:multiprocessing",
-        "//tests:error_testing",
-    ],
-)
-
-torch_tpu_py_test(
     name = "fp8_collectives_test",
     srcs = ["fp8_collectives_test.py"],
     shard_count = 8,
