@@ -26,6 +26,7 @@
 #include "ATen/ops/full.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
+#include "csrc/common/aten_utils.h"
 #include "csrc/common/dimension_types.h"
 #include "csrc/common/dtype.h"
 #include "csrc/common/error_utils.h"
@@ -73,40 +74,42 @@ at::Tensor& AtenMeanOut(const at::Tensor& self,
                         std::optional<c10::ScalarType> dtype, at::Tensor& out) {
   TT_ASSIGN_OR_THROW(Dimensions canonical_dims, CanonicalizeDims(self, dim));
 
-  TT_KERNEL(OpName::kMeanOut, param_keys,
-            (self, canonical_dims, keep_dim, dtype, out), {
-              TT_ASSIGN_OR_THROW(c10::ScalarType scalar_dtype,
-                                 GetOutputScalarType(out, dtype));
+  TT_KERNEL(
+      OpName::kMeanOut, param_keys,
+      (self, canonical_dims, keep_dim, dtype, out), {
+        TT_ASSIGN_OR_THROW(c10::ScalarType scalar_dtype,
+                           GetOutputScalarType(out, dtype));
 
-              const ReductionMode reduction_mode =
-                  keep_dim ? ReductionMode::kKeepDims
-                           : ReductionMode::kDropDims;
-              Dimensions output_dims = GetSizesAfterReduction(
-                  self.sizes(), reduction_mode, canonical_dims);
+        const ReductionMode reduction_mode =
+            keep_dim ? ReductionMode::kKeepDims : ReductionMode::kDropDims;
+        Dimensions output_dims = GetSizesAfterReduction(
+            self.sizes(), reduction_mode, canonical_dims);
 
-              TT_ASSIGN_OR_THROW(const mlir::ElementType mlir_type,
-                                 ConvertTo<mlir::ElementType>(scalar_dtype));
+        TT_ASSIGN_OR_THROW(const mlir::ElementType mlir_type,
+                           ConvertTo<mlir::ElementType>(scalar_dtype));
 
-              const auto comp_type = ToAccumulateType(scalar_dtype);
-              TT_ASSIGN_OR_THROW(const auto computation_dtype,
-                                 ConvertTo<mlir::ElementType>(comp_type));
+        const auto comp_type = ToAccumulateType(scalar_dtype);
+        TT_ASSIGN_OR_THROW(const auto computation_dtype,
+                           ConvertTo<mlir::ElementType>(comp_type));
 
-              auto op_builder =
-                  [canonical_dims = std::move(canonical_dims), reduction_mode,
-                   computation_dtype](
-                      mlir::MlirOp input_op) -> absl::StatusOr<mlir::MlirOp> {
-                return BuildMeanShlo(input_op, canonical_dims, reduction_mode,
-                                     computation_dtype);
-              };
+        auto op_builder =
+            [canonical_dims = std::move(canonical_dims), reduction_mode,
+             computation_dtype](
+                mlir::MlirOp input_op) -> absl::StatusOr<mlir::MlirOp> {
+          return BuildMeanShlo(input_op, canonical_dims, reduction_mode,
+                               computation_dtype);
+        };
 
-              TT_THROW_IF_ERROR(
-                  UnaryOpOut(self, out, std::move(op_builder),
-                             {.op_param_cache_keys = std::move(param_keys),
-                              .out_dtype = mlir_type,
-                              .out_dims = std::move(output_dims),
-                              .computation_dtype = computation_dtype}));
-              return out;
-            });
+        TT_THROW_IF_ERROR(UnaryOpOut(
+            self, out, std::move(op_builder),
+            {.op_param_cache_keys = std::move(param_keys),
+             .out_dtype = mlir_type,
+             .out_dims = std::move(output_dims),
+             .computation_dtype = computation_dtype,
+             .allow_low_precision_float = !IsLowPrecisionFloat(scalar_dtype) &&
+                                          !IsLowPrecisionFloat(out)}));
+        return out;
+      });
 }
 
 }  // namespace torch_tpu

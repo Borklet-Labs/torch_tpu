@@ -32,7 +32,8 @@ at::Tensor AtenIsNan(const at::Tensor& self) {
     TT_ASSIGN_OR_THROW(
         auto result, UnaryOp(self, BuildIsNanShlo,
                              {.op_param_cache_keys = OpParamCacheKeys::Empty(),
-                              .out_dtype = mlir::ElementType::PRED}));
+                              .out_dtype = mlir::ElementType::PRED,
+                              .allow_low_precision_float = true}));
     return result;
   });
 }

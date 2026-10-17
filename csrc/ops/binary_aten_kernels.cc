@@ -118,6 +118,11 @@ absl::StatusOr<DeviceBufferRef> DispatchBinaryOp(
                       ToElementType(promoted_scalar_type));
   mlir::ElementType output_dtype =
       opts.result_dtype.value_or(computation_dtype);
+  if (!opts.allow_low_precision_float) {
+    TT_RETURN_IF_ERROR(ValidateNotLowPrecisionFloat(promoted_scalar_type));
+    TT_RETURN_IF_ERROR(
+        ValidateNotLowPrecisionFloat(ConvertTo<at::ScalarType>(output_dtype)));
+  }
 
   auto op_builder =
       [bin_op_builder = std::move(bin_op_builder),
@@ -163,6 +168,9 @@ absl::StatusOr<DeviceBufferRef> DispatchTernaryOp(
                       ToElementType(promoted_scalar_type));
   mlir::ElementType output_dtype =
       opts.result_dtype.value_or(computation_dtype);
+  TT_RETURN_IF_ERROR(ValidateNotLowPrecisionFloat(promoted_scalar_type));
+  TT_RETURN_IF_ERROR(
+      ValidateNotLowPrecisionFloat(ConvertTo<at::ScalarType>(output_dtype)));
 
   auto op_builder = [ternary_op_builder = std::move(ternary_op_builder)](
                         FixedSizeSpan<mlir::MlirOp, 3> inputs) {
@@ -232,6 +240,10 @@ absl::Status DispatchBinaryOpOut(const at::Tensor& self,
       promoted_scalar_type = c10::get_default_dtype_as_scalartype();
     }
   }
+  if (!opts.allow_low_precision_float) {
+    TT_RETURN_IF_ERROR(ValidateNotLowPrecisionFloat(promoted_scalar_type));
+  }
+  TT_RETURN_IF_ERROR(ValidateNotLowPrecisionFloat(out));
   TT_ASSIGN_OR_RETURN(mlir::ElementType computation_dtype,
                       ToElementType(promoted_scalar_type));
   TT_ASSIGN_OR_RETURN(const auto out_element_type,
@@ -302,6 +314,9 @@ absl::Status TernaryOpOut(const at::Tensor& self, const at::Tensor& other,
 
   TT_RETURN_IF_ERROR(internal::ValidateInPlaceBroadcast(
       out, {self_tpu, other_tpu, third_tpu}, output_dims));
+
+  TT_RETURN_IF_ERROR(ValidateNotLowPrecisionFloat(expected_result_type));
+  TT_RETURN_IF_ERROR(ValidateNotLowPrecisionFloat(out));
 
   at::ScalarType promoted_scalar_type = at::result_type(self_tpu, other_tpu);
   if (opts.force_float_inputs) {
@@ -721,7 +736,10 @@ absl::Status AtenComparisonScalarOutHelper(
                       ConvertTo<mlir::ElementType>(at::kBool));
   return BinaryOpOut(self, other_tensor, out, std::move(builder),
                      {.op_param_cache_keys = OpParamCacheKeys::Empty(),
-                      .result_dtype = bool_dtype});
+                      .result_dtype = bool_dtype,
+                      .allow_low_precision_float =
+                          direction == stablehlo::ComparisonDirection::EQ ||
+                          direction == stablehlo::ComparisonDirection::NE});
 }
 
 enum class BitwiseShiftDirection {
@@ -1357,7 +1375,8 @@ at::Tensor& AtenEqTensorOut(const at::Tensor& self, const at::Tensor& other,
     TT_THROW_IF_ERROR(
         BinaryOpOut(self, other, out, BuildEqShlo,
                     {.op_param_cache_keys = OpParamCacheKeys::Empty(),
-                     .result_dtype = bool_dtype}));
+                     .result_dtype = bool_dtype,
+                     .allow_low_precision_float = true}));
     return out;
   });
 }
@@ -1677,7 +1696,8 @@ at::Tensor& AtenNeTensorOut(const at::Tensor& self, const at::Tensor& other,
     TT_THROW_IF_ERROR(
         BinaryOpOut(self, other, out, BuildNeShlo,
                     {.op_param_cache_keys = OpParamCacheKeys::Empty(),
-                     .result_dtype = bool_dtype}));
+                     .result_dtype = bool_dtype,
+                     .allow_low_precision_float = true}));
     return out;
   });
 }

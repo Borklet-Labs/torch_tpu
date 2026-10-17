@@ -26,6 +26,7 @@
 #include "absl/strings/str_join.h"
 #include "absl/types/span.h"
 #include "c10/core/ScalarType.h"
+#include "csrc/common/aten_utils.h"
 #include "csrc/common/cache_key.h"
 #include "csrc/common/dimension_types.h"
 #include "csrc/common/dtype.h"
@@ -134,6 +135,7 @@ absl::StatusOr<mlir::ElementType> ValidateAddmmInputsAndGetOutputDtype(
           (mat1.scalar_type() != at::kInt && mat1.scalar_type() != at::kLong),
       error::kPythonNotImplementedError)
       << "not implemented for " << ToString(mat1.scalar_type());
+  TT_RETURN_IF_ERROR(ValidateNotLowPrecisionFloat(out_scalar_type));
   TT_RET_CHECK(!self.is_complex() && !mat1.is_complex() && !mat2.is_complex() &&
                    beta.scalar().type() != at::kComplexFloat &&
                    beta.scalar().type() != at::kComplexDouble &&

@@ -50,6 +50,7 @@ absl::StatusOr<mlir::ElementType> ValidateAndGetDotOutputType(
       output_scalar_type != at::kInt && output_scalar_type != at::kLong,
       error::kPythonNotImplementedError)
       << "not implemented for " << ToString(output_scalar_type);
+  TT_RETURN_IF_ERROR(ValidateNotLowPrecisionFloat(output_scalar_type));
 
   TT_ASSIGN_OR_RETURN(auto output_type,
                       ConvertTo<mlir::ElementType>(at::result_type(lhs, rhs)));

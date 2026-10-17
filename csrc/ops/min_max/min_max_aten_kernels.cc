@@ -50,6 +50,7 @@ namespace torch_tpu {
 
 absl::StatusOr<DeviceBufferRef> DispatchUnaryMinMax(
     const at::Tensor& self, MinMaxOp op, std::optional<OpName> op_name) {
+  TT_RETURN_IF_ERROR(ValidateNotLowPrecisionFloat(self));
   Dimensions out_dims = {};  // Scalar out shape.
 
   TT_ASSIGN_OR_RETURN(mlir::ElementType output_dtype,
@@ -88,6 +89,7 @@ absl::StatusOr<std::tuple<at::Tensor, at::Tensor>> AtenMinMaxDim(
 
   Dimensions output_dims = CopyIntVector(at::meta::get_reduction_shape(
       self, {dim}, keep_dim, /*allow_empty_dims=*/false));
+  TT_RETURN_IF_ERROR(ValidateNotLowPrecisionFloat(self));
 
   TT_ASSIGN_OR_RETURN(mlir::ElementType output_dtype,
                       ConvertTo<mlir::ElementType>(self.scalar_type()));
@@ -129,6 +131,8 @@ absl::Status UnaryMinMax(const at::Tensor& self, MinMaxOp op, at::Tensor& out) {
 
   TT_RETURN_IF_ERROR(
       ValidateOutDtype(out, self.scalar_type(), /*allow_out_dtype_cast=*/true));
+  TT_RETURN_IF_ERROR(ValidateNotLowPrecisionFloat(self));
+  TT_RETURN_IF_ERROR(ValidateNotLowPrecisionFloat(out));
 
   TT_ASSIGN_OR_RETURN(mlir::ElementType computation_dtype,
                       ConvertTo<mlir::ElementType>(self.scalar_type()));
@@ -181,6 +185,7 @@ absl::Status ArgMinMax(const at::Tensor& self, c10::optional<int64_t> dim,
   TT_RET_CHECK(!IsComplex(self) && !IsBool(self), error::kInvalidArgument)
       << "expected the input dtype to be neither complex nor bool, got "
       << ToString(self.scalar_type());
+  TT_RETURN_IF_ERROR(ValidateNotLowPrecisionFloat(self));
 
   Dimensions out_dims = CopyIntVector(out_shape);
 

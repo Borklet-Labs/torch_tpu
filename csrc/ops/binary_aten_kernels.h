@@ -67,6 +67,9 @@ struct BinaryOpOptions {
   // math/arithmetic ops, false for ops like `complex` or `polar` that enforce
   // strict dtype matching).
   bool allow_out_dtype_cast = true;
+  // Whether this binary operation is allowed on low-precision float dtypes
+  // (`float8_*` or `float4_e2m1fn_x2`), e.g. `eq` and `ne`.
+  bool allow_low_precision_float = false;
 };
 
 struct TernaryOpOptions {

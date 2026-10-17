@@ -5048,6 +5048,197 @@ module {
           16,
       )
 
+  @parameterized.named_parameters(
+      dict(
+          testcase_name="float8_e4m3fn_neg",
+          op_fn=lambda t: torch.neg(t),
+          dtype=torch.float8_e4m3fn,
+          expected_msg="neg(): not implemented for float8_e4m3fn",
+      ),
+      dict(
+          testcase_name="float8_e4m3fn_abs",
+          op_fn=lambda t: torch.abs(t),
+          dtype=torch.float8_e4m3fn,
+          expected_msg="abs(): not implemented for float8_e4m3fn",
+      ),
+      dict(
+          testcase_name="float8_e4m3fn_sin",
+          op_fn=lambda t: torch.sin(t),
+          dtype=torch.float8_e4m3fn,
+          expected_msg="sin(): not implemented for float8_e4m3fn",
+      ),
+      dict(
+          testcase_name="float8_e4m3fn_exp",
+          op_fn=lambda t: torch.exp(t),
+          dtype=torch.float8_e4m3fn,
+          expected_msg="exp(): not implemented for float8_e4m3fn",
+      ),
+      dict(
+          testcase_name="float8_e4m3fn_add",
+          op_fn=lambda t: torch.add(t, t),
+          dtype=torch.float8_e4m3fn,
+          expected_msg="add(): not implemented for float8_e4m3fn",
+      ),
+      dict(
+          testcase_name="float8_e4m3fn_mul",
+          op_fn=lambda t: torch.mul(t, t),
+          dtype=torch.float8_e4m3fn,
+          expected_msg="mul(): not implemented for float8_e4m3fn",
+      ),
+      dict(
+          testcase_name="float8_e4m3fn_clamp",
+          op_fn=lambda t: torch.clamp(t, -1.0, 1.0),
+          dtype=torch.float8_e4m3fn,
+          expected_msg="clamp(): not implemented for float8_e4m3fn",
+      ),
+      dict(
+          testcase_name="float8_e4m3fn_sum",
+          op_fn=lambda t: torch.sum(t),
+          dtype=torch.float8_e4m3fn,
+          expected_msg="sum(): not implemented for float8_e4m3fn",
+      ),
+      dict(
+          testcase_name="float8_e4m3fn_mean",
+          op_fn=lambda t: torch.mean(t),
+          dtype=torch.float8_e4m3fn,
+          expected_msg="mean(): not implemented for float8_e4m3fn",
+      ),
+      dict(
+          testcase_name="float8_e4m3fn_amax",
+          op_fn=lambda t: torch.amax(t),
+          dtype=torch.float8_e4m3fn,
+          expected_msg="amax(): not implemented for float8_e4m3fn",
+      ),
+      dict(
+          testcase_name="float8_e4m3fn_max",
+          op_fn=lambda t: torch.max(t),
+          dtype=torch.float8_e4m3fn,
+          expected_msg="max(): not implemented for float8_e4m3fn",
+      ),
+      dict(
+          testcase_name="float8_e4m3fn_mm",
+          op_fn=lambda t: torch.mm(t, t),
+          dtype=torch.float8_e4m3fn,
+          expected_msg="mm(): not implemented for float8_e4m3fn",
+      ),
+      dict(
+          testcase_name="float8_e4m3fn_bmm",
+          op_fn=lambda t: torch.bmm(t.unsqueeze(0), t.unsqueeze(0)),
+          dtype=torch.float8_e4m3fn,
+          expected_msg="bmm(): not implemented for float8_e4m3fn",
+      ),
+      dict(
+          testcase_name="float8_e4m3fn_addmm",
+          op_fn=lambda t: torch.addmm(t, t, t),
+          dtype=torch.float8_e4m3fn,
+          expected_msg="addmm(): not implemented for float8_e4m3fn",
+      ),
+      dict(
+          testcase_name="float8_e4m3fn_baddbmm",
+          op_fn=lambda t: torch.baddbmm(
+              t.unsqueeze(0), t.unsqueeze(0), t.unsqueeze(0)
+          ),
+          dtype=torch.float8_e4m3fn,
+          expected_msg="baddbmm(): not implemented for float8_e4m3fn",
+      ),
+      dict(
+          testcase_name="float8_e4m3fn_dot",
+          op_fn=lambda t: torch.dot(t.flatten(), t.flatten()),
+          dtype=torch.float8_e4m3fn,
+          expected_msg="dot(): not implemented for float8_e4m3fn",
+      ),
+      dict(
+          testcase_name="float8_e4m3fn_multinomial",
+          op_fn=lambda t: torch.multinomial(t, 1),
+          dtype=torch.float8_e4m3fn,
+          expected_msg="multinomial(): not implemented for float8_e4m3fn",
+      ),
+      dict(
+          testcase_name="float8_e4m3fn_prod",
+          op_fn=lambda t: torch.prod(t),
+          dtype=torch.float8_e4m3fn,
+          expected_msg="prod(): not implemented for float8_e4m3fn",
+      ),
+      dict(
+          testcase_name="float8_e4m3fn_argmax",
+          op_fn=lambda t: torch.argmax(t),
+          dtype=torch.float8_e4m3fn,
+          expected_msg="argmax(): not implemented for float8_e4m3fn",
+      ),
+      dict(
+          testcase_name="float8_e4m3fn_relu",
+          op_fn=lambda t: torch.relu(t),
+          dtype=torch.float8_e4m3fn,
+          expected_msg="relu(): not implemented for float8_e4m3fn",
+      ),
+      dict(
+          testcase_name="float8_e4m3fn_relu_",
+          op_fn=lambda t: torch.relu_(t),
+          dtype=torch.float8_e4m3fn,
+          expected_msg="relu_(): not implemented for float8_e4m3fn",
+      ),
+      dict(
+          testcase_name="float8_e4m3fn_lt",
+          op_fn=lambda t: torch.lt(t, t),
+          dtype=torch.float8_e4m3fn,
+          expected_msg="lt(): not implemented for float8_e4m3fn",
+      ),
+      dict(
+          testcase_name="float8_e4m3fn_gelu",
+          op_fn=lambda t: torch.nn.functional.gelu(t),
+          dtype=torch.float8_e4m3fn,
+          expected_msg="gelu(): not implemented for float8_e4m3fn",
+      ),
+      dict(
+          testcase_name="float8_e4m3fn_silu",
+          op_fn=lambda t: torch.nn.functional.silu(t),
+          dtype=torch.float8_e4m3fn,
+          expected_msg="silu(): not implemented for float8_e4m3fn",
+      ),
+      dict(
+          testcase_name="float8_e4m3fn_signbit",
+          op_fn=lambda t: torch.signbit(t),
+          dtype=torch.float8_e4m3fn,
+          expected_msg="signbit(): not implemented for float8_e4m3fn",
+      ),
+      dict(
+          testcase_name="float8_e4m3fn_logical_not",
+          op_fn=lambda t: torch.logical_not(t),
+          dtype=torch.float8_e4m3fn,
+          expected_msg="logical_not(): not implemented for float8_e4m3fn",
+      ),
+      dict(
+          testcase_name="float8_e4m3fn_sin_out_fp32",
+          op_fn=lambda t: torch.sin(
+              t, out=torch.empty_like(t, dtype=torch.float32)
+          ),
+          dtype=torch.float8_e4m3fn,
+          expected_msg="sin(): not implemented for float8_e4m3fn",
+      ),
+      dict(
+          testcase_name="float8_e5m2_add",
+          op_fn=lambda t: torch.add(t, t),
+          dtype=torch.float8_e5m2,
+          expected_msg="add(): not implemented for float8_e5m2",
+      ),
+      dict(
+          testcase_name="float4_e2m1fn_x2_neg",
+          op_fn=lambda t: torch.neg(t),
+          dtype=torch.float4_e2m1fn_x2,
+          expected_msg="neg(): not implemented for float4_e2m1fn_x2",
+      ),
+  )
+  @et.why_tpu_only("Low-precision float guard rejects unsupported ops on TPU.")
+  def test_low_precision_float_rejected_by_op_guards(
+      self, op_fn, dtype, expected_msg
+  ):
+    t = torch.empty((2, 2), dtype=dtype, device=et.device())
+    with et.assert_raises_message(
+        NotImplementedError,
+        tpu=expected_msg,
+    ):
+      op_fn(t)
+
 
 class PyBindErrorUtilsErrorsTest(et.TpuOnlyErrorTestBase):
 

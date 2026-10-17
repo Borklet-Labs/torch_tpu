@@ -117,6 +117,7 @@ absl::Status ValidateSiluBackwardInputs(const at::Tensor& grad_output,
   TT_RET_CHECK(at::isFloatingType(promoted_type),
                error::kPythonNotImplementedError)
       << "not implemented for " << ToString(promoted_type);
+  TT_RETURN_IF_ERROR(ValidateNotLowPrecisionFloat(promoted_type));
   return absl::OkStatus();
 }
 
@@ -147,6 +148,7 @@ at::Tensor& AtenSiluOut(const at::Tensor& self, at::Tensor& out) {
                        self.scalar_type() != at::kLong,
                    error::kPythonNotImplementedError)
         << "not implemented for " << ToString(self.scalar_type());
+    TT_THROW_IF_ERROR(ValidateNotLowPrecisionFloat(self));
     TT_CHECK_THROW(self.is_floating_point(), error::kInvalidArgument)
         << "expected the input dtype to be floating point, got "
         << ToString(self.scalar_type());

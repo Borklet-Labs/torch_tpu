@@ -67,6 +67,7 @@ at::ScalarType InferProdDtype(at::ScalarType input_dtype,
 absl::StatusOr<at::Tensor> ProdZeroDim(const at::Tensor& self,
                                        at::ScalarType inferred_dtype,
                                        OpParamCacheKeys param_keys) {
+  TT_RETURN_IF_ERROR(ValidateNotLowPrecisionFloat(inferred_dtype));
   if (self.scalar_type() == inferred_dtype) {
     // If input and output dtypes match, wrap the existing DeviceBufferRef in
     // a new ATen tensor. This avoids dispatching an identity copy op.
@@ -86,7 +87,9 @@ absl::StatusOr<at::Tensor> ProdZeroDim(const at::Tensor& self,
   TT_ASSIGN_OR_RETURN(auto result,
                       UnaryOp(self, convert_builder,
                               {.op_param_cache_keys = std::move(param_keys),
-                               .out_dtype = inferred_mlir_dtype}));
+                               .out_dtype = inferred_mlir_dtype,
+                               .allow_low_precision_float =
+                                   !IsLowPrecisionFloat(inferred_dtype)}));
   return result;
 }
 
@@ -130,7 +133,9 @@ absl::StatusOr<at::Tensor> AtenProdHelper(const at::Tensor& self,
                                             dtype_mlir_type),
                            {.op_param_cache_keys = std::move(param_keys),
                             .out_dtype = inferred_mlir_dtype,
-                            .out_dims = std::move(output_dims)}));
+                            .out_dims = std::move(output_dims),
+                            .allow_low_precision_float =
+                                !IsLowPrecisionFloat(inferred_dtype)}));
   return result;
 }
 

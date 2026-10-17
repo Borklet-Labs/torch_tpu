@@ -87,7 +87,8 @@ at::Tensor& AtenZero_(at::Tensor& self) {
     };
     TT_THROW_IF_ERROR(
         UnaryOpInPlace(self, std::move(op_builder),
-                       {.op_param_cache_keys = OpParamCacheKeys::Empty()}));
+                       {.op_param_cache_keys = OpParamCacheKeys::Empty(),
+                        .allow_low_precision_float = true}));
     return self;
   });
 }

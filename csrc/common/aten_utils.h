@@ -133,6 +133,30 @@ inline bool IsHalf(const at::Tensor& tensor) {
   return tensor.scalar_type() == at::ScalarType::Half;
 }
 
+// Returns whether `thing` holds a low-precision floating-point dtype
+// (`float8_*` or `float4_e2m1fn_x2`) that is restricted to storage, movement,
+// casting, and scaled matmul operations.
+//
+// The template parameter `T` should be one of:
+//
+//   - const at::Tensor&
+//   - const at::Scalar&
+//   - at::ScalarType
+template <typename T>
+bool IsLowPrecisionFloat(const T& thing) {
+  const at::ScalarType dtype = GetScalarType(thing);
+  return c10::isFloat8Type(dtype) || dtype == at::ScalarType::Float4_e2m1fn_x2;
+}
+
+// Verifies that `thing` does not have a low-precision floating-point dtype.
+template <typename T>
+absl::Status ValidateNotLowPrecisionFloat(const T& thing) {
+  const at::ScalarType dtype = GetScalarType(thing);
+  TT_RET_CHECK(!IsLowPrecisionFloat(dtype), error::kPythonNotImplementedError)
+      << "not implemented for " << ToString(dtype);
+  return absl::OkStatus();
+}
+
 // Returns whether `tensor` holds integer data.
 inline bool IsInteger(const at::Tensor& tensor) {
   return c10::isIntegralType(tensor.scalar_type(), /* includeBool= */ false);

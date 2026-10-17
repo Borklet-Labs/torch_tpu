@@ -64,6 +64,7 @@ at::Tensor AtenGelu(const at::Tensor& self, c10::string_view approximate) {
     TT_CHECK_THROW(!c10::isIntegralType(self_dtype, /*includeBool=*/true),
                    error::kPythonNotImplementedError)
         << "unsupported input dtype: '" << ToString(self_dtype) << "'";
+    TT_THROW_IF_ERROR(ValidateNotLowPrecisionFloat(self));
     const c10::ScalarType out_type = InferOutputDtype(self);
     TT_ASSIGN_OR_THROW(const auto out_dtype,
                        ConvertTo<mlir::ElementType>(out_type));
@@ -88,6 +89,7 @@ at::Tensor& AtenGeluOut(const at::Tensor& self, c10::string_view approximate,
     TT_CHECK_THROW(!c10::isIntegralType(self_dtype, /*includeBool=*/true),
                    error::kPythonNotImplementedError)
         << "unsupported input dtype: '" << ToString(self_dtype) << "'";
+    TT_THROW_IF_ERROR(ValidateNotLowPrecisionFloat(self));
     TT_ASSIGN_OR_THROW(const auto out_dtype,
                        ConvertTo<mlir::ElementType>(self_dtype));
     TT_THROW_IF_ERROR(UnaryOpOut(self, out,
@@ -118,6 +120,7 @@ at::Tensor& AtenGeluBackwardGradInput(const at::Tensor& grad_output,
             << "unsupported input dtype: '" << ToString(self_dtype) << "'";
         TT_THROW_IF_ERROR(ValidateOutDtype(grad_input, self_dtype,
                                            /*allow_out_dtype_cast=*/false));
+        TT_THROW_IF_ERROR(ValidateNotLowPrecisionFloat(self));
         const c10::ScalarType output_tensor_type = InferOutputDtype(self);
         TT_ASSIGN_OR_THROW(const auto out_dtype,
                            ConvertTo<mlir::ElementType>(output_tensor_type));

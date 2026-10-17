@@ -109,6 +109,8 @@ absl::Status AtenClampTensorHelper(const at::Tensor& self,
 
   TT_RETURN_IF_ERROR(
       ValidateOutDtype(out, computation_scalar_type, allow_out_dtype_cast));
+  TT_RETURN_IF_ERROR(ValidateNotLowPrecisionFloat(computation_scalar_type));
+  TT_RETURN_IF_ERROR(ValidateNotLowPrecisionFloat(out));
 
   TT_ASSIGN_OR_RETURN(const auto output_dtype,
                       ConvertTo<mlir::ElementType>(out.scalar_type()));

@@ -87,7 +87,8 @@ at::Tensor& AtenCumsumOut(const at::Tensor& self, int64_t dim,
         self, out,
         absl::bind_front(BuildCumsumShlo, normalized_dim, out_mlir_type),
         {.op_param_cache_keys = std::move(param_keys),
-         .out_dtype = out_mlir_type}));
+         .out_dtype = out_mlir_type,
+         .allow_low_precision_float = !IsLowPrecisionFloat(out)}));
     return out;
   });
 }

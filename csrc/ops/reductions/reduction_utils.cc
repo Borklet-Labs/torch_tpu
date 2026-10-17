@@ -35,6 +35,7 @@
 #include "absl/types/span.h"
 #include "c10/core/ScalarType.h"
 #include "c10/util/OptionalArrayRef.h"
+#include "csrc/common/aten_utils.h"
 #include "csrc/common/cache_key.h"
 #include "csrc/common/dimension_types.h"
 #include "csrc/common/dtype.h"
@@ -107,6 +108,7 @@ Dimensions GetSizesAfterReduction(at::IntArrayRef self_size,
 }
 
 absl::Status ValidateFloatOrComplex(c10::ScalarType scalar_type) {
+  TT_RETURN_IF_ERROR(ValidateNotLowPrecisionFloat(scalar_type));
   TT_ASSIGN_OR_RETURN(const auto dtype,
                       ConvertTo<mlir::ElementType>(scalar_type));
   TT_RET_CHECK(
@@ -208,7 +210,8 @@ absl::StatusOr<at::Tensor> ApplySumReduction(const at::Tensor& self,
       {.op_name = OpName::kSum,
        .op_param_cache_keys = std::move(param_keys),
        .out_dtype = mlir_type,
-       .out_dims = std::move(output_dims)});
+       .out_dims = std::move(output_dims),
+       .allow_low_precision_float = !IsLowPrecisionFloat(out_dtype)});
 }
 
 absl::Status ApplySumReductionOut(const at::Tensor& self, at::Tensor& out,
@@ -227,7 +230,9 @@ absl::Status ApplySumReductionOut(const at::Tensor& self, at::Tensor& out,
       GetSumFunctional(std::move(canonical_dims), reduction_mode, mlir_type),
       {.op_param_cache_keys = std::move(param_keys),
        .out_dtype = mlir_type,
-       .out_dims = std::move(output_dims)});
+       .out_dims = std::move(output_dims),
+       .allow_low_precision_float =
+           !IsLowPrecisionFloat(out_dtype) && !IsLowPrecisionFloat(out)});
 }
 
 }  // namespace torch_tpu

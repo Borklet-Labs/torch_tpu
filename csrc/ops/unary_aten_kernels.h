@@ -52,6 +52,9 @@ struct UnaryOpOptions {
   // ops, false for dtype-preserving ops that enforce check_all_same_dtype in
   // ATen).
   bool allow_out_dtype_cast = true;
+  // Whether this unary operation is allowed on low-precision float dtypes
+  // (`float8_*` or `float4_e2m1fn_x2`), e.g. `zero_` or `abs` on `float8_e5m2`.
+  bool allow_low_precision_float = false;
 };
 
 // Safely applies a functional unary operation to the input tensor.

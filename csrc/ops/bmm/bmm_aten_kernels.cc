@@ -23,6 +23,7 @@
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "c10/core/ScalarType.h"
+#include "csrc/common/aten_utils.h"
 #include "csrc/common/cache_key.h"
 #include "csrc/common/dimension_types.h"
 #include "csrc/common/dtype.h"
@@ -97,6 +98,7 @@ ReturnType DispatchBmm(const at::Tensor& self, const at::Tensor& mat2,
                        at::ScalarType out_dtype, OpParamCacheKeys param_keys,
                        DispatchFn&& dispatch_fn) {
   TT_RETURN_IF_ERROR(ValidateBmmInputs(self, mat2));
+  TT_RETURN_IF_ERROR(ValidateNotLowPrecisionFloat(out_dtype));
   TT_ASSIGN_OR_RETURN(mlir::ElementType output_dtype_mlir,
                       ConvertTo<mlir::ElementType>(out_dtype));
   Dimensions output_dims_vec = {self.size(0), self.size(1), mat2.size(2)};

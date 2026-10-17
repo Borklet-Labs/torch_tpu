@@ -3048,6 +3048,87 @@ class OpsUnitTest(TorchTpuVsCpuTestBase):
 
     self.assert_close_tpu_vs_cpu(compute, rtol=3.7e-3, atol=4.2e-5)
 
+  @parameterized.named_parameters(
+      dict(
+          testcase_name="clone",
+          op_fn=lambda t: t.clone(),
+      ),
+      dict(
+          testcase_name="to_copy",
+          op_fn=lambda t: torch.ops.aten._to_copy(t, dtype=t.dtype),
+      ),
+      dict(
+          testcase_name="view",
+          op_fn=lambda t: t.view(4, 2),
+      ),
+      dict(
+          testcase_name="reshape",
+          op_fn=lambda t: t.reshape(4, 2),
+      ),
+      dict(
+          testcase_name="slice",
+          op_fn=lambda t: t[:1, :],
+      ),
+      dict(
+          testcase_name="cat",
+          op_fn=lambda t: torch.cat([t, t], dim=0),
+      ),
+      dict(
+          testcase_name="stack",
+          op_fn=lambda t: torch.stack([t, t], dim=0),
+      ),
+      dict(
+          testcase_name="zero_",
+          op_fn=lambda t: t.clone().zero_(),
+      ),
+      dict(
+          testcase_name="eq",
+          op_fn=lambda t: torch.eq(t, t),
+      ),
+      dict(
+          testcase_name="ne",
+          op_fn=lambda t: torch.ne(t, t),
+      ),
+      dict(
+          testcase_name="isnan",
+          op_fn=lambda t: torch.isnan(t),
+      ),
+  )
+  def test_low_precision_float_kept_ops(self, op_fn):
+    """Tests non-regression for allowlisted data movement and predicate ops on FP8."""
+    device = torch.device("tpu")
+    t_cpu = torch.randn(2, 4, dtype=torch.float32).to(torch.float8_e4m3fn)
+    t_tpu = t_cpu.to(device)
+
+    res_tpu = op_fn(t_tpu)
+    try:
+      res_cpu = op_fn(t_cpu)
+    except NotImplementedError:
+      res_cpu = op_fn(t_cpu.float())
+
+    self.assertEqual(res_tpu.dtype, res_cpu.dtype)
+    self.assertEqual(res_tpu.shape, res_cpu.shape)
+    utils.assert_close(
+        actual=res_tpu.cpu().view(torch.uint8),
+        expected=res_cpu.view(torch.uint8),
+    )
+
+  def test_fp8_e5m2_abs_allowed(self):
+    """Tests that abs() is allowed on float8_e5m2 per CUDA parity."""
+    device = torch.device("tpu")
+    raw = torch.tensor([[0x81, 0x02], [0x83, 0x04]], dtype=torch.uint8)
+    t_cpu = raw.view(torch.float8_e5m2)
+    t_tpu = t_cpu.to(device)
+
+    res_tpu = torch.abs(t_tpu)
+    res_cpu = torch.abs(t_cpu)
+
+    self.assertEqual(res_tpu.dtype, torch.float8_e5m2)
+    utils.assert_close(
+        actual=res_tpu.cpu().view(torch.uint8),
+        expected=res_cpu.view(torch.uint8),
+    )
+
   @parameterized.product(
       m=[16, 32],
       n=[16, 32],

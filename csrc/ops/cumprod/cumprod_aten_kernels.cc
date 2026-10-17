@@ -22,6 +22,7 @@
 
 #include "ATen/core/ATen_fwd.h"
 #include "absl/functional/bind_front.h"
+#include "csrc/common/aten_utils.h"
 #include "csrc/common/dtype.h"
 #include "csrc/common/error_utils.h"
 #include "csrc/common/to_string.h"
@@ -82,7 +83,8 @@ at::Tensor& AtenCumprodOut(const at::Tensor& self, int64_t dim,
         self, out,
         absl::bind_front(BuildCumprodShlo, normalized_dim, out_mlir_type),
         {.op_param_cache_keys = std::move(param_keys),
-         .out_dtype = out_mlir_type}));
+         .out_dtype = out_mlir_type,
+         .allow_low_precision_float = !IsLowPrecisionFloat(out)}));
     return out;
   });
 }

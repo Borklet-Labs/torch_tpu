@@ -82,6 +82,7 @@ absl::Status AMinMax(const at::Tensor& self, const at::IntArrayRef dims,
   at::maybe_wrap_dims(dim_vec, self.dim());
   auto out_shape = at::meta::get_reduction_shape(self, dim_vec, keep_dim,
                                                  /*allow_empty_dims=*/false);
+  TT_RETURN_IF_ERROR(ValidateNotLowPrecisionFloat(self));
   Dimensions out_dims = CopyIntVector(out_shape);
 
   TT_ASSIGN_OR_RETURN(auto out_dtype,
@@ -143,6 +144,7 @@ std::tuple<at::Tensor&, at::Tensor&> AtenAminmaxOut(
     at::maybe_wrap_dims(dim_vec, self.dim());
     auto out_shape = at::meta::get_reduction_shape(self, dim_vec, keep_dim,
                                                    /*allow_empty_dims=*/false);
+    TT_THROW_IF_ERROR(ValidateNotLowPrecisionFloat(self));
     Dimensions out_dims = CopyIntVector(out_shape);
 
     TT_ASSIGN_OR_THROW(auto out_dtype,

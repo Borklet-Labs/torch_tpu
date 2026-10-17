@@ -26,6 +26,7 @@
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "c10/core/ScalarType.h"
+#include "csrc/common/aten_utils.h"
 #include "csrc/common/cache_key.h"
 #include "csrc/common/dimension_types.h"
 #include "csrc/common/dtype.h"
@@ -92,6 +93,8 @@ absl::Status ValidateBaddbmmInputs(const at::Tensor& self,
       << ") to match the second dimension of the second argument (of shape "
       << ToString(batch2.sizes()) << "), got " << batch1.size(2) << " vs "
       << batch2.size(1);
+
+  TT_RETURN_IF_ERROR(ValidateNotLowPrecisionFloat(batch1));
 
   return absl::OkStatus();
 }

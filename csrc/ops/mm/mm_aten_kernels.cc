@@ -87,6 +87,10 @@ absl::Status ValidateMmOutInputs(const at::Tensor& lhs, const at::Tensor& rhs,
                    c10::isComplexType(lhs.scalar_type()),
                error::kPythonNotImplementedError)
       << "not implemented for " << ToString(lhs.scalar_type());
+  if (!out_dtype.has_value()) {
+    TT_RETURN_IF_ERROR(ValidateNotLowPrecisionFloat(lhs));
+  }
+  TT_RETURN_IF_ERROR(ValidateNotLowPrecisionFloat(out));
 
   return absl::OkStatus();
 }

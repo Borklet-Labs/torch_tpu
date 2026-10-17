@@ -113,6 +113,11 @@ absl::StatusOr<at::Tensor> UnaryOp(const at::Tensor& self,
     TT_ASSIGN_OR_RETURN(output_dtype,
                         ConvertTo<mlir::ElementType>(self.scalar_type()));
   }
+  if (!options.allow_low_precision_float) {
+    TT_RETURN_IF_ERROR(ValidateNotLowPrecisionFloat(self));
+    TT_RETURN_IF_ERROR(
+        ValidateNotLowPrecisionFloat(ConvertTo<at::ScalarType>(output_dtype)));
+  }
   const at::IntArrayRef output_dims = options.out_dims.has_value()
                                           ? options.out_dims.value()
                                           : at::IntArrayRef(self.sizes());
@@ -139,6 +144,9 @@ absl::StatusOr<at::Tensor> UnaryOp(const at::Tensor& self, OpName op_name,
 
 absl::Status UnaryOpInPlace(at::Tensor& self, MlirUnaryOpBuilder op_builder,
                             UnaryOpOptions options) {
+  if (!options.allow_low_precision_float) {
+    TT_RETURN_IF_ERROR(ValidateNotLowPrecisionFloat(self));
+  }
   TT_ASSIGN_OR_RETURN(const auto output_dtype,
                       ConvertTo<mlir::ElementType>(self.scalar_type()));
   return DispatchOpOut<1>(
@@ -176,6 +184,11 @@ absl::Status UnaryOpOut(const at::Tensor& self, at::Tensor& out,
 
   TT_RETURN_IF_ERROR(ValidateOutDtype(out, expected_result_type,
                                       options.allow_out_dtype_cast));
+  if (!options.allow_low_precision_float) {
+    TT_RETURN_IF_ERROR(ValidateNotLowPrecisionFloat(self));
+    TT_RETURN_IF_ERROR(ValidateNotLowPrecisionFloat(expected_result_type));
+    TT_RETURN_IF_ERROR(ValidateNotLowPrecisionFloat(out));
+  }
 
   TT_ASSIGN_OR_RETURN(const auto output_dtype,
                       ConvertTo<mlir::ElementType>(out.scalar_type()));
@@ -234,11 +247,15 @@ at::Tensor& AtenAbsOut(const at::Tensor& self, at::Tensor& out) {
     // PyTorch ATen's abs enforces check_all_same_dtype(true) for real inputs,
     // but allows promotional safe-casting for complex-to-real outputs (matching
     // unary_op_impl_with_complex_to_float_out in PyTorch's UnaryOps.cpp).
+    // float8_e5m2 supports abs (as used by torchao amax calculation).
     TT_THROW_IF_ERROR(UnaryOpOut(
         self, out, BuildAbsShlo,
         {.op_param_cache_keys = OpParamCacheKeys::Empty(),
          .out_dtype = out_dtype,
-         .allow_out_dtype_cast = self.is_complex() && !out.is_complex()}));
+         .allow_out_dtype_cast = self.is_complex() && !out.is_complex(),
+         .allow_low_precision_float =
+             self.scalar_type() == at::ScalarType::Float8_e5m2 &&
+             out.scalar_type() == at::ScalarType::Float8_e5m2}));
     return out;
   });
 }
