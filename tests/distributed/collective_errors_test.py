@@ -485,8 +485,8 @@ _EARLY_TIMEOUT_RANK = _PG_WORLD_SIZE - 2
 
 # Store timeouts. The collector must time out well after
 # `_EARLY_TIMEOUT_RANK` and well before the other ranks.
-_EARLY_TIMEOUT = datetime.timedelta(seconds=2)
-_COLLECTOR_TIMEOUT = datetime.timedelta(seconds=6)
+_EARLY_TIMEOUT = datetime.timedelta(seconds=1)
+_COLLECTOR_TIMEOUT = datetime.timedelta(seconds=3)
 _LONG_TIMEOUT = datetime.timedelta(seconds=180)
 
 # Root op name that may prefix errors raised from the backend factory.
@@ -513,12 +513,8 @@ def _barrier(store: dist.Store, name: str) -> None:
   store.wait([f"{name}:done"])
 
 
-def run_missing_rank() -> None:
-  """Creates the process group on all ranks but `_ABSENT_RANK`."""
-  # With one rank per host, every rank publishes to the world store directly,
-  # so rank 0, which holds the first key, is the collector. On a single host,
-  # TORCH_TPU_DEVICES_PER_HOST is first read when the process group is created.
-  os.environ["TORCH_TPU_DEVICES_PER_HOST"] = "1"
+def run_missing_rank_and_local_rank_out_of_range() -> None:
+  """Tests missing-rank store timeouts on ranks 0..6 and out-of-range LOCAL_RANK on `_ABSENT_RANK`."""
   rank = int(os.environ["RANK"])
   store = dist.TCPStore(
       os.environ["MASTER_ADDR"],
@@ -530,58 +526,14 @@ def run_missing_rank() -> None:
   _init_tpu()
   _barrier(store, "ready")
 
-  if rank != _ABSENT_RANK:
-    if rank == 0:
-      timeout = _COLLECTOR_TIMEOUT
-      expected_msg = _COLLECTOR_ERROR
-    elif rank == _EARLY_TIMEOUT_RANK:
-      timeout = _EARLY_TIMEOUT
-      expected_msg = (
-          r"world_store get nlag:world_topo:0:8:table: wait timeout after"
-          r" \d+ms, keys: \S+"
-      )
-    else:
-      timeout = _LONG_TIMEOUT
-      expected_msg = (
-          r"failed to all-gather via the node-local store: node leader"
-          r" \(my_key=world_topo:0\): " + _COLLECTOR_ERROR
-      )
-    store.set_timeout(timeout)
-    with et.assert_raises_message(
-        RuntimeError,
-        tpu=re.compile(_API_PREFIX + expected_msg + ".*", re.DOTALL),
-    ):
-      dist.init_process_group(
-          backend="tpu_dist",
-          store=store,
-          rank=rank,
-          world_size=_PG_WORLD_SIZE,
-          timeout=timeout,
-      )
-    store.set_timeout(_LONG_TIMEOUT)
-
-  # Keep every rank (and rank 0's store server) alive until all are done.
-  _barrier(store, "finished")
-
-
-def run_local_rank_out_of_range() -> None:
-  """Creates the process group on ranks with LOCAL_RANK >= devices per host."""
-  # TorchTPU caches LOCAL_RANK (0-7 here) before this function runs, but on a
-  # single host first reads TORCH_TPU_DEVICES_PER_HOST when the process group is
-  # created, so shrink the latter to put the upper ranks out of range. These
-  # ranks fail before touching the store.
-  local_world_size = _PG_WORLD_SIZE // 2
-  os.environ["TORCH_TPU_DEVICES_PER_HOST"] = str(local_world_size)
-  rank = int(os.environ["RANK"])
-  store = dist.TCPStore(
-      os.environ["MASTER_ADDR"],
-      int(os.environ["MASTER_PORT"]),
-      _PG_WORLD_SIZE,
-      is_master=rank == 0,
-      timeout=_LONG_TIMEOUT,
-  )
-
-  if rank >= local_world_size:
+  if rank == _ABSENT_RANK:
+    # TorchTPU caches LOCAL_RANK (0-7 here) before this function runs, but on a
+    # single host first reads TORCH_TPU_DEVICES_PER_HOST when the process group
+    # is created, so shrink the latter on `_ABSENT_RANK` to put it out of range.
+    # It fails before touching the store, leaving `world_topo:7` missing for the
+    # remaining ranks.
+    local_world_size = _PG_WORLD_SIZE // 2
+    os.environ["TORCH_TPU_DEVICES_PER_HOST"] = str(local_world_size)
     expected_msg = re.compile(
         _API_PREFIX
         + r"expected environment variable LOCAL_RANK to be in \[0, 4\)"
@@ -597,6 +549,36 @@ def run_local_rank_out_of_range() -> None:
           world_size=_PG_WORLD_SIZE,
           timeout=_LONG_TIMEOUT,
       )
+  else:
+    # With one rank per host, every rank publishes to the world store directly,
+    # so rank 0, which holds the first key, is the collector.
+    os.environ["TORCH_TPU_DEVICES_PER_HOST"] = "1"
+    if rank == 0:
+      timeout = _COLLECTOR_TIMEOUT
+      expected_pattern = _COLLECTOR_ERROR
+    elif rank == _EARLY_TIMEOUT_RANK:
+      timeout = _EARLY_TIMEOUT
+      expected_pattern = (
+          r"world_store get nlag:world_topo:0:8:table: wait timeout after"
+          r" \d+ms, keys: \S+"
+      )
+    else:
+      timeout = _LONG_TIMEOUT
+      expected_pattern = (
+          r"failed to all-gather via the node-local store: node leader"
+          r" \(my_key=world_topo:0\): " + _COLLECTOR_ERROR
+      )
+    store.set_timeout(timeout)
+    expected_msg = re.compile(_API_PREFIX + expected_pattern + ".*", re.DOTALL)
+    with et.assert_raises_message(RuntimeError, tpu=expected_msg):
+      dist.init_process_group(
+          backend="tpu_dist",
+          store=store,
+          rank=rank,
+          world_size=_PG_WORLD_SIZE,
+          timeout=timeout,
+      )
+    store.set_timeout(_LONG_TIMEOUT)
 
   # Keep every rank (and rank 0's store server) alive until all are done.
   _barrier(store, "finished")
@@ -636,16 +618,10 @@ class ProcessGroupTpuErrorsTest(et.TpuOnlyDistributedErrorTestBase):
     _remove_node_local_store_file()
     super().tearDown()
 
-  def test_missing_rank(self):
+  def test_missing_rank_and_local_rank_out_of_range(self):
     distributed_utils.dist_run(
         nproc_per_node=_PG_WORLD_SIZE,
-        fn=run_missing_rank,
-    )
-
-  def test_local_rank_out_of_range(self):
-    distributed_utils.dist_run(
-        nproc_per_node=_PG_WORLD_SIZE,
-        fn=run_local_rank_out_of_range,
+        fn=run_missing_rank_and_local_rank_out_of_range,
     )
 
 
