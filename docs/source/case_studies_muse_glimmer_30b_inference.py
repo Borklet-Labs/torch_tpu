@@ -31,12 +31,13 @@ def _():
 @app.cell(hide_code=True)
 def _(mo):
   mo.md(r"""
-    # LLM inference end-to-end
-   
+    # Muse Glimmer 30B: iterative decoding
     <!-- Link to colab and to generated notebook -->
-    [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google-pytorch/torch_tpu/blob/main/docs/notebooks/case_studies_muse_glimmer_30b_inference.ipynb) | [View on github](https://github.com/google-pytorch/torch_tpu/blob/main/docs/notebooks/case_studies_muse_glimmer_30b_inference.ipynb)  | [Markdown](https://github.com/google-pytorch/torch_tpu/blob/main/docs/case_studies_muse_glimmer_30b_inference.md)
+    [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google-pytorch/torch_tpu/blob/main/docs/notebooks/case_studies_muse_glimmer_30b_inference.ipynb) | [View on github](https://github.com/google-pytorch/torch_tpu/blob/main/docs/notebooks/case_studies_muse_glimmer_30b_inference.ipynb) | [Markdown](https://github.com/google-pytorch/torch_tpu/blob/main/docs/case_studies_muse_glimmer_30b_inference.md)
 
-    This guide walks through autoregressive LLM inference on TPU with TorchTPU, using the **Muse Glimmer** architecture and pretrained Hugging Face weights. It compares two KV caches that share one model: a preallocated **`StaticCache`** compiled with `dynamic=False`, and a growing **`DynamicCache`** compiled with bounded dynamism (`dynamic=None`).
+    This guide walks through autoregressive LLM inference on TPU with TorchTPU, using the **Muse Glimmer** architecture and pretrained Hugging Face weights. It compares two KV caches that share one model: a preallocated **`StaticCache`** compiled with static shapes (`dynamic=False`), and a growing **`DynamicCache`** compiled with dynamic shapes (`dynamic=None`).
+
+    For a standalone script version of this example, with separate runners for the static and dynamic caches, see [`examples/muse_glimmer_30b/llm_inference`](https://github.com/google-pytorch/torch_tpu/tree/main/examples/muse_glimmer_30b/llm_inference).
 
     > **Memory requirements:** The full model loads \~55.7 GB of weights into TPU HBM. If your TPU has less HBM, set `USE_FULL_MODEL = False` in the next cell to load only the first 4 layers (\~9.3 GB).
     """)
@@ -62,16 +63,16 @@ def _(mo):
     * **Prefill:** The model processes the whole prompt `[B, S]` in parallel and fills the KV cache `[B, H_kv, S, D]` (batch `B`, prompt length `S`, `H_kv` KV heads, head dim `D`).
     * **Decode:** Each step `t` feeds one new token `[B, 1]`, appends its key and value to the cache, and attends over all `S + t` positions.
 
-    If the cache grows with `torch.cat`, its length changes every step. With `dynamic=False`, TorchDynamo guards on exact shapes, so this recompiles on every token unless you use bounded dynamism (`dynamic=None`).
+    If the cache grows with `torch.cat`, its length changes every step. With `dynamic=False`, Dynamo guards on exact shapes, so this recompiles on every token unless you enable dynamic shapes with `dynamic=None`.
 
     **`StaticCache`** avoids decode recompilations under `dynamic=False` by keeping all tensor shapes constant across decode steps:
 
     1. **Fixed-size buffers:** `keys` and `values` are preallocated as `[B, H_kv, max_cache_len, D]`.
-    2. **On-device length:** The cache length is a 0-D TPU tensor updated in place, not a Python `int` that TorchDynamo guards on.
+    2. **On-device length:** The cache length is a 0-D TPU tensor updated in place, not a Python `int` that Dynamo guards on.
     3. **In-place writes, fixed-shape masks:** New entries are written with `index_copy_`; unwritten positions are masked with `-inf`.
     4. **Two compilations:** One for prefill and one for decode, reused by every later step.
 
-    **`DynamicCache`** takes the opposite approach, and it's the default cache in HuggingFace models: it appends each step's keys and values with `torch.cat`, so the cache holds exactly `S + t` positions. This is simpler and uses no padded memory, but the key length changes every step, so it relies on bounded dynamism (`dynamic=None`) to avoid recompiling on every token.
+    **`DynamicCache`** takes the opposite approach, and it's the default cache in HuggingFace models: it appends each step's keys and values with `torch.cat`, so the cache holds exactly `S + t` positions. This is simpler and uses no padded memory, but the cache size changes every step, so it relies on dynamic shapes (`dynamic=None`) to avoid recompiling on every token.
 
     """)
   return
@@ -83,6 +84,8 @@ def _(mo):
     ## 2. Model and KV cache implementation
 
     Below, we implement `StaticCache`, `DynamicCache`, and the `MuseGlimmer30B` decoder architecture (which interleaves three Sliding Window Attention layers with RoPE and one full NoPE causal attention layer every four blocks).
+
+    The same model and caches are also available as reusable modules in [`model.py`](https://github.com/google-pytorch/torch_tpu/blob/main/examples/muse_glimmer_30b/llm_inference/model.py) and [`kv_cache.py`](https://github.com/google-pytorch/torch_tpu/blob/main/examples/muse_glimmer_30b/llm_inference/kv_cache.py).
     """)
   return
 
@@ -198,7 +201,7 @@ def _(F, dataclasses, nn, torch):
       return self.cumulative_length[0].clone()
 
     def get_kv_length(self, seq_len: int) -> int:
-      """Returns the key length attention sees: always the full buffer."""
+      """Returns the sequence length attention sees: always the full buffer."""
       del seq_len  # Unused: the buffer size is fixed.
       return self.max_cache_len
 
@@ -227,7 +230,7 @@ def _(F, dataclasses, nn, torch):
       return self.keys[0].shape[-2] if self.keys else 0
 
     def get_kv_length(self, seq_len: int) -> int:
-      """Returns the key length attention sees: past plus new tokens."""
+      """Returns the sequence length attention sees: past plus new tokens."""
       return self.get_seq_length() + seq_len
 
     def update(
@@ -423,15 +426,6 @@ def _(F, dataclasses, nn, torch):
       self.rope_sin = nn.Buffer(rope_sin, persistent=False)
       self.rope_cos = nn.Buffer(rope_cos, persistent=False)
 
-      causal_mask = torch.ones(1, 1, max_len, max_len).tril()
-      swa_mask = causal_mask.triu(-config.swa_size + 1)
-      self.causal_mask = nn.Buffer(
-          torch.where(causal_mask == 1, 0.0, float("-inf")), persistent=False
-      )
-      self.swa_mask = nn.Buffer(
-          torch.where(swa_mask == 1, 0.0, float("-inf")), persistent=False
-      )
-
     def forward(
         self,
         tok: torch.Tensor,
@@ -449,10 +443,16 @@ def _(F, dataclasses, nn, torch):
           self.rope_sin.index_select(2, cache_position),
           self.rope_cos.index_select(2, cache_position),
       )
-      # Select the query rows for this step and the first kv_len key columns.
-      causal_mask = self.causal_mask.index_select(2, cache_position)
-      causal_mask = causal_mask[..., :kv_len]
-      swa_mask = self.swa_mask.index_select(2, cache_position)[..., :kv_len]
+      # Compute the masks each step by comparing key and query positions,
+      # so the mask's last dimension is exactly kv_len. Keys after the query
+      # position are masked with -inf; SWA layers also mask keys swa_size
+      # or more positions behind.
+      kv_pos = torch.arange(kv_len, device=tok.device)  # [kv_len]
+      q_pos = cache_position[:, None]  # [seq_len, 1]
+      visible = kv_pos[None, :] <= q_pos  # [seq_len, kv_len]
+      in_window = visible & (kv_pos[None, :] > q_pos - self.config.swa_size)
+      causal_mask = torch.where(visible, 0.0, float("-inf"))[None, None]
+      swa_mask = torch.where(in_window, 0.0, float("-inf"))[None, None]
 
       h = self.embed_norm(self.embed_tokens(tok))
       for layer in self.layers:
@@ -785,11 +785,20 @@ def _(
 @app.cell(hide_code=True)
 def _(mo):
   mo.md(r"""
-    ## 6. Bounded dynamism with `DynamicCache`
+    ## 6. Iterative decoding with `DynamicCache`
 
-    Now we run the same model with `DynamicCache`, compiled with `dynamic=None` so the growing key length doesn't recompile on every token. Expect a few warmup compilations before the sequence length is handled without recompiling.
+    This section runs the same model with `DynamicCache`, compiled with `dynamic=None` so the growing KV cache doesn't trigger a recompilation on every token. Expect a few warmup compilations before the changing cache length is handled without recompiling.
 
-    We call `torch._dynamo.reset()` first so this run does not reuse the graphs compiled for the static run above.
+    ### Enable dynamic shapes on TorchTPU
+
+    TorchTPU supports PyTorch [dynamic shapes](https://docs.pytorch.org/docs/stable/torch.compiler_dynamic_shapes.html), but you enable them differently than with other `torch.compile` backends. You don't need to pass `backend="tpu"`: when the inputs to the compiled model are on the TPU, `torch.compile` uses the TorchTPU backend automatically.
+
+    * **Pass `dynamic=None` explicitly.** In PyTorch, `dynamic=None` is the default: Dynamo first compiles with static shapes, and when a later call recompiles because a size changed, it marks that dimension as dynamic. This is called *automatic dynamic shapes*. For the `"tpu"` backend, TorchTPU changes the default to `dynamic=False`, so every graph is specialized to its exact shapes unless you opt in. To use automatic dynamic shapes, pass `dynamic=None`. To make specific dimensions dynamic from the first compilation, use `torch._dynamo.mark_dynamic`.
+    * **Don't use `dynamic=True`.** `dynamic=True` treats every size as dynamic from the first compilation. PyTorch recommends against this mode, so TorchTPU focuses on automatic dynamic shapes (dynamic=None) instead. `torch.compile(..., dynamic=True)` raises a `NotImplementedError` that asks you to use `dynamic=None` instead.
+
+    TorchTPU makes dynamic shapes opt-in because of how XLA compiles programs. XLA compiles each graph into a TPU program with fixed buffer sizes, which lets it fully optimize memory layout and operator fusion. To compile a graph with a dynamic dimension, TorchTPU gives that dimension an upper bound and compiles a single program that handles every size up to it. The actual size is passed at runtime, so sizes within the bound reuse the compiled program, and a size beyond the bound triggers a recompilation. Keeping dynamism limited to the dimensions that actually change, such as the sequence length here, lets XLA optimize everything else as static.
+
+    The next cell calls `torch._dynamo.reset()` first so that this run doesn't reuse the graphs compiled for the static run in the previous section.
     """)
   return
 
@@ -854,7 +863,7 @@ def _(mo):
     <!-- mdformat on -->
 
     * **`StaticCache`: zero decode recompilations after Step 1.** Prefill (\~21.0 s) and Decode Step 1 (\~19.8 s) include one-time XLA compilation for the prompt length (`seq_len = 7` tokens for this prompt and tokenizer) and `seq_len = 1`, respectively. From **Decode Step 2 onward**, every token executes in **\~23.6 ms** with zero recompilations.
-    * **`DynamicCache`: three warmup compilations, then no recompilation.** Prefill and Decode Step 1 compile for static shapes. Decode Step 2 (\~22.0 s) is the first step where the key length changes, so it compiles the bounded-dynamism graph that handles a variable key length; Decode Step 3 (\~4.9 s) finishes warmup. From **Decode Step 4 onward**, every token executes in **\~24.2 ms**. The difference comes from copying the growing cache with `torch.cat` on every step and from dynamic-shape overhead; it is small here because the KV cache is tiny (2 KV heads and at most 27 positions).
+    * **`DynamicCache`: three warmup compilations, then no recompilation.** Prefill and Decode Step 1 compile for static shapes. Decode Step 2 (\~22.0 s) is the first step where the KV cache length changes, so Dynamo marks it as dynamic and compiles a graph that handles a variable cache length; Decode Step 3 (\~4.9 s) finishes warmup. From **Decode Step 4 onward**, every token executes in **\~24.2 ms**. The difference comes from copying the growing cache with `torch.cat` on every step and from dynamic-shape overhead.
     * **Repeated runs are faster to compile.** The `"tpu"` backend saves compiled programs to PyTorch's on-disk compilation cache (`AOTAutogradCache`), which persists across kernel restarts on the same machine. When you rerun this notebook with unchanged model code, prefill and Decode Step 1 load from the cache instead of recompiling; decode times per token are unchanged. To measure cold-start compilation, as in the table above, run `torch._dynamo.reset()` and `torch._functorch._aot_autograd.autograd_cache.AOTAutogradCache.clear()` before `torch.compile`.
     * **Sample output (full 52-layer model, 100 decode steps):**
 
