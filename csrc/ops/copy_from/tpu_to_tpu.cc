@@ -34,6 +34,7 @@
 #include "csrc/eager/device_buffer.h"
 #include "csrc/eager/op_dispatcher.h"
 #include "csrc/eager/tensor_to_buffer.h"
+#include "csrc/ops/copy_from/copy_common.h"
 #include "csrc/ops/op_builder_utils.h"
 #include "stablehlo/integrations/cpp/builder/AttrTypeBuilderUtil.h"
 #include "stablehlo/integrations/cpp/builder/MlirBuilder.h"
@@ -94,20 +95,30 @@ absl::Status CopyTpuToTpu(const at::Tensor& src, const at::Tensor& dest) {
          "device '"
       << src.device() << "' vs destination device '" << dest.device() << "'";
 
-  if (src.sizes() == dest.sizes() && src.dtype() == dest.dtype()) {
+  // Broadcast src to match dest's shape, and transpose both to be row-major.
+  // Without this, an operation like `x.t().copy_(y.t())` would miss the
+  // IsFullStorageReinterpretView optimization below, and would execute as
+  // transpose -> transpose needlessly when it could just do full overwrite.
+  at::Tensor viewed_src = src;
+  at::Tensor viewed_dest = dest;
+  TT_RETURN_IF_ERROR(BroadcastAndTranspose(viewed_src, viewed_dest));
+  ABSL_CHECK(viewed_src.sizes() == viewed_dest.sizes());  // CRASH_OK
+
+  if (src.dtype() == dest.dtype()) {
     // Shape and type match, can simply reuse the existing DeviceBufferRef
     // from src for dest.
     //
     // If both src and dest are pure reinterpretations of all the bytes of
     // src's base buffer, dest can share src's base buffer directly, regardless
     // of its element type.
-    TT_ASSIGN_OR_RETURN(DeviceBufferRef src_base_buf, GetBaseBuffer(src));
-    if (IsFullStorageReinterpretView(src, src_base_buf) &&
-        IsFullStorageReinterpretView(dest, src_base_buf)) {
-      return AssignBufferAsStorageBase(std::move(src_base_buf), dest);
+    TT_ASSIGN_OR_RETURN(DeviceBufferRef src_base_buf,
+                        GetBaseBuffer(viewed_src));
+    if (IsFullStorageReinterpretView(viewed_src, src_base_buf) &&
+        IsFullStorageReinterpretView(viewed_dest, src_base_buf)) {
+      return AssignBufferAsStorageBase(std::move(src_base_buf), viewed_dest);
     }
-    TT_ASSIGN_OR_RETURN(const DeviceBufferRef src_buf, GetBuffer(src));
-    return AssignBufferToAtTensor(src_buf, dest);
+    TT_ASSIGN_OR_RETURN(const DeviceBufferRef src_buf, GetBuffer(viewed_src));
+    return AssignBufferToAtTensor(src_buf, viewed_dest);
   }
 
   // If the dtype is different or shape is different, then we need to dispatch
@@ -116,18 +127,16 @@ absl::Status CopyTpuToTpu(const at::Tensor& src, const at::Tensor& dest) {
   const bool is_src_fp4 = src.scalar_type() == at::kFloat4_e2m1fn_x2;
 
   if (is_dest_fp4 || is_src_fp4) {
-    TT_RET_CHECK(dest.dim() > 0, error::kInvalidArgument)
+    TT_RET_CHECK(viewed_dest.dim() > 0, error::kInvalidArgument)
         << "expected float4_e2m1fn_x2 tensors to be at least 1-dimensional, "
            "got 0-dimensional";
   }
 
   TT_ASSIGN_OR_RETURN(const auto out_dtype,
                       ConvertTo<mlir::ElementType>(dest.scalar_type()));
-  Dimensions dest_sizes = CopyIntVector(dest.sizes());
-  const bool shapes_match = (src.sizes() == dest.sizes());
 
   auto copy_op_builder =
-      [dest_sizes, shapes_match, out_dtype, is_src_fp4,
+      [out_dtype, is_src_fp4,
        is_dest_fp4](mlir::MlirOp input) -> absl::StatusOr<mlir::MlirOp> {
     auto formatted = input;
 
@@ -137,17 +146,12 @@ absl::Status CopyTpuToTpu(const at::Tensor& src, const at::Tensor& dest) {
       TT_ASSIGN_OR_RETURN(formatted, SliceFP4(formatted));
     }
 
-    // 2. Broadcast to the logical destination shape if needed.
-    if (!shapes_match) {
-      TT_ASSIGN_OR_RETURN(formatted, BroadcastIfNeeded(formatted, dest_sizes));
-    }
-
-    // 3. Cast to the target element type.
+    // 2. Cast to the target element type.
     if (GetElementTypeOrDie(formatted) != out_dtype) {
       formatted = mlir::stablehlo::ConvertElementType(formatted, out_dtype);
     }
 
-    // 4. If destination is FP4, it must be physically 2M. Pad it from logical
+    // 3. If destination is FP4, it must be physically 2M. Pad it from logical
     //    shape M to physical shape 2M.
     if (is_dest_fp4) {
       TT_ASSIGN_OR_RETURN(formatted, PadFP4(formatted));
@@ -156,19 +160,19 @@ absl::Status CopyTpuToTpu(const at::Tensor& src, const at::Tensor& dest) {
     return formatted;
   };
 
-  Dimensions out_dims(dest.sizes().begin(), dest.sizes().end());
+  Dimensions out_dims = CopyIntVector(viewed_dest.sizes());
   if (is_dest_fp4) {
     out_dims.back() *= 2;
   }
 
   TT_ASSIGN_OR_RETURN(
       auto new_buf,
-      DispatchOp<1>(std::move(copy_op_builder), src,
+      DispatchOp<1>(std::move(copy_op_builder), viewed_src,
                     {.out_dtype = out_dtype,
                      .out_dims = out_dims,
                      .op_param_cache_keys = OpParamCacheKeys::Empty()}),
       _.SetPrepend() << "failed to copy from 'tpu' to 'tpu' device: ");
-  return AssignBufferToAtTensor(new_buf, dest);
+  return AssignBufferToAtTensor(new_buf, viewed_dest);
 }
 
 }  // namespace torch_tpu

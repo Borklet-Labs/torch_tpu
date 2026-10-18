@@ -54,6 +54,7 @@ torch_tpu_cc_library(
     srcs = ["tpu_to_tpu.cc"],
     hdrs = ["tpu_to_tpu.h"],
     deps = [
+        ":copy_common",
         "//csrc/common:cache_key",
         "//csrc/common:dimension_types",
         "//csrc/common:dtype",
@@ -102,6 +103,7 @@ torch_tpu_cc_library(
     srcs = ["tpu_to_cpu.cc"],
     hdrs = ["tpu_to_cpu.h"],
     deps = [
+        ":copy_common",
         ":tpu_to_tpu",
         "//csrc/common:dimension_types",
         "//csrc/common:dtype",
@@ -136,6 +138,20 @@ torch_tpu_cc_library(
         "@com_google_absl//absl/types:span",
         "@stablehlo//stablehlo/integrations/cpp/builder:attr_type_builder_util",
         "@tsl//tsl/profiler/lib:traceme",
+    ],
+)
+
+torch_tpu_cc_library(
+    name = "copy_common",
+    srcs = ["copy_common.cc"],
+    hdrs = ["copy_common.h"],
+    deps = [
+        "//csrc/common:dimension_types",
+        "//csrc/common:error_utils",
+        "//csrc/ops/as_strided:as_strided_aten_kernels",
+        "//shims/torch:aten_headers",
+        "@com_google_absl//absl/log:absl_check",
+        "@com_google_absl//absl/status",
     ],
 )
 

@@ -16,15 +16,11 @@
 
 #include "csrc/ops/copy_from/tpu_to_cpu.h"
 
-#include <algorithm>
 #include <cstdint>
 #include <optional>
-#include <vector>
 
-#include "ATen/ExpandUtils.h"
 #include "ATen/core/ATen_fwd.h"
 #include "ATen/core/TensorBody.h"
-#include "ATen/ops/as_strided.h"
 #include "ATen/ops/empty.h"
 #include "absl/cleanup/cleanup.h"
 #include "absl/log/absl_check.h"
@@ -45,7 +41,7 @@
 #include "csrc/eager/split_traversal.h"
 #include "csrc/eager/structured_log_buffer.h"
 #include "csrc/eager/tensor_to_buffer.h"
-#include "csrc/ops/as_strided/as_strided_aten_kernels.h"
+#include "csrc/ops/copy_from/copy_common.h"
 #include "csrc/ops/copy_from/tpu_to_tpu.h"
 #include "csrc/pjrt/pjrt_transfer.h"
 #include "stablehlo/integrations/cpp/builder/AttrTypeBuilderUtil.h"
@@ -161,92 +157,6 @@ absl::Status CopyTpuToCpuStorageDirect(const at::Tensor& src,
   return CopyDeviceBufferRefToCpuStorageDirect(base_buf, dest, non_blocking);
 }
 
-// Using metadata-only views (as_strided), broadcasts src to the shape of dest.
-// Returns an error if this is not possible.
-absl::StatusOr<at::Tensor> BroadcastToDest(const at::Tensor& src,
-                                           const at::Tensor& dest) {
-  if (src.sizes() == dest.sizes()) {
-    // No broadcasting is needed.
-    return src;
-  }
-  // Broadcast src to match the sizes of dest.
-  auto [new_src_sizes, new_src_strides] =
-      at::inferExpandGeometry(src.sizes(), src.strides(), dest.sizes());
-  return AsStrided(src, new_src_sizes, new_src_strides, src.storage_offset());
-}
-
-// The source and destination tensors for a copy, after ensuring that the dest
-// tensor is contiguous.
-struct ContiguouslyTransposedCopy {
-  at::Tensor src;   // UNINITIALIZED_TENSOR_OK=named output value
-  at::Tensor dest;  // UNINITIALIZED_TENSOR_OK=named output value
-};
-
-// Using metadata-only views (as_strided), transposes dest so that it is
-// row-major (possibly with leading size-1 dimensions), and applies the same
-// transpose to src.
-absl::StatusOr<ContiguouslyTransposedCopy> TransposeToContiguousDest(
-    const at::Tensor& src, const at::Tensor& dest) {
-  ABSL_CHECK_EQ(  // CRASH_OK=precondition established by BroadcastToDest
-      src.dim(), dest.dim())
-      << "cannot create a matching transpose for tensors of different "
-         "dimensions";
-  if (dest.is_contiguous()) {
-    return ContiguouslyTransposedCopy{src, dest};
-  }
-
-  // Determine a transpose that can be applied to both src and dest to make
-  // dest contiguous (even if it makes src non-contiguous).
-  struct TransposeDim {
-    int64_t original_index;
-    int64_t size;
-    int64_t src_stride;
-    int64_t dest_stride;
-  };
-
-  std::vector<TransposeDim> transpose_dims;
-  transpose_dims.reserve(dest.dim());
-  for (int64_t original_index = 0; original_index < dest.dim();
-       ++original_index) {
-    transpose_dims.push_back({original_index, dest.size(original_index),
-                              src.stride(original_index),
-                              dest.stride(original_index)});
-  }
-  // Sort transpose_dims by dest.stride descending, except we put all size=1
-  // dimensions first. If there are multiple size-1 dims, do a stable sort
-  // (lower original_index first).
-  std::sort(transpose_dims.begin(), transpose_dims.end(),
-            [](const TransposeDim& a, const TransposeDim& b) {
-              if (a.size == 1 && b.size != 1) {
-                return true;
-              }
-              if (a.size != 1 && b.size == 1) {
-                return false;
-              }
-              if (a.size == 1 && b.size == 1) {
-                return a.original_index < b.original_index;
-              }
-              return a.dest_stride > b.dest_stride;
-            });
-  Dimensions new_sizes;
-  Strides new_src_strides;
-  Strides new_dest_strides;
-  new_sizes.reserve(dest.dim());
-  new_src_strides.reserve(dest.dim());
-  new_dest_strides.reserve(dest.dim());
-  for (const auto& dim : transpose_dims) {
-    new_sizes.push_back(dim.size);
-    new_src_strides.push_back(dim.src_stride);
-    new_dest_strides.push_back(dim.dest_stride);
-  }
-  TT_ASSIGN_OR_RETURN(
-      at::Tensor restrided_src,
-      AsStrided(src, new_sizes, new_src_strides, src.storage_offset()));
-  at::Tensor restrided_dest =
-      at::as_strided(dest, new_sizes, new_dest_strides, dest.storage_offset());
-  return ContiguouslyTransposedCopy{restrided_src, restrided_dest};
-}
-
 // Converts a TPU source tensor into a contiguous DeviceBufferRef with the same
 // size, shape, and dtype as a CPU destination tensor, and then copies it to the
 // destination's storage.
@@ -280,36 +190,36 @@ absl::Status CopyTpuToCpuWithTpuConversion(
   }
 
   // Broadcast src to dest, if needed.
-  TT_ASSIGN_OR_RETURN(at::Tensor broadcasted_src, BroadcastToDest(src, dest));
-
   // Transpose src and dest so that dest is contiguous, if needed.
-  TT_ASSIGN_OR_RETURN(ContiguouslyTransposedCopy after_transpose,
-                      TransposeToContiguousDest(broadcasted_src, dest));
+  at::Tensor viewed_src = src;
+  at::Tensor viewed_dest = dest;
+  TT_RETURN_IF_ERROR(BroadcastAndTranspose(viewed_src, viewed_dest));
   TT_RET_CHECK(  // ERROR_COV_INFEASIBLE=defensive check of logic in
                  // aten::is_non_overlapping_and_dense
-      after_transpose.dest.is_contiguous(), error::kInternal)
-      << "expected a non-overlapping, dense, tensor to be contiguous after "
-         "row-major transpose";
+      viewed_dest.is_contiguous(), error::kInternal)
+      << "expected a non-overlapping, dense tensor to be contiguous after "
+         "row-major transpose, got sizes: "
+      << ToString(viewed_dest.sizes())
+      << " and strides: " << ToString(viewed_dest.strides())
+      << " which are not contiguous";
 
-  if (CanCopyStorageDirect(after_transpose.src, after_transpose.dest,
-                           src_base_element_type)) {
+  if (CanCopyStorageDirect(viewed_src, viewed_dest, src_base_element_type)) {
     // In the case where src and dest are identical transposes of a contiguous
     // storage (no broadcast or type conversion) then after the transpose, we
     // can copy directly from src to dest.
-    return CopyTpuToCpuStorageDirect(after_transpose.src, after_transpose.dest,
-                                     non_blocking);
+    return CopyTpuToCpuStorageDirect(viewed_src, viewed_dest, non_blocking);
   }
 
   // Convert the source tensor to the destination tensor's dtype, if needed.
-  at::Tensor converted_src = after_transpose.src;
-  if (after_transpose.src.scalar_type() != dest.scalar_type()) {
+  at::Tensor converted_src = viewed_src;
+  if (viewed_src.scalar_type() != dest.scalar_type()) {
     TT_ASSIGN_OR_RETURN(
         converted_src,
-        MakeEmptyMemoryFormat(
-            after_transpose.dest.sizes(), dest.scalar_type(),
-            /*layout_opt=*/std::nullopt, after_transpose.src.device(),
-            /*pin_memory_opt=*/false, at::MemoryFormat::Contiguous));
-    TT_RETURN_IF_ERROR(CopyTpuToTpu(after_transpose.src, converted_src));
+        MakeEmptyMemoryFormat(viewed_dest.sizes(), dest.scalar_type(),
+                              /*layout_opt=*/std::nullopt, viewed_src.device(),
+                              /*pin_memory_opt=*/false,
+                              at::MemoryFormat::Contiguous));
+    TT_RETURN_IF_ERROR(CopyTpuToTpu(viewed_src, converted_src));
   }
 
   // Start or schedule a copy from the TPU buffer into the destination CPU

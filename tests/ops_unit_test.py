@@ -4292,6 +4292,66 @@ class OpsUnitTest(TorchTpuVsCpuTestBase):
     self.assertIsNotNone(dst_tpu.grad)
     self.assertEqual(dst_tpu.grad.cpu(), torch.tensor([0.1, 0.2]))
 
+  def test_copy_equivalent_transposes(self):
+    tpu_device = torch.device("tpu")
+
+    def _test_fn(device) -> torch.Tensor:
+      src = torch.tensor([[1, 2], [3, 4]], device=device)
+      dst = torch.tensor([[-1, -1], [-1, -1]], device=device)
+      dst.t().copy_(src.t())
+      return dst.cpu()
+
+    expected = torch.tensor([[1, 2], [3, 4]], device="cpu")
+    actual_tpu = _test_fn(tpu_device)
+    actual_cpu = _test_fn(torch.device("cpu"))
+    utils.assert_close(actual_tpu, expected)
+    utils.assert_close(actual_cpu, expected)
+
+  def test_copy_src_transposed(self):
+    tpu_device = torch.device("tpu")
+
+    def _test_fn(device) -> torch.Tensor:
+      src = torch.tensor([[1, 2], [3, 4]], device=device)
+      dst = torch.tensor([[-1, -1], [-1, -1]], device=device)
+      dst.copy_(src.t())
+      return dst.cpu()
+
+    expected = torch.tensor([[1, 3], [2, 4]], device="cpu")
+    actual_tpu = _test_fn(tpu_device)
+    actual_cpu = _test_fn(torch.device("cpu"))
+    utils.assert_close(actual_tpu, expected)
+    utils.assert_close(actual_cpu, expected)
+
+  def test_copy_dst_transposed(self):
+    tpu_device = torch.device("tpu")
+
+    def _test_fn(device) -> torch.Tensor:
+      src = torch.tensor([[1, 2], [3, 4]], device=device)
+      dst = torch.tensor([[-1, -1], [-1, -1]], device=device)
+      dst.t().copy_(src)
+      return dst.cpu()
+
+    expected = torch.tensor([[1, 3], [2, 4]], device="cpu")
+    actual_tpu = _test_fn(tpu_device)
+    actual_cpu = _test_fn(torch.device("cpu"))
+    utils.assert_close(actual_tpu, expected)
+    utils.assert_close(actual_cpu, expected)
+
+  def test_copy_broadcast_into_transposed(self):
+    tpu_device = torch.device("tpu")
+
+    def _test_fn(device) -> torch.Tensor:
+      src = torch.tensor([[1], [2]], device=device)
+      dst = torch.tensor([[-1, -1], [-1, -1]], device=device)
+      dst.t().copy_(src)
+      return dst.cpu()
+
+    expected = torch.tensor([[1, 2], [1, 2]], device="cpu")
+    actual_tpu = _test_fn(tpu_device)
+    actual_cpu = _test_fn(torch.device("cpu"))
+    utils.assert_close(actual_tpu, expected)
+    utils.assert_close(actual_cpu, expected)
+
   def test_histc_dynamic_bounds(self):
     """Test cases that cause the min and max computation the input data.
 
