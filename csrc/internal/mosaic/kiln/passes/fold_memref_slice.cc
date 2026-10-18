@@ -16,6 +16,7 @@
 
 #include "csrc/internal/mosaic/kiln/passes/fold_memref_slice.h"
 
+#include <cstdint>
 #include <memory>
 
 #include "llvm/ADT/STLExtras.h"
@@ -26,7 +27,6 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/Builders.h"
-#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Location.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/Value.h"
@@ -56,13 +56,13 @@ mlir::LogicalResult FoldMemRefSliceAndSqueeze(OpT op) {
   while (true) {
     if (auto squeeze_op = memref.getDefiningOp<mlir::tpu::MemRefSqueezeOp>()) {
       FAILUREOR_ASSIGN_OR_RETURN(
-          llvm::SmallVector<int> squeezed_dims,
+          auto squeezed_dims,
           mlir::tpu::computeSqueezedDimsChecked(
               squeeze_op, squeeze_op.getInput().getType().getShape(),
               squeeze_op.getType().getShape()));
       builder.setInsertionPoint(squeeze_op);
       mlir::Value zero = mlir::arith::ConstantIndexOp::create(builder, 0);
-      for (int dim : squeezed_dims) {
+      for (int64_t dim : squeezed_dims) {
         indices.insert(indices.begin() + dim, zero);
       }
       memref = squeeze_op.getInput();
