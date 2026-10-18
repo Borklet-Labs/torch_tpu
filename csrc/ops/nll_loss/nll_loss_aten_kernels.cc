@@ -402,13 +402,7 @@ bool IsSupportedLossFloatType(at::ScalarType scalar_type) {
   return scalar_type == at::ScalarType::Half ||
          scalar_type == at::ScalarType::BFloat16 ||
          scalar_type == at::ScalarType::Float ||
-         scalar_type == at::ScalarType::Double ||
-         scalar_type == at::ScalarType::Float8_e5m2 ||
-         scalar_type == at::ScalarType::Float8_e4m3fn ||
-         scalar_type == at::ScalarType::Float8_e5m2fnuz ||
-         scalar_type == at::ScalarType::Float8_e4m3fnuz ||
-         scalar_type == at::ScalarType::Float8_e8m0fnu ||
-         scalar_type == at::ScalarType::Float4_e2m1fn_x2;
+         scalar_type == at::ScalarType::Double;
 }
 
 bool IsLongOrByteTarget(const at::Tensor& tensor) {

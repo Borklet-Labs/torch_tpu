@@ -510,9 +510,6 @@ ACCURACY_OVERRIDES_VS_GPU = {
         torch.float16: {"rtol": 2.2e-1, "atol": 6.6e-2},
         torch.float32: {"rtol": 3e-1, "atol": 9.4e-2},
     },
-    "nn.functional.cross_entropy": {
-        torch.float16: {"atol": 8.1e-4},  # TOLERANCE_OVERRIDE_OK
-    },
     "nn.functional.embedding": {
         torch.float16: {
             "rtol": 3.9e-3,
@@ -816,6 +813,9 @@ ACCURACY_OVERRIDES_VS_GPU_COMPILED = {
         torch.float16: {"rtol": 2.2e-1, "atol": 6.7e-2},
         torch.float32: {"rtol": 3e-1, "atol": 9.4e-2},
     },
+    "nn.functional.cross_entropy": {
+        torch.float16: {"rtol": 1.3e-3},
+    },
     "nn.functional.embedding": {
         torch.float16: {
             "rtol": 3.9e-3,
@@ -1005,6 +1005,10 @@ ACCURACY_OVERRIDES_GRAD_VS_GPU: dict[
         "nn.functional.batch_norm": {
             torch.bfloat16: {"rtol": 1, "atol": 1.5e-3},
             torch.float16: {"rtol": 1.1, "atol": 2.6e-4},
+        },
+        "nn.functional.cross_entropy": {
+            torch.bfloat16: {"atol": 1.2e-3},
+            torch.float16: {"atol": 3e-4},
         },
         "nn.functional.ctc_loss": {
             torch.float32: {"rtol": 3.6e-3, "atol": 2.2e-4},
@@ -1694,8 +1698,6 @@ class TestOps(op_testing.OpInfoTestBase):
   def test_count_nonzero(self):
     self.do_test_op("count_nonzero")
 
-  # TODO(b/557286629): Generate GPU golden samples for cross_entropy.
-  @op_testing.skip_if_torch_tpu_vs_gpu_mode
   def test_cross_entropy(self):
     self.do_test_op("nn.functional.cross_entropy")
 
