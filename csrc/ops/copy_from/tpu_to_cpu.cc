@@ -19,7 +19,6 @@
 #include <algorithm>
 #include <cstdint>
 #include <optional>
-#include <utility>
 #include <vector>
 
 #include "ATen/ExpandUtils.h"
@@ -33,14 +32,12 @@
 #include "absl/status/status.h"
 #include "absl/strings/str_join.h"
 #include "absl/types/span.h"
-#include "c10/core/ScalarType.h"
 #include "csrc/common/dimension_types.h"
 #include "csrc/common/dtype.h"
 #include "csrc/common/error_utils.h"
 #include "csrc/common/reroute_warnings.h"
 #include "csrc/common/status_builder.h"
 #include "csrc/common/to_string.h"
-#include "csrc/common/utils.h"
 #include "csrc/eager/device_buffer.h"
 #include "csrc/eager/materialize.h"
 #include "csrc/eager/split_traversal.h"
@@ -93,9 +90,6 @@ bool CanCopyStorageDirect(const at::Tensor& src, const at::Tensor& dest,
   if (src.scalar_type() != dest.scalar_type()) {
     // If the dtypes are different, we need to do a type conversion (not a
     // bitcast).
-    // If the src's storage currently holds FP4 data, we either need to do a
-    // non-blocking bitcast on device (e.g. bitcast FP4 to UI8 and transfer UI8)
-    // or a blocking "packing" operation on host after transfer.
     return false;
   }
 
@@ -116,12 +110,6 @@ bool CanCopyStorageDirect(const at::Tensor& src, const at::Tensor& dest,
   if (!src.is_contiguous() || !dest.is_contiguous()) {
     // dest must be contiguous, so that we can copy contiguous bytes into it
     // and ensure they are read properly.
-    return false;
-  }
-
-  if (src_base_element_type == mlir::ElementType::F4E2M1FN) {
-    // We can't directly copy FP4 data to CPU without a blocking packing
-    // operation.
     return false;
   }
 
@@ -162,16 +150,6 @@ absl::Status CopyTpuToCpuStorageDirect(const at::Tensor& src,
   }
   // Copy directly into dest's storage.
   return TpuMemcpyDtoHDirect(base_buf, dest.data_ptr(), non_blocking);
-}
-
-// If dest is overlapping or non-dense, then we cannot write a contiguous byte
-// stream into it directly, and a blocking TPU->CPU->CPU conversion is required.
-//
-// If dest is FP4, then we can't transfer directly into its storage (even with a
-// TPU-side conversion); a CPU conversion is required to pack the data.
-bool RequiresCpuConversion(const at::Tensor& src, const at::Tensor& dest) {
-  return !dest.is_non_overlapping_and_dense() ||
-         dest.scalar_type() == at::kFloat4_e2m1fn_x2;
 }
 
 // Using metadata-only views (as_strided), broadcasts src to the shape of dest.
@@ -351,16 +329,6 @@ absl::Status CopyTpuToCpuWithCpuConversion(const at::Tensor& src,
   }
 
   // Copy exactly these contiguous elements into a contiguous CPU storage.
-  Dimensions unpacked_base_dims;
-  at::IntArrayRef base_dims_array = base_buf.dimensions();
-  if (base_buf.element_type() == mlir::ElementType::F4E2M1FN) {
-    // XLA will copy to an "unpacked" representation, with one byte per 4-bit
-    // element. This means we need twice as much storage in the empty CPU temp
-    // tensor.
-    unpacked_base_dims = CopyIntVector(base_buf.dimensions());
-    unpacked_base_dims.push_back(2);
-    base_dims_array = unpacked_base_dims;
-  }
   at::ScalarType base_buf_at_type =
       ConvertTo<at::ScalarType>(base_buf.element_type());
   at::TensorOptions cpu_temp_options =
@@ -368,19 +336,9 @@ absl::Status CopyTpuToCpuWithCpuConversion(const at::Tensor& src,
           .dtype(base_buf_at_type)
           .device(dest.device())
           .memory_format(at::MemoryFormat::Contiguous);
-  at::Tensor cpu_temp = at::empty(base_dims_array, cpu_temp_options);
+  at::Tensor cpu_temp = at::empty(base_buf.dimensions(), cpu_temp_options);
   TT_RETURN_IF_ERROR(TpuMemcpyDtoHDirect(base_buf, cpu_temp.data_ptr(),
                                          /*non_blocking=*/false));
-
-  // Pack FP4 data if necessary.
-  if (base_buf.element_type() == mlir::ElementType::F4E2M1FN) {
-    at::Tensor packed_cpu_temp =
-        at::empty(base_buf.dimensions(), cpu_temp_options);
-    PackFp4(static_cast<const uint8_t*>(cpu_temp.data_ptr()),
-            static_cast<uint8_t*>(packed_cpu_temp.data_ptr()),
-            packed_cpu_temp.numel());
-    cpu_temp = std::move(packed_cpu_temp);
-  }
 
   // View the source Storage on host in the same way as on TPU.
   auto* cpu_temp_impl = cpu_temp.unsafeGetTensorImpl();
@@ -430,10 +388,10 @@ absl::Status CopyTpuToCpu(const at::Tensor& src, const at::Tensor& dest,
     return CopyTpuToCpuStorageDirect(src, dest, non_blocking);
   }
 
-  if (RequiresCpuConversion(src, dest)) {
-    // If we need to write non-consecutive bytes or do FP4 packing, we must do
-    // a blocking copy with CPU conversion, even if the user requested a
-    // non-blocking copy.
+  if (!dest.is_non_overlapping_and_dense()) {
+    // If we need to write non-consecutive bytes, we must do a blocking copy
+    // with CPU conversion, even if the user requested a non-blocking copy,
+    // because we cannot write consecutive bytes into the dest directly.
     return CopyTpuToCpuWithCpuConversion(src, dest);
   }
 

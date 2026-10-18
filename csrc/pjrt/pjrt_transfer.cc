@@ -66,21 +66,50 @@
 #include "xla/xla_data.pb.h"
 
 namespace torch_tpu {
-
+namespace {
+// Packs unpacked float4_e2m1fn_x2 data (1 element per byte) from unpacked_data
+// into packed_data where each byte contains 2 elements (lower 4 bits of first
+// element, upper 4 bits of second element).
+// Contract:
+// - unpacked_data must not be null.
+// - packed_data must not be null.
+// - num_packed_bytes must be non-negative.
+// - unpacked_data must point to a buffer containing at least
+//   2 * num_packed_bytes elements.
+// - packed_data must point to a buffer containing at least num_packed_bytes
+//   bytes.
 void PackFp4(const uint8_t* absl_nonnull unpacked_data,
-             uint8_t* absl_nonnull packed_data, int64_t num_packed_elements) {
-  ABSL_CHECK(unpacked_data != nullptr);   // CRASH_OK
-  ABSL_CHECK(packed_data != nullptr);     // CRASH_OK
-  ABSL_CHECK_GE(num_packed_elements, 0);  // CRASH_OK
+             uint8_t* absl_nonnull packed_data, int64_t num_packed_bytes) {
+  ABSL_CHECK(unpacked_data != nullptr);  // CRASH_OK
+  ABSL_CHECK(packed_data != nullptr);    // CRASH_OK
+  ABSL_CHECK_GE(num_packed_bytes, 0);    // CRASH_OK
 
-  for (int64_t i = 0; i < num_packed_elements; ++i) {
+  for (int64_t i = 0; i < num_packed_bytes; ++i) {
     uint8_t val0 = unpacked_data[2 * i] & 0x0F;
     uint8_t val1 = unpacked_data[2 * i + 1] & 0x0F;
     packed_data[i] = (val1 << 4) | val0;
   }
 }
 
-namespace {
+// Packs unpacked float4_e2m1fn_x2 data (1 element per byte) from unpacked_data
+// into packed_data where each byte contains 2 elements (lower 4 bits of first
+// element, upper 4 bits of second element).
+// Contract:
+// - packed_data must not be null.
+// - packed_data must point to a buffer containing at least
+//   unpacked_data.size() / 2 bytes.
+void PackFp4Vector(const std::vector<uint8_t>& unpacked_data,
+                   uint8_t* absl_nonnull packed_data) {
+  ABSL_CHECK(packed_data != nullptr);          // CRASH_OK
+  ABSL_CHECK_EQ(unpacked_data.size() % 2, 0);  // CRASH_OK
+  size_t num_packed_bytes = unpacked_data.size() / 2;
+
+  for (int64_t i = 0; i < num_packed_bytes; ++i) {
+    uint8_t val0 = unpacked_data[2 * i] & 0x0F;
+    uint8_t val1 = unpacked_data[2 * i + 1] & 0x0F;
+    packed_data[i] = (val1 << 4) | val0;
+  }
+}
 
 // Unpacks packed float4_e2m1fn_x2 data from host_data into a byte vector
 // where each element occupies one byte (lower 4 bits). Contract:
@@ -366,36 +395,108 @@ xla::Future<void> TpuMemcpyDtoHDirectImpl(
   return future;
 }
 
+// A callback to move unpacked FP4 data from the receiver to the final
+// destination pointer in a packed format.
+// No-op if the status is not ok or if the fp4_receiver is empty.
+void PackFp4OnReadyClosure(const std::vector<uint8_t>& fp4_receiver,
+                           void* dst_ptr, absl::Status s) {
+  if (!s.ok() || fp4_receiver.empty()) {
+    return;
+  }
+  PackFp4Vector(fp4_receiver, static_cast<uint8_t*>(dst_ptr));
+}
+
+// A callback to start the TPU to CPU copy once the DeviceBufferRef is
+// materialized, and forward the result through the chained_promise.
+void StartTransferOnceMaterializedClosure(absl::Status s,
+                                          const DeviceBufferRef& buffer_ref,
+                                          void* effective_dst_ptr,
+                                          void* dst_ptr,
+                                          std::vector<uint8_t>&& fp4_receiver,
+                                          xla::Promise<void> chained_promise) {
+  if (!s.ok()) {
+    chained_promise.Set(s);
+    return;
+  }
+  // Because GetMaterializationFuture() is ready, this will not block.
+  auto pjrt_buffer_or = buffer_ref.AwaitBuffer();
+  if (!pjrt_buffer_or.ok()) {
+    chained_promise.Set(pjrt_buffer_or.status());
+    return;
+  }
+  // 2) Schedule the d2h copy to start as soon as the PjRtBuffer* is ready
+  // using ToLiteral
+  auto transfer_future = TpuMemcpyDtoHDirectImpl(
+      buffer_ref.dimensions(), buffer_ref.element_type(), *pjrt_buffer_or,
+      effective_dst_ptr);
+
+  // 3) If necessary, pack the FP4 data.
+  // 4) Once the d2h copy is done, set chained_future to its result.
+  if (effective_dst_ptr != dst_ptr && !fp4_receiver.empty()) {
+    transfer_future.OnReady(
+        [fp4_receiver = std::move(fp4_receiver), dst_ptr,
+         chained_promise = std::move(chained_promise)](absl::Status s) mutable {
+          PackFp4OnReadyClosure(fp4_receiver, dst_ptr, s);
+          chained_promise.Set(s);
+        });
+  } else {
+    transfer_future.OnReady(
+        [chained_promise = std::move(chained_promise)](absl::Status s) mutable {
+          chained_promise.Set(s);
+        });
+  }
+}
+
 }  // namespace
 
 absl::Status TpuMemcpyDtoHDirect(const DeviceBufferRef& buffer_ref,
                                  void* dst_ptr, bool non_blocking) {
-  size_t buffer_expected_bytes = buffer_ref.size_bytes();
-  if (buffer_ref.element_type() == mlir::ElementType::F4E2M1FN) {
-    // Each FP4 element only takes up 4 bits on-device, but is copied to host
-    // as 8 bits (lower 4 bits set).
-    buffer_expected_bytes *= 2;
-  }
-  if (buffer_expected_bytes == 0) {
+  if (buffer_ref.size_bytes() == 0) {
     return absl::OkStatus();
+  }
+  std::vector<uint8_t> fp4_receiver;
+  void* effective_dst_ptr = dst_ptr;
+  if (buffer_ref.element_type() == mlir::ElementType::F4E2M1FN) {
+    // buffer_ref.size_bytes() reflects the unpacked size of the data;
+    // it uses xla::ShapeUtil::ByteSizeOfPrimitiveType which cannot report less
+    // than 1 byte per element.
+    fp4_receiver.resize(buffer_ref.size_bytes());
+    effective_dst_ptr = fp4_receiver.data();
   }
   if (buffer_ref.is_materialized() || !non_blocking) {
     // The PjRtBuffer is either already available, or we're safe to block.
     TT_ASSIGN_OR_RETURN(auto* buffer, buffer_ref.AwaitBuffer());
 
     // Start the d2h copy out of the buffer.
-    auto transfer_future = TpuMemcpyDtoHDirectImpl(
-        buffer_ref.dimensions(), buffer_ref.element_type(), buffer, dst_ptr);
+    auto transfer_future = TpuMemcpyDtoHDirectImpl(buffer_ref.dimensions(),
+                                                   buffer_ref.element_type(),
+                                                   buffer, effective_dst_ptr);
     if (!non_blocking) {
       // Block until the d2h copy completes.
-      return AdaptXlaError(
+      TT_RETURN_IF_ERROR(AdaptXlaError(
           transfer_future.Await(),
-          /* context= */ "failed to copy buffer from device into host buffer");
+          /* context= */ "failed to copy buffer from device into host buffer"));
+
+      // If necessary, synchronously pack the FP4 data.
+      PackFp4OnReadyClosure(fp4_receiver, dst_ptr, absl::OkStatus());
+      return absl::OkStatus();
+    }
+
+    if (!fp4_receiver.empty()) {
+      auto [pack_promise, pack_future] = xla::MakePromise<void>();
+      // Queue an FP4 packing operation to run after the transfer completes.
+      transfer_future.OnReady(
+          [fp4_receiver = std::move(fp4_receiver), dst_ptr,
+           pack_promise = std::move(pack_promise)](absl::Status s) mutable {
+            PackFp4OnReadyClosure(fp4_receiver, dst_ptr, s);
+            pack_promise.Set(s);
+          });
+      RecordAsyncDeviceToHost(std::move(pack_future));
     } else {
       // Record the async d2h copy so that the event queue will track it.
       RecordAsyncDeviceToHost(std::move(transfer_future));
-      return absl::OkStatus();
     }
+    return absl::OkStatus();
   }
 
   // The buffer ref is not materialized yet, and we can't wait for it.
@@ -405,27 +506,11 @@ absl::Status TpuMemcpyDtoHDirect(const DeviceBufferRef& buffer_ref,
   // 1) Wait until the PjRtBuffer* exists
   buffer_ref.GetMaterializationFuture().OnReady(
       [buffer_ref, chained_promise = std::move(chained_promise),
+       effective_dst_ptr, fp4_receiver = std::move(fp4_receiver),
        dst_ptr](absl::Status s) mutable {
-        if (!s.ok()) {
-          chained_promise.Set(s);
-          return;
-        }
-        // Because GetMaterializationFuture() is ready, this will not block.
-        auto pjrt_buffer_or = buffer_ref.AwaitBuffer();
-        if (!pjrt_buffer_or.ok()) {
-          chained_promise.Set(pjrt_buffer_or.status());
-          return;
-        }
-        // 2) Schedule the d2h copy to start as soon as the PjRtBuffer* is ready
-        // using ToLiteral.
-        TpuMemcpyDtoHDirectImpl(buffer_ref.dimensions(),
-                                buffer_ref.element_type(), *pjrt_buffer_or,
-                                dst_ptr)
-            .OnReady([chained_promise =
-                          std::move(chained_promise)](absl::Status s) mutable {
-              // 3) Once the d2h copy is done, set chained_future to its result.
-              chained_promise.Set(s);
-            });
+        StartTransferOnceMaterializedClosure(s, buffer_ref, effective_dst_ptr,
+                                             dst_ptr, std::move(fp4_receiver),
+                                             std::move(chained_promise));
       });
 
   // Record the async d2h copy so that the event queue will track it.

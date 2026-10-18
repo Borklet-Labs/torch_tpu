@@ -59,6 +59,24 @@ class FP4Test(seed_test_utils.RepeatableTest):
     with self.subTest(name="values"):
       utils.assert_close(x_cpu, x)
 
+  def test_fp4_tpu_to_cpu_copy_non_blocking(self):
+    device = torch.device("tpu")
+    x_uint8 = torch.empty(2, 4, dtype=torch.uint8).fill_(0x11)
+    x = x_uint8.view(torch.float4_e2m1fn_x2)
+    x_tpu = x.to(device)
+
+    x_cpu = x_tpu.to("cpu", non_blocking=True)
+    torch.accelerator.synchronize()
+
+    with self.subTest(name="dtype"):
+      self.assertEqual(x_cpu.dtype, torch.float4_e2m1fn_x2)
+    with self.subTest(name="shape"):
+      self.assertEqual(x_cpu.shape, torch.Size([2, 4]))
+    with self.subTest(name="storage_bytes"):
+      self.assertEqual(x_cpu.storage().nbytes(), 8)
+    with self.subTest(name="values"):
+      utils.assert_close(x_cpu, x)
+
   def test_fp4_casting_and_rounding_on_tpu(self):
     device = torch.device("tpu")
     # Boundary values for testing RTNE rounding and saturation
