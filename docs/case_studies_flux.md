@@ -16,7 +16,7 @@ complete model code, benchmarks, XProf traces, and tests, see:
 *   [FLUX Optimization Tutorial](https://github.com/google-pytorch/torch_tpu/blob/main/examples/FLUX_optimization/README.md):
     full walkthrough of every milestone, including XProf traces and instructions
     for reproducing every benchmark.
-*   [Authoring Custom Pallas Kernels for PyTorch](https://github.com/google-pytorch/torch_tpu/blob/main/examples/FLUX_optimization/kernels/README.md):
+*   [Authoring Custom Pallas Kernels for PyTorch](https://github.com/google-pytorch/torch_tpu/blob/main/examples/FLUX_optimization/pallas_kernels.md):
     step-by-step walkthrough of the Pallas SplashAttention kernel used in
     Milestone 4.
 
@@ -360,7 +360,7 @@ print("Compiled fused RoPE matches eager execution.")
 At long sequence lengths (for example, `S = 2048` or `S = 4096`), full joint
 attention becomes memory-bound. This milestone is shown as snippets only; see
 the
-[Pallas kernel walkthrough](https://github.com/google-pytorch/torch_tpu/blob/main/examples/FLUX_optimization/kernels/README.md)
+[Pallas kernel walkthrough](https://github.com/google-pytorch/torch_tpu/blob/main/examples/FLUX_optimization/pallas_kernels.md)
 for the full, runnable implementation.
 
 ### Before (reference): standard PyTorch SDPA
@@ -429,11 +429,11 @@ kernel in bfloat16, and profile before reaching for a custom kernel.
 **Learn more:**
 
 *   **Pallas SplashAttention example (used in this case study)**:
-    [`splash_attention.py`](https://github.com/google-pytorch/torch_tpu/blob/main/examples/FLUX_optimization/kernels/splash_attention.py)
+    [`splash_attention.py`](https://github.com/google-pytorch/torch_tpu/blob/main/examples/FLUX_optimization/splash_attention.py)
     contains the full kernel integration, and
-    [`splash_attention_test.py`](https://github.com/google-pytorch/torch_tpu/blob/main/examples/FLUX_optimization/kernels/splash_attention_test.py)
+    [`splash_attention_test.py`](https://github.com/google-pytorch/torch_tpu/blob/main/examples/FLUX_optimization/splash_attention_test.py)
     verifies forward and gradient parity against PyTorch SDPA. The
-    [kernel walkthrough](https://github.com/google-pytorch/torch_tpu/blob/main/examples/FLUX_optimization/kernels/README.md)
+    [kernel walkthrough](https://github.com/google-pytorch/torch_tpu/blob/main/examples/FLUX_optimization/pallas_kernels.md)
     explains block sizes, masks, autograd registration, and testing step by
     step.
 *   **Pallas basics**:

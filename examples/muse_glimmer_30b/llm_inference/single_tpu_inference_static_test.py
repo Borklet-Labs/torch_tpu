@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from absl.testing import absltest
-import runner_static
+import runner_static  # from muse_glimmer_30b.llm_inference
 
 
 class SingleTpuInferenceStaticTest(absltest.TestCase):

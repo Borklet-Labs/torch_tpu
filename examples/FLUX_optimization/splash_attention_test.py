@@ -22,7 +22,7 @@ from absl.testing import absltest
 import torch
 from torch.nn import attention
 import torch.nn.functional as F
-from splash_attention import splash_sdpa
+import splash_attention  # from FLUX_optimization
 
 
 class SplashAttentionTest(absltest.TestCase):
@@ -85,7 +85,7 @@ class SplashAttentionTest(absltest.TestCase):
   def test_flux_bidirectional_mha_parity(self):
     """FLUX uses bidirectional (non-causal) multi-head attention."""
     splash_fn = functools.partial(
-        splash_sdpa, is_causal=False, enable_gqa=False
+        splash_attention.splash_sdpa, is_causal=False, enable_gqa=False
     )
     self.check_forward_parity(
         splash_fn=splash_fn,
@@ -100,7 +100,9 @@ class SplashAttentionTest(absltest.TestCase):
 
   def test_causal_mha_parity(self):
     """Causal multi-head attention parity matching torchtitan."""
-    splash_fn = functools.partial(splash_sdpa, is_causal=True, enable_gqa=False)
+    splash_fn = functools.partial(
+        splash_attention.splash_sdpa, is_causal=True, enable_gqa=False
+    )
     self.check_forward_parity(
         splash_fn=splash_fn,
         b=2,
@@ -141,7 +143,7 @@ class SplashAttentionTest(absltest.TestCase):
     q_test = q.clone().requires_grad_(True)
     k_test = k.clone().requires_grad_(True)
     v_test = v.clone().requires_grad_(True)
-    out_test = splash_sdpa(
+    out_test = splash_attention.splash_sdpa(
         q_test, k_test, v_test, is_causal=False, enable_gqa=False
     )
     out_test.sum().backward()
@@ -191,7 +193,9 @@ class SplashAttentionTest(absltest.TestCase):
     )
 
     def attention_loss(q, k, v):
-      return splash_sdpa(q, k, v, is_causal=False, enable_gqa=False).sum()
+      return splash_attention.splash_sdpa(
+          q, k, v, is_causal=False, enable_gqa=False
+      ).sum()
 
     compiled_attention_loss = torch.compile(attention_loss, backend="tpu")
 

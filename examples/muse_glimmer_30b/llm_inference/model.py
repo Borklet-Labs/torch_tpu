@@ -17,8 +17,8 @@ import dataclasses
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import kv_cache
-import rope
+import kv_cache  # from muse_glimmer_30b.llm_inference
+import rope  # from muse_glimmer_30b.llm_inference
 
 
 def is_swa_layer(layer_idx: int) -> bool:

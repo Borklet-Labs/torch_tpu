@@ -76,7 +76,7 @@ import einops
 import torch
 from torch import Tensor, nn
 import torch.nn.functional as F
-from kernels.splash_attention import splash_sdpa
+import splash_attention  # from FLUX_optimization
 
 rearrange = einops.rearrange
 
@@ -577,7 +577,9 @@ class DoubleStreamBlockBaseline(nn.Module):
     k_sdpa = k.transpose(1, 2)
     v_sdpa = v.transpose(1, 2)
     if self.config.use_splash_attention:
-      attn = splash_sdpa(q_sdpa, k_sdpa, v_sdpa, is_causal=False)
+      attn = splash_attention.splash_sdpa(
+          q_sdpa, k_sdpa, v_sdpa, is_causal=False
+      )
     else:
       attn = F.scaled_dot_product_attention(
           q_sdpa, k_sdpa, v_sdpa, is_causal=False

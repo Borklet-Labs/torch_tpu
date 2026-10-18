@@ -17,9 +17,9 @@
 from unittest import mock
 from absl.testing import absltest
 import torch
-import kv_cache
-import model
-import runner_dynamic
+import kv_cache  # from muse_glimmer_30b.llm_inference
+import model  # from muse_glimmer_30b.llm_inference
+import runner_dynamic  # from muse_glimmer_30b.llm_inference
 
 
 class KvCacheTest(absltest.TestCase):

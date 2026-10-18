@@ -82,7 +82,7 @@ import torch
 import torch.nn.functional as F
 import torch.profiler
 import torch_tpu
-import flux
+import flux  # from FLUX_optimization
 
 _NUM_WARMUP_STEPS = flags.DEFINE_integer(
     "num_warmup_steps",

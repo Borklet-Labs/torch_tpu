@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from absl.testing import absltest
-import runner_dynamic
+import runner_dynamic  # from muse_glimmer_30b.llm_inference
 
 
 class SingleTpuInferenceDynamicTest(absltest.TestCase):

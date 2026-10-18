@@ -39,7 +39,7 @@ def _(mo):
     This page is a condensed companion to the full tutorial. It highlights the key concept behind each optimization with short, self-contained snippets. For the complete model code, benchmarks, XProf traces, and tests, see:
 
     * [FLUX Optimization Tutorial](https://github.com/google-pytorch/torch_tpu/blob/main/examples/FLUX_optimization/README.md): full walkthrough of every milestone, including XProf traces and instructions for reproducing every benchmark.
-    * [Authoring Custom Pallas Kernels for PyTorch](https://github.com/google-pytorch/torch_tpu/blob/main/examples/FLUX_optimization/kernels/README.md): step-by-step walkthrough of the Pallas SplashAttention kernel used in Milestone 4.
+    * [Authoring Custom Pallas Kernels for PyTorch](https://github.com/google-pytorch/torch_tpu/blob/main/examples/FLUX_optimization/pallas_kernels.md): step-by-step walkthrough of the Pallas SplashAttention kernel used in Milestone 4.
 
     The implementation is based on the [TorchTitan implementation of FLUX](https://github.com/google-pytorch/torchtitan/blob/main/torchtitan/models/flux/model/) and the [black-forest-labs/flux](https://github.com/black-forest-labs/flux/blob/main/src/flux/) repository.
 
@@ -379,7 +379,7 @@ def _(mo):
   mo.md(r"""
     ## Milestone 4: Custom Pallas SplashAttention kernel
 
-    At long sequence lengths (for example, `S = 2048` or `S = 4096`), full joint attention becomes memory-bound. This milestone is shown as snippets only; see the [Pallas kernel walkthrough](https://github.com/google-pytorch/torch_tpu/blob/main/examples/FLUX_optimization/kernels/README.md) for the full, runnable implementation.
+    At long sequence lengths (for example, `S = 2048` or `S = 4096`), full joint attention becomes memory-bound. This milestone is shown as snippets only; see the [Pallas kernel walkthrough](https://github.com/google-pytorch/torch_tpu/blob/main/examples/FLUX_optimization/pallas_kernels.md) for the full, runnable implementation.
 
     ### Before (reference): standard PyTorch SDPA
 
@@ -428,7 +428,7 @@ def _(mo):
 
     **Learn more:**
 
-    * **Pallas SplashAttention example (used in this case study)**: [`splash_attention.py`](https://github.com/google-pytorch/torch_tpu/blob/main/examples/FLUX_optimization/kernels/splash_attention.py) contains the full kernel integration, and [`splash_attention_test.py`](https://github.com/google-pytorch/torch_tpu/blob/main/examples/FLUX_optimization/kernels/splash_attention_test.py) verifies forward and gradient parity against PyTorch SDPA. The [kernel walkthrough](https://github.com/google-pytorch/torch_tpu/blob/main/examples/FLUX_optimization/kernels/README.md) explains block sizes, masks, autograd registration, and testing step by step.
+    * **Pallas SplashAttention example (used in this case study)**: [`splash_attention.py`](https://github.com/google-pytorch/torch_tpu/blob/main/examples/FLUX_optimization/splash_attention.py) contains the full kernel integration, and [`splash_attention_test.py`](https://github.com/google-pytorch/torch_tpu/blob/main/examples/FLUX_optimization/splash_attention_test.py) verifies forward and gradient parity against PyTorch SDPA. The [kernel walkthrough](https://github.com/google-pytorch/torch_tpu/blob/main/examples/FLUX_optimization/pallas_kernels.md) explains block sizes, masks, autograd registration, and testing step by step.
     * **Pallas basics**: [Custom Kernels with Pallas](https://github.com/google-pytorch/torch_tpu/blob/main/docs/custom_kernels.md) introduces writing Pallas kernels with TorchTPU.
     """)
   return

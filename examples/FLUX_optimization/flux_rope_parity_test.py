@@ -48,7 +48,7 @@ import logging
 from absl.testing import absltest
 import torch
 import torch_tpu  # Required to initialize TPU distributed device runtime
-import flux
+import flux  # from FLUX_optimization
 
 # ==============================================================================
 # STEP 1: BIT-EXACT MATHEMATICAL & MODULE-LEVEL PARITY VERIFICATION

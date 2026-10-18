@@ -385,7 +385,7 @@ attn = splash_sdpa(q_sdpa, k_sdpa, v_sdpa, is_causal=False)
 > sequence length, and run the kernel in bfloat16.
 >
 > **Note on Pallas & JAX usage**: Although Pallas kernels are defined using the
-> `jax` package DSL (see [`kernels/README.md`](kernels/README.md) for a full
+> `jax` package DSL (see [`pallas_kernels.md`](pallas_kernels.md) for a full
 > walkthrough), **we are not running JAX at runtime**. `torch.tpu.pallas.jax_op`
 > only uses JAX once at trace time with abstract shape/dtype placeholders to
 > export the kernel into a standalone StableHLO/Mosaic MLIR module. During model
@@ -433,7 +433,7 @@ From this directory, run the verification test suites:
 python3 ./flux_rope_parity_test.py
 
 # Run custom Pallas SplashAttention kernel parity tests:
-python3 ./kernels/splash_attention_test.py
+python3 ./splash_attention_test.py
 
 # Run layout parity, compilation parity, and baseline speed test:
 python3 ./flux_test.py
@@ -485,7 +485,7 @@ the container `command:` in
 ```bash
 cd /workspace/examples/FLUX_optimization/
 python3 ./flux_rope_parity_test.py
-python3 ./kernels/splash_attention_test.py
+python3 ./splash_attention_test.py
 python3 ./flux_test.py
 ```
 

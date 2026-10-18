@@ -5,7 +5,7 @@ integrate custom **Pallas** kernels for PyTorch models running on **Google Cloud
 TPUs**.
 
 We use the [SplashAttention kernel](splash_attention.py) developed for the
-[FLUX Optimization Tutorial](../README.md) as a real-world reference
+[FLUX Optimization Tutorial](README.md) as a real-world reference
 implementation. This kernel and its accompanying test suite are directly based
 on the
 [TorchTitan implementation of SplashAttention](https://github.com/google-pytorch/torchtitan/blob/main/torchtitan/experiments/tpu/kernels/splash_attention.py).
@@ -379,7 +379,7 @@ container `command:` in
 `examples/simple_pytorch/torchtpu_singledevice_slice_job.yaml` to run:
 
 ```bash
-cd /workspace/examples/FLUX_optimization/kernels/
+cd /workspace/examples/FLUX_optimization/
 python3 ./splash_attention_test.py
 ```
 
@@ -389,6 +389,6 @@ Then:
 
 1.  If you haven't set up your cluster yet, complete the **One-time setup**
     section in
-    [Get started with TorchTPU on GKE](../../../docs/markdown/1_basics_3_get_started_on_gke.md).
+    [Get started with TorchTPU on GKE](../../docs/markdown/1_basics_3_get_started_on_gke.md).
 2.  Submit the job by following the **Single-Host Workload Execution (1-chip /
     1-device slice)** section in the same guide.

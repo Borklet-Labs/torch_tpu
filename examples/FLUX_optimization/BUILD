@@ -27,7 +27,7 @@ torch_tpu_py_library(
     name = "flux",
     srcs = ["flux.py"],
     deps = [
-        "//examples/FLUX_optimization/kernels:splash_attention",
+        ":splash_attention",
         "//shims/torch:pytorch",
         "@pypi//einops",
     ],
@@ -65,6 +65,36 @@ torch_tpu_py_test(
     ],
     deps = [
         ":flux",
+        "//shims/absl_py/testing:absltest",
+        "//shims/torch:pytorch",
+        "//src/torch_tpu",
+    ],
+)
+
+torch_tpu_py_library(
+    name = "splash_attention",
+    srcs = ["splash_attention.py"],
+    deps = [
+        "//shims/jax:pallas_tpu_ops",
+        "//shims/torch:pytorch",
+        "//src/torch_tpu",
+        "@pypi//jax",
+    ],
+)
+
+torch_tpu_py_test(
+    name = "splash_attention_test",
+    size = "large",
+    srcs = ["splash_attention_test.py"],
+    nopresubmit = "Requires TPU hardware",
+    tags = [
+        "requires-accel-hbm",
+        "requires-net:external",
+        "requires-tpu-v6e",
+    ],
+    deps = [
+        ":splash_attention",
+        "//shims/absl_py/logging",
         "//shims/absl_py/testing:absltest",
         "//shims/torch:pytorch",
         "//src/torch_tpu",

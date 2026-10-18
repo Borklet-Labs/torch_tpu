@@ -26,8 +26,8 @@ from torch import distributed as dist
 from torch import nn
 from torch import optim
 import torch.distributed._functional_collectives as _func_col
-import model
-import simple_model as simple_model_lib
+import model  # from fsdp.manual
+import simple_model as simple_model_lib  # from fsdp.manual
 
 logging.set_verbosity(logging.INFO)
 

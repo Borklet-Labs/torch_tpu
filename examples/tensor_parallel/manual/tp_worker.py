@@ -25,7 +25,7 @@ import torch
 from torch import distributed as dist
 # Direct all logs to stdout so kubectl logs can see them
 from torch.testing import assert_close
-import model
+import model  # from tensor_parallel.manual
 
 
 BATCH_SIZE = 64

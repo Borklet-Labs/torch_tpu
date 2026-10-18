@@ -16,7 +16,7 @@
 
 from torch.distributed import launcher
 from torch.tpu import distributed  # pyrefly: ignore[missing-import]
-import tp_worker
+import tp_worker  # from tensor_parallel.manual
 
 
 def main():
