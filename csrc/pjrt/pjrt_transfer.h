@@ -21,7 +21,6 @@
 #include <memory>
 #include <vector>
 
-#include "ATen/core/TensorBody.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
@@ -44,9 +43,6 @@ absl::StatusOr<DeviceBufferRef> TpuMallocAndMemcpyHtoD(
     const void* host_data, mlir::ElementType element_type,
     absl::Span<const int64_t> dimensions, bool non_blocking,
     std::vector<uint8_t> backing_data = {});
-
-absl::StatusOr<at::Tensor> TpuMemcpyDtoH(const DeviceBufferRef& buffer_ref,
-                                         bool non_blocking = false);
 
 // Copies the data from the device directly into the provided host buffer.
 absl::Status TpuMemcpyDtoHDirect(const DeviceBufferRef& buffer_ref,

@@ -19,11 +19,23 @@
 
 #include "ATen/core/TensorBody.h"
 #include "absl/status/status.h"
+#include "absl/status/statusor.h"
+#include "csrc/eager/device_buffer.h"
 
 namespace torch_tpu {
 
+// Writes the values of src (on TPU) to dest (on CPU).
+// src and dest may have different dtypes.
+// src and dest may have different shapes as long as src is broadcastable to
+// dest.
+// If non_blocking is true, this will return without blocking the caller
+// if possible; however if dest is non-dense, a blocking copy will be required.
 absl::Status CopyTpuToCpu(const at::Tensor& src, const at::Tensor& dest,
                           bool non_blocking);
+
+// Writes the values of src_buffer_ref (on TPU) to a new, contiguous CPU tensor.
+absl::StatusOr<at::Tensor> CopyDeviceBufferRefToCpu(
+    const DeviceBufferRef& src_buffer_ref, bool non_blocking);
 
 }  // namespace torch_tpu
 

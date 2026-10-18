@@ -38,6 +38,8 @@
 #include "csrc/common/reroute_warnings.h"
 #include "csrc/common/status_builder.h"
 #include "csrc/common/to_string.h"
+#include "csrc/common/utils.h"
+#include "csrc/eager/current_stream.h"
 #include "csrc/eager/device_buffer.h"
 #include "csrc/eager/materialize.h"
 #include "csrc/eager/split_traversal.h"
@@ -47,6 +49,7 @@
 #include "csrc/ops/copy_from/tpu_to_tpu.h"
 #include "csrc/pjrt/pjrt_transfer.h"
 #include "stablehlo/integrations/cpp/builder/AttrTypeBuilderUtil.h"
+#include "torch/headeronly/core/DeviceType.h"
 #include "torch/headeronly/core/MemoryFormat.h"
 #include "torch/headeronly/core/ScalarType.h"
 #include "tsl/profiler/lib/traceme.h"
@@ -129,6 +132,24 @@ bool CanCopyStorageDirect(const at::Tensor& src, const at::Tensor& dest,
   return src.storage().nbytes() == dest.nbytes();
 }
 
+// Materializes src_buffer_ref and copies it directly into dest's storage.
+absl::Status CopyDeviceBufferRefToCpuStorageDirect(
+    const DeviceBufferRef& src_buffer_ref, const at::Tensor& dest,
+    bool non_blocking) {
+  const MaterializationBlockMode block_mode =
+      non_blocking ? MaterializationBlockMode::kNonBlocking
+                   : MaterializationBlockMode::kBlockUntilStarted;
+  {
+    tsl::profiler::TraceMe trace_mat("CopyTpuToCpu::MaterializeBase");
+    TT_RETURN_IF_ERROR(TranslateXlaTensorOomError(
+        Materialize(src_buffer_ref, MaterializationReason::kCpuTransfer,
+                    GraphSplitMode::kSplitGraph, block_mode),
+        dest.scalar_type(), dest.sizes()));
+  }
+  // Copy directly into dest's storage.
+  return TpuMemcpyDtoHDirect(src_buffer_ref, dest.data_ptr(), non_blocking);
+}
+
 // Materializes the base buffer of src, and copies it byte-for-byte into dest's
 // storage. This can be done asynchronously and does not materialize any
 // ephemeral buffers.
@@ -137,19 +158,7 @@ absl::Status CopyTpuToCpuStorageDirect(const at::Tensor& src,
                                        bool non_blocking) {
   TT_ASSIGN_OR_RETURN(DeviceBufferRef base_buf, GetBaseBuffer(src));
   ABSL_DCHECK(CanCopyStorageDirect(src, dest, base_buf.element_type()));
-  // Materialize the contiguous base buffer of the source tensor.
-  const MaterializationBlockMode block_mode =
-      non_blocking ? MaterializationBlockMode::kNonBlocking
-                   : MaterializationBlockMode::kBlockUntilStarted;
-  {
-    tsl::profiler::TraceMe trace_mat("CopyTpuToCpu::MaterializeBase");
-    TT_RETURN_IF_ERROR(TranslateXlaTensorOomError(
-        Materialize(base_buf, MaterializationReason::kCpuTransfer,
-                    GraphSplitMode::kSplitGraph, block_mode),
-        dest.scalar_type(), src.sizes()));
-  }
-  // Copy directly into dest's storage.
-  return TpuMemcpyDtoHDirect(base_buf, dest.data_ptr(), non_blocking);
+  return CopyDeviceBufferRefToCpuStorageDirect(base_buf, dest, non_blocking);
 }
 
 // Using metadata-only views (as_strided), broadcasts src to the shape of dest.
@@ -250,6 +259,26 @@ absl::Status CopyTpuToCpuWithTpuConversion(
          "tensor has "
       << src.dim() << " dimensions, destination tensor has " << dest.dim()
       << " dimensions";
+  // Ensure the base buffer will materialize before we do any further work on
+  // the current stream that depends on it.
+  // If the base buffer is on this stream, this is guaranteed; no explicit
+  // materialization is needed.
+  // But if it's on another stream, we need to force that stream to sync and
+  // execute the base before any views or copies we do here.
+  TT_ASSIGN_OR_RETURN(DeviceBufferRef src_base_buf, GetBaseBuffer(src));
+  const auto [curr_device_index, curr_stream_id] = GetCurrentDeviceStreamId();
+  if (!src_base_buf.is_materializing() &&
+      (src_base_buf.device_index() != curr_device_index ||
+       src_base_buf.stream_id() != curr_stream_id)) {
+    tsl::profiler::TraceMe trace_mat("CopyTpuToCpu::MaterializeBase");
+    TT_RETURN_IF_ERROR(TranslateXlaTensorOomError(
+        Materialize(src_base_buf, MaterializationReason::kCpuTransfer,
+                    GraphSplitMode::kSplitGraph,
+                    MaterializationBlockMode::kBlockUntilStarted),
+        ConvertTo<at::ScalarType>(src_base_buf.element_type()),
+        src_base_buf.dimensions()));
+  }
+
   // Broadcast src to dest, if needed.
   TT_ASSIGN_OR_RETURN(at::Tensor broadcasted_src, BroadcastToDest(src, dest));
 
@@ -283,25 +312,13 @@ absl::Status CopyTpuToCpuWithTpuConversion(
     TT_RETURN_IF_ERROR(CopyTpuToTpu(after_transpose.src, converted_src));
   }
 
-  // Read the view data from src and materialize it as an ephemeral contiguous
-  // buffer.
-  MaterializationBlockMode block_mode =
-      non_blocking ? MaterializationBlockMode::kNonBlocking
-                   : MaterializationBlockMode::kBlockUntilStarted;
-  TT_ASSIGN_OR_RETURN(
-      const DeviceBufferRef materialized_src_buf,
-      [&]() {
-        tsl::profiler::TraceMe trace_mat("CopyTpuToCpu::MaterializeAndReturn");
-        return MaterializeAndReturn(
-            converted_src, MaterializationReason::kCpuTransfer, block_mode);
-      }(),
-      TranslateXlaTensorOomError(_, dest.scalar_type(), src.sizes()));
-
   // Start or schedule a copy from the TPU buffer into the destination CPU
   // storage. Because we only applied as_strided to dest, the storage data_ptr
   // is unchanged.
-  return TpuMemcpyDtoHDirect(materialized_src_buf, dest.data_ptr(),
-                             non_blocking);
+  TT_ASSIGN_OR_RETURN(DeviceBufferRef converted_src_buf,
+                      GetBuffer(converted_src));
+  return CopyDeviceBufferRefToCpuStorageDirect(converted_src_buf, dest,
+                                               non_blocking);
 }
 
 // PJRT can only asynchronously copy from a TPU tensor into contiguous CPU
@@ -317,28 +334,12 @@ absl::Status CopyTpuToCpuWithTpuConversion(
 // host where they tend to be faster/more efficient.
 absl::Status CopyTpuToCpuWithCpuConversion(const at::Tensor& src,
                                            const at::Tensor& dest) {
-  // Materialize the contiguous base buffer of the source tensor.
+  // Materialize the contiguous base buffer of the source tensor and copy it to
+  // a temporary CPU tensor.
   TT_ASSIGN_OR_RETURN(DeviceBufferRef base_buf, GetBaseBuffer(src));
-  {
-    tsl::profiler::TraceMe trace_mat("CopyTpuToCpu::MaterializeBase");
-    TT_RETURN_IF_ERROR(TranslateXlaTensorOomError(
-        Materialize(base_buf, MaterializationReason::kCpuTransfer,
-                    GraphSplitMode::kSplitGraph,
-                    MaterializationBlockMode::kBlockUntilStarted),
-        dest.scalar_type(), src.sizes()));
-  }
-
-  // Copy exactly these contiguous elements into a contiguous CPU storage.
-  at::ScalarType base_buf_at_type =
-      ConvertTo<at::ScalarType>(base_buf.element_type());
-  at::TensorOptions cpu_temp_options =
-      at::TensorOptions()
-          .dtype(base_buf_at_type)
-          .device(dest.device())
-          .memory_format(at::MemoryFormat::Contiguous);
-  at::Tensor cpu_temp = at::empty(base_buf.dimensions(), cpu_temp_options);
-  TT_RETURN_IF_ERROR(TpuMemcpyDtoHDirect(base_buf, cpu_temp.data_ptr(),
-                                         /*non_blocking=*/false));
+  TT_ASSIGN_OR_RETURN(
+      at::Tensor cpu_temp,
+      CopyDeviceBufferRefToCpu(base_buf, /*non_blocking=*/false));
 
   // View the source Storage on host in the same way as on TPU.
   auto* cpu_temp_impl = cpu_temp.unsafeGetTensorImpl();
@@ -437,6 +438,38 @@ absl::Status CopyTpuToCpu(const at::Tensor& src, const at::Tensor& dest,
                                          non_blocking);
   }
   return CopyTpuToCpuWithCpuConversion(src, dest);
+}
+
+absl::StatusOr<at::Tensor> CopyDeviceBufferRefToCpu(
+    const DeviceBufferRef& src_buffer_ref, bool non_blocking) {
+  const at::ScalarType src_scalar_type =
+      ConvertTo<at::ScalarType>(src_buffer_ref.element_type());
+  at::IntArrayRef contiguous_dims = src_buffer_ref.dimensions();
+
+  // Explanation:
+  // One logical element of mlir::ElementType::F4E2M1FN is a single,
+  // four-bit value. This is stored in one byte on TPU.
+  // But one logical element of at::ScalarType::Float4_e2m1fn_x2; this is also
+  // stored as one byte, but represents two 4-bit values.
+  // Using at::empty(src_buffer_ref.dimensions()) would allocate twice as much
+  // memory as needed.
+  Dimensions fp4_adjusted_dims;
+  if (src_scalar_type == at::ScalarType::Float4_e2m1fn_x2) {
+    ABSL_CHECK(  // CRASH_OK=required representation of Float4_e2m1fn_x2 value
+        !contiguous_dims.empty() && contiguous_dims.back() % 2 == 0);
+    fp4_adjusted_dims = CopyIntVector(contiguous_dims);
+    fp4_adjusted_dims.back() /= 2;
+    contiguous_dims = fp4_adjusted_dims;
+  }
+
+  at::Tensor dest = at::empty(contiguous_dims,
+                              at::TensorOptions()
+                                  .dtype(src_scalar_type)
+                                  .device(at::DeviceType::CPU)
+                                  .memory_format(at::MemoryFormat::Contiguous));
+  TT_RETURN_IF_ERROR(CopyDeviceBufferRefToCpuStorageDirect(src_buffer_ref, dest,
+                                                           non_blocking));
+  return dest;
 }
 
 }  // namespace torch_tpu

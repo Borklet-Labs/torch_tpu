@@ -336,13 +336,7 @@ class AsyncTransferTest(seed_test_utils.RepeatableTest):
     utils.assert_close(cpu_c, a_cpu * 2 + b_cpu)
 
   def test_to_cpu_non_blocking_with_dtype_conversion(self):
-    """Tests D2H transfer with dtype conversion and non_blocking=True.
-
-    Because the source (float32) and destination (float16 / bfloat16) dtypes
-    differ, CopyTpuToCpu cannot DMA directly into the destination buffer and
-    takes the synchronous TpuMemcpyDtoH fallback followed by a CPU dtype
-    conversion.
-    """
+    """Tests D2H transfer with dtype conversion and non_blocking=True."""
     device = torch.device('tpu')
     size = 512
     a_cpu = torch.randn((size, size), dtype=torch.float32)

@@ -41,6 +41,7 @@
 #include "csrc/eager/device_gen_impl.h"
 #include "csrc/eager/op_dispatcher.h"
 #include "csrc/eager/tensor_to_buffer.h"
+#include "csrc/ops/copy_from/tpu_to_cpu.h"
 #include "csrc/ops/macros/kernel.h"
 #include "csrc/ops/min_max/min_max.h"
 #include "csrc/ops/min_max/min_max_aten_kernels.h"
@@ -49,7 +50,6 @@
 #include "csrc/ops/resize/resize_aten_kernels.h"
 #include "csrc/ops/rng_utils.h"
 #include "csrc/ops/uniform/uniform.h"
-#include "csrc/pjrt/pjrt_transfer.h"
 #include "llvm/ADT/APFloat.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/BuiltinTypes.h"
@@ -270,7 +270,9 @@ absl::Status ValidateNormalStdPreconditions(const at::Tensor& std,
   // Run min natively on TPU.
   TT_ASSIGN_OR_RETURN(DeviceBufferRef min_buf,
                       DispatchUnaryMinMax(std, MinMaxOp::kMin, OpName::kMin));
-  TT_ASSIGN_OR_RETURN(at::Tensor cpu_min, TpuMemcpyDtoH(min_buf));
+  // Blocking copy so that we can immediately call .item() and check the value.
+  TT_ASSIGN_OR_RETURN(at::Tensor cpu_min, CopyDeviceBufferRefToCpu(
+                                              min_buf, /*non_blocking=*/false));
   TT_RET_CHECK(cpu_min.item<double>() >= 0.0, error::kInvalidArgument)
       << "expected all elements of std >= 0.0, got min element: "
       << cpu_min.item();

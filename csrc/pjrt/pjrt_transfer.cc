@@ -25,30 +25,21 @@
 #include <utility>
 #include <vector>
 
-#include "ATen/core/ATen_fwd.h"
-#include "ATen/ops/empty.h"
 #include "absl/base/nullability.h"
 #include "absl/log/absl_check.h"
 #include "absl/log/absl_log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "absl/types/span.h"
-#include "c10/core/TensorImpl.h"
 #include "csrc/common/context_manager.h"
 #include "csrc/common/context_states.h"
-#include "csrc/common/dimension_types.h"
 #include "csrc/common/dtype.h"
 #include "csrc/common/error_utils.h"
-#include "csrc/common/to_string.h"
-#include "csrc/common/warnings.h"
 #include "csrc/eager/device_buffer.h"
 #include "csrc/eager/events_queue.h"
 #include "csrc/pjrt/pjrt_utils.h"
 #include "stablehlo/integrations/cpp/builder/AttrTypeBuilderUtil.h"
-#include "torch/headeronly/core/DeviceType.h"
-#include "torch/headeronly/core/ScalarType.h"
 #include "tsl/profiler/lib/traceme.h"
 #include "xla/future.h"
 #include "xla/layout.h"
@@ -67,30 +58,6 @@
 
 namespace torch_tpu {
 namespace {
-// Packs unpacked float4_e2m1fn_x2 data (1 element per byte) from unpacked_data
-// into packed_data where each byte contains 2 elements (lower 4 bits of first
-// element, upper 4 bits of second element).
-// Contract:
-// - unpacked_data must not be null.
-// - packed_data must not be null.
-// - num_packed_bytes must be non-negative.
-// - unpacked_data must point to a buffer containing at least
-//   2 * num_packed_bytes elements.
-// - packed_data must point to a buffer containing at least num_packed_bytes
-//   bytes.
-void PackFp4(const uint8_t* absl_nonnull unpacked_data,
-             uint8_t* absl_nonnull packed_data, int64_t num_packed_bytes) {
-  ABSL_CHECK(unpacked_data != nullptr);  // CRASH_OK
-  ABSL_CHECK(packed_data != nullptr);    // CRASH_OK
-  ABSL_CHECK_GE(num_packed_bytes, 0);    // CRASH_OK
-
-  for (int64_t i = 0; i < num_packed_bytes; ++i) {
-    uint8_t val0 = unpacked_data[2 * i] & 0x0F;
-    uint8_t val1 = unpacked_data[2 * i + 1] & 0x0F;
-    packed_data[i] = (val1 << 4) | val0;
-  }
-}
-
 // Packs unpacked float4_e2m1fn_x2 data (1 element per byte) from unpacked_data
 // into packed_data where each byte contains 2 elements (lower 4 bits of first
 // element, upper 4 bits of second element).
@@ -140,53 +107,6 @@ void ValidateFp4Dimensions(absl::Span<const int64_t> dimensions) {
       << "expected even size in the last dimension for float4_e2m1fn_x2 "
          "tensors, got "
       << dimensions.back();
-}
-
-/**
- * Unpacks float4_e2m1fn_x2 data from the device PjRtBuffer via a temporary
- * 1-byte-per-element buffer, then packs it back into the receiver CPU tensor.
- */
-absl::Status TpuMemcpyDtoHFP4(xla::PjRtBuffer* absl_nonnull buffer,
-                              absl::Span<const int64_t> buffer_expected_dims,
-                              at::Tensor& cpu_tensor_receiver) {
-  const at::ScalarType kScalarType =
-      ConvertTo<at::ScalarType>(mlir::ElementType::F4E2M1FN);
-
-  ABSL_CHECK(  // CRASH_OK
-      buffer->element_type() == xla::PrimitiveType::F4E2M1FN)
-      << "TpuMemcpyDtoHFP4() buffer dtype must be " << ToString(kScalarType)
-      << ", got " << ToString(buffer->element_type());
-  ABSL_CHECK_EQ(  // CRASH_OK
-      cpu_tensor_receiver.scalar_type(), kScalarType)
-      << "TpuMemcpyDtoHFP4() tensor receiver dtype must be "
-      << ToString(kScalarType) << ", got " << ToString(buffer->element_type());
-
-  // XLA's default layout for sub-byte types (like FP4) in host memory
-  // literals is unpacked (1 byte per element). We allocate a
-  // 1-byte-per-element temporary buffer to receive the unpacked elements from
-  // PjRt/XLA.
-  const int64_t num_packed_elements = cpu_tensor_receiver.numel();
-  std::vector<uint8_t> unpacked_receiver(2 * num_packed_elements);
-
-  xla::Shape xla_shape = xla::ShapeUtil::MakeShapeWithDescendingLayout(
-      xla::PrimitiveType::F4E2M1FN, buffer_expected_dims);
-
-  auto literal = std::make_unique<xla::MutableBorrowingLiteral>(
-      reinterpret_cast<char*>(unpacked_receiver.data()), xla_shape);
-  auto future = buffer->ToLiteral(literal.get());
-  {
-    tsl::profiler::TraceMe trace_await("TpuMemcpyDtoHFP4::Await");
-    TT_RETURN_IF_ERROR(AdaptXlaError(
-        future.Await(),
-        /* context= */ absl::StrCat("failed to copy ", ToString(kScalarType),
-                                    " buffer from device to host")));
-  }
-
-  // Pack the data back into cpu_tensor_receiver
-  PackFp4(unpacked_receiver.data(),
-          static_cast<uint8_t*>(cpu_tensor_receiver.data_ptr()),
-          num_packed_elements);
-  return absl::OkStatus();
 }
 
 }  // namespace
@@ -307,71 +227,6 @@ absl::StatusOr<DeviceBufferRef> TpuMallocAndMemcpyHtoD(
                   "DeviceBufferRef. Dims: ["
                << absl::StrJoin(buffer_ref.dimensions(), ",") << "]";
   return buffer_ref;
-}
-
-absl::StatusOr<at::Tensor> TpuMemcpyDtoH(const DeviceBufferRef& buffer_ref,
-                                         bool non_blocking) {
-  tsl::profiler::TraceMe trace("TpuMemcpyDtoH");
-  ABSL_VLOG(1) << "[TpuMemcpyDtoH ENTRY] buffer_ref: "
-               << buffer_ref.DebugString();
-
-  if (non_blocking) {
-    TT_WARN_ONCE(
-        WarningCategory::kPerformance,
-        "non_blocking=True in .cpu() or .to('cpu') only works if the "
-        "destination is already a pinned tensor. This will block until all "
-        "pending d2h copies on the device complete.");
-  }
-
-  size_t buffer_expected_bytes = buffer_ref.size_bytes();
-  const auto buffer_tensor_type =
-      ConvertTo<at::ScalarType>(buffer_ref.element_type());
-  absl::Span<const int64_t> buffer_expected_dims = buffer_ref.dimensions();
-  Dimensions cpu_dims(buffer_expected_dims.begin(), buffer_expected_dims.end());
-  if (buffer_ref.element_type() == mlir::ElementType::F4E2M1FN) {
-    ValidateFp4Dimensions(cpu_dims);
-    cpu_dims.back() /= 2;
-  }
-
-  at::Tensor cpu_tensor_receiver = at::empty(
-      cpu_dims, at::TensorOptions().dtype(buffer_tensor_type).device(at::kCPU));
-
-  if (buffer_expected_bytes == 0) {
-    ABSL_VLOG(1) << "[TpuMemcpyDtoH] DeviceBufferRef size_bytes is 0. "
-                    "Returning empty vector.";
-    return cpu_tensor_receiver;
-  }
-
-  TT_ASSIGN_OR_RETURN(auto* buffer, buffer_ref.AwaitBuffer());
-
-  ABSL_VLOG(1) << "[TpuMemcpyDtoH] PjRtBuffer Details - OnDeviceSizeInBytes: "
-               << buffer->GetOnDeviceSizeInBytes()
-               << ", IsDeleted: " << buffer->IsDeleted()
-               << ", IsOnCpu: " << buffer->IsOnCpu()
-               << ", Shape: " << buffer->on_device_shape().ToString(true);
-
-  ABSL_VLOG(1) << "[TpuMemcpyDtoH] Calling PjRtBuffer::ToLiteral()...";
-
-  if (buffer_ref.element_type() == mlir::ElementType::F4E2M1FN) {
-    TT_RETURN_IF_ERROR(
-        TpuMemcpyDtoHFP4(buffer, buffer_expected_dims, cpu_tensor_receiver));
-    return cpu_tensor_receiver;
-  }
-
-  xla::Shape xla_shape = xla::ShapeUtil::MakeShapeWithDescendingLayout(
-      ConvertTo<xla::PrimitiveType>(buffer_ref.element_type()),
-      buffer_expected_dims);
-
-  auto literal = std::make_unique<xla::MutableBorrowingLiteral>(
-      static_cast<char*>(cpu_tensor_receiver.data_ptr()), xla_shape);
-  auto future = buffer->ToLiteral(literal.get());
-  {
-    tsl::profiler::TraceMe trace_await("TpuMemcpyDtoH::Await");
-    TT_RETURN_IF_ERROR(AdaptXlaError(
-        future.Await(),
-        /* context= */ "failed to copy buffer from device to host"));
-  }
-  return cpu_tensor_receiver;
 }
 
 namespace {

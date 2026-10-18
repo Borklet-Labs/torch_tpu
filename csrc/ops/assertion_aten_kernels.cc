@@ -37,9 +37,9 @@
 #include "csrc/eager/eager_mode.h"
 #include "csrc/eager/structured_log_buffer.h"
 #include "csrc/eager/tensor_to_buffer.h"
+#include "csrc/ops/copy_from/tpu_to_cpu.h"
 #include "csrc/ops/macros/kernel.h"
 #include "csrc/ops/op_names.h"
-#include "csrc/pjrt/pjrt_transfer.h"
 
 namespace torch_tpu {
 namespace {
@@ -110,9 +110,12 @@ void ScheduleAsyncAssertionCheck(const at::Tensor& self,
     RouteWarningsOnThisThreadToDispatchThread();
     absl::Cleanup cleanup = [] { DecrementPendingAssertionChecks(); };
 
-    // Asynchronously copy the condition scalar to CPU host memory.
+    // Copy the condition scalar to CPU host memory.
+    // This is a blocking transfer on a background thread, which is async
+    // relative to the thread that called `ScheduleAsyncAssertionCheck`.
+    // It needs to be blocking so that we can immediately call ".item()" below.
     auto status_or_tensor =
-        TpuMemcpyDtoH(materialized_buf, /*non_blocking=*/false);
+        CopyDeviceBufferRefToCpu(materialized_buf, /*non_blocking=*/false);
     if (!status_or_tensor.ok()) {
       SetStickyError(status_or_tensor.status());
       return;
@@ -174,6 +177,8 @@ void ScheduleAsyncAssertionCheck(const at::Tensor& self,
 // 5. Subsequent op dispatches (via DispatchOp) and explicit device/stream syncs
 //    (via SyncAndCheckStickyError) detect the sticky error and raise a C++
 //    exception into PyTorch.
+// TODO(bawilson): can we do this through events_queue to reuse existing
+// infrastructure?
 
 // aten::_assert_async(Tensor self) -> ()
 void AtenAssertAsync(const at::Tensor& self) {
