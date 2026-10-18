@@ -432,7 +432,7 @@ class NestedCompileRegionBenchmarkTest(seed_test_utils.RepeatableTest):
     logging.info("%s", full_table)
 
     # Sanity checks
-    for config_id in (1, 2, 3):
+    for config_id, _ in configs:
       self.assertGreater(medians[config_id]["overall"], 0.0)
       self.assertGreater(medians[config_id]["xla"], 0.0)
       self.assertGreater(medians[config_id]["steady"], 0.0)
