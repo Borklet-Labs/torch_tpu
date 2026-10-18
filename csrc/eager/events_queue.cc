@@ -197,6 +197,7 @@ class StreamState {
       deferred_op_event.deferred_op_hash = 0;
     }
     futures_.clear();
+    last_snapshot_future_ = xla::Future<void>(absl::OkStatus());
   }
 
   // If a deferred op has no side effects, then as soon as all of its DataPtrs
