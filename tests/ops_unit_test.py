@@ -21672,6 +21672,102 @@ class OpTestingFrameworkTest(op_testing.OpInfoTestBase):
             actual=b_tpu.grad.cpu(), expected=b_cpu.grad, rtol=rtol, atol=atol
         )
 
+  def test_einsum_int_and_float_outer_product(self):
+    with self._highest_matmul_precision():
+      pos_cpu = torch.randint(0, 10, (2, 4), dtype=torch.int64)
+      omega_cpu = torch.randn((8,), dtype=torch.float32, requires_grad=True)
+      out_cpu = torch.einsum("...n,d->...nd", pos_cpu, omega_cpu)
+      grad_out = torch.randn_like(out_cpu)
+      out_cpu.backward(grad_out)
+
+      pos_tpu = pos_cpu.to("tpu")
+      omega_tpu = omega_cpu.detach().to("tpu").requires_grad_(True)
+      out_tpu = torch.einsum("...n,d->...nd", pos_tpu, omega_tpu)
+      self.assertEqual(out_tpu.dtype, torch.float32)
+      out_tpu.backward(grad_out.to("tpu"))
+      self.assertEqual(omega_tpu.grad.dtype, torch.float32)
+      utils.assert_close(
+          actual=out_tpu.cpu(), expected=out_cpu, rtol=1e-4, atol=1e-4
+      )
+      utils.assert_close(
+          actual=omega_tpu.grad.cpu(),
+          expected=omega_cpu.grad,
+          rtol=1e-4,
+          atol=1e-4,
+      )
+
+  @parameterized.named_parameters(
+      ("outer_bf16", "i,j->ij", (4,), (5,), torch.bfloat16),
+      ("outer_fp16", "i,j->ij", (4,), (5,), torch.float16),
+      ("hadamard_bf16", "ij,ij->ij", (3, 4), (3, 4), torch.bfloat16),
+      ("hadamard_fp16", "ij,ij->ij", (3, 4), (3, 4), torch.float16),
+      (
+          "broadcast_bf16",
+          "...ij,...j->...ij",
+          (2, 3, 4),
+          (2, 4),
+          torch.bfloat16,
+      ),
+      (
+          "broadcast_fp16",
+          "...ij,...j->...ij",
+          (2, 3, 4),
+          (2, 4),
+          torch.float16,
+      ),
+  )
+  def test_einsum_mixed_float_uncontracted(
+      self, equation, shape_a, shape_b, low_dtype
+  ):
+    with self._highest_matmul_precision():
+      a_cpu = torch.randn(shape_a, dtype=low_dtype, requires_grad=True)
+      b_cpu = torch.randn(shape_b, dtype=torch.float32, requires_grad=True)
+      out_cpu = torch.einsum(equation, a_cpu, b_cpu)
+      grad_out = torch.randn_like(out_cpu)
+      out_cpu.backward(grad_out)
+
+      a_tpu = a_cpu.detach().to("tpu").requires_grad_(True)
+      b_tpu = b_cpu.detach().to("tpu").requires_grad_(True)
+      out_tpu = torch.einsum(equation, a_tpu, b_tpu)
+      self.assertEqual(out_tpu.dtype, torch.float32)
+      out_tpu.backward(grad_out.to("tpu"))
+      self.assertEqual(a_tpu.grad.dtype, low_dtype)
+      self.assertEqual(b_tpu.grad.dtype, torch.float32)
+      utils.assert_close(
+          actual=out_tpu.cpu(), expected=out_cpu, rtol=1e-2, atol=1e-2
+      )
+      utils.assert_close(
+          actual=a_tpu.grad.cpu(), expected=a_cpu.grad, rtol=1e-2, atol=1e-2
+      )
+      utils.assert_close(
+          actual=b_tpu.grad.cpu(), expected=b_cpu.grad, rtol=1e-2, atol=1e-2
+      )
+
+  def test_einsum_mixed_dtype_multi_operand_chain(self):
+    with self._highest_matmul_precision():
+      x_cpu = torch.randint(1, 5, (3,), dtype=torch.int64)
+      y_cpu = torch.randn((4,), dtype=torch.float32, requires_grad=True)
+      z_cpu = torch.randn((4, 5), dtype=torch.float32, requires_grad=True)
+      out_cpu = torch.einsum("i,j,jk->ik", x_cpu, y_cpu, z_cpu)
+      grad_out = torch.randn_like(out_cpu)
+      out_cpu.backward(grad_out)
+
+      x_tpu = x_cpu.to("tpu")
+      y_tpu = y_cpu.detach().to("tpu").requires_grad_(True)
+      z_tpu = z_cpu.detach().to("tpu").requires_grad_(True)
+      out_tpu = torch.einsum("i,j,jk->ik", x_tpu, y_tpu, z_tpu)
+      self.assertEqual(out_tpu.dtype, torch.float32)
+      out_tpu.backward(grad_out.to("tpu"))
+      utils.assert_close(
+          actual=out_tpu.cpu(), expected=out_cpu, rtol=1e-4, atol=1e-4
+      )
+      utils.assert_close(
+          actual=y_tpu.grad.cpu(), expected=y_cpu.grad, rtol=1e-4, atol=1e-4
+      )
+      utils.assert_close(
+          actual=z_tpu.grad.cpu(), expected=z_cpu.grad, rtol=1e-4, atol=1e-4
+      )
+
   def test_einsum_direct_dot_general_ir_and_compile(self):
     # Verify that 6D Mamba-3 einsum lowers directly to a single
     # stablehlo.dot_general without intermediate 3D reshapes.

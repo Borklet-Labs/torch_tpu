@@ -209,9 +209,9 @@ def rope_ref(pos: Tensor, dim: int, theta: int = 10000) -> Tensor:
       https://github.com/google-pytorch/torchtitan/blob/main/tests/unit_tests/test_flux_rope.py
   """
   assert dim % 2 == 0
-  scale = torch.arange(0, dim, 2, dtype=torch.float32, device=pos.device) / dim
+  scale = torch.arange(0, dim, 2, dtype=pos.dtype, device=pos.device) / dim
   omega = 1.0 / (theta**scale)
-  out = torch.einsum("...n,d->...nd", pos.to(omega.dtype), omega)
+  out = torch.einsum("...n,d->...nd", pos, omega)
   out = torch.stack(
       [torch.cos(out), -torch.sin(out), torch.sin(out), torch.cos(out)], dim=-1
   )
@@ -289,9 +289,9 @@ def rope(pos: Tensor, dim: int, theta: int = 10000) -> Tensor:
       https://github.com/google-pytorch/torchtitan/blob/main/torchtitan/models/flux/model/layers.py
   """
   assert dim % 2 == 0
-  scale = torch.arange(0, dim, 2, dtype=torch.float32, device=pos.device) / dim
+  scale = torch.arange(0, dim, 2, dtype=pos.dtype, device=pos.device) / dim
   omega = 1.0 / (theta**scale)
-  out = torch.einsum("...n,d->...nd", pos.to(omega.dtype), omega)
+  out = torch.einsum("...n,d->...nd", pos, omega)
   cos = torch.cos(out).float()
   sin = torch.sin(out).float()
   return torch.stack([cos, sin], dim=-1)

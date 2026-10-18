@@ -35,6 +35,7 @@
 #include "ATen/ops/diagonal_scatter.h"
 #include "ATen/ops/einsum.h"
 #include "ATen/ops/einsum_native.h"
+#include "ATen/ops/real.h"
 #include "ATen/ops/zeros.h"
 #include "absl/algorithm/container.h"
 #include "absl/status/status.h"
@@ -42,6 +43,7 @@
 #include "absl/types/span.h"
 #include "c10/core/DispatchKey.h"
 #include "c10/core/DispatchKeySet.h"
+#include "c10/core/ScalarType.h"
 #include "c10/core/SymInt.h"
 #include "c10/core/TensorImpl.h"
 #include "c10/util/intrusive_ptr.h"
@@ -148,6 +150,10 @@ struct ParsedEinsum {
   // True if an explicit `path` was provided (controls whether contracted
   // intermediates are appended to the back or inserted at the front of `ops`).
   bool has_path = false;
+  // Original scalar types for each operand.
+  std::vector<at::ScalarType> operand_dtypes;
+  // Resolved output scalar type after pairwise promotions and contractions.
+  at::ScalarType output_dtype = at::ScalarType::Undefined;
 };
 
 absl::Status ParseSingleLhsChar(unsigned char label, size_t& i,
@@ -438,20 +444,6 @@ absl::Status BuildContractionSteps(
   return absl::OkStatus();
 }
 
-absl::Status ValidateOperandDtypes(at::TensorList operands) {
-  const at::ScalarType first_dtype = operands[0].scalar_type();
-  for (size_t i = 1; i < operands.size(); ++i) {
-    TT_RET_CHECK(operands[i].scalar_type() == first_dtype,
-                 error::kInvalidArgument)
-        << "expected all tensors to have the same dtype, got "
-        << ToString(first_dtype) << " and "
-        << ToString(operands[i].scalar_type());
-  }
-  TT_RET_CHECK(!IsBool(operands[0]), error::kPythonNotImplementedError)
-      << "expected non-bool dtype, got " << ToString(first_dtype);
-  return absl::OkStatus();
-}
-
 void AssignEllipsisChars(const Dimensions& label_count, int64_t ell_num_dim,
                          std::vector<char>& label_to_char) {
   uint8_t next_unused = 0;
@@ -498,7 +490,7 @@ absl::StatusOr<ParsedEinsum> ParseEinsumEquationFromShapes(
 
   const size_t arrow_pos = equation.find("->");
   const c10::string_view lhs = equation.substr(0, arrow_pos);
-  TT_ASSIGN_OR_RETURN(std::vector<std::vector<uint8_t>> op_labels,
+  TT_ASSIGN_OR_RETURN(const std::vector<std::vector<uint8_t>> op_labels,
                       ParseLhsSubscripts(lhs, num_ops));
 
   Dimensions label_count(kTotalLabels, 0);
@@ -549,6 +541,223 @@ absl::StatusOr<ParsedEinsum> ParseEinsumEquationFromShapes(
   return parsed;
 }
 
+std::vector<bool> BuildInRhsMask(const ParsedEinsum& parsed) {
+  std::vector<bool> in_rhs(parsed.label_size.size(), false);
+  for (const int64_t c : parsed.rhs_labels) {
+    in_rhs[c] = true;
+  }
+  return in_rhs;
+}
+
+std::vector<bool> BuildKeepLabelMask(const std::vector<bool>& in_rhs,
+                                     const std::vector<Indices>& op_labels) {
+  std::vector<bool> keep_label = in_rhs;
+  for (const Indices& rem_labels : op_labels) {
+    for (const int64_t c : rem_labels) {
+      keep_label[c] = true;
+    }
+  }
+  return keep_label;
+}
+
+struct ContractionClassification {
+  Indices batch_labels;
+  Indices contract_labels;
+  Indices free_lhs_labels;
+  Indices free_rhs_labels;
+  Dimensions lhs_batch_dims;
+  Dimensions rhs_batch_dims;
+  Dimensions lhs_contract_dims;
+  Dimensions rhs_contract_dims;
+};
+
+void ClassifyLhsContractionLabels(const Indices& lhs_labels,
+                                  const Indices& rhs_labels_op,
+                                  const std::vector<bool>& keep_label,
+                                  ContractionClassification& cls) {
+  for (size_t d_a = 0; d_a < lhs_labels.size(); ++d_a) {
+    const int64_t c = lhs_labels[d_a];
+    const auto it_b = absl::c_find(rhs_labels_op, c);
+    if (it_b != rhs_labels_op.end()) {
+      const int64_t d_b =
+          static_cast<int64_t>(std::distance(rhs_labels_op.begin(), it_b));
+      if (keep_label[c]) {
+        cls.batch_labels.push_back(c);
+        cls.lhs_batch_dims.push_back(static_cast<int64_t>(d_a));
+        cls.rhs_batch_dims.push_back(d_b);
+      } else {
+        cls.contract_labels.push_back(c);
+        cls.lhs_contract_dims.push_back(static_cast<int64_t>(d_a));
+        cls.rhs_contract_dims.push_back(d_b);
+      }
+    } else {
+      cls.free_lhs_labels.push_back(c);
+    }
+  }
+}
+
+ContractionClassification ClassifyContractionLabels(
+    const Indices& lhs_labels, const Indices& rhs_labels_op,
+    const std::vector<bool>& keep_label) {
+  ContractionClassification cls;
+  ClassifyLhsContractionLabels(lhs_labels, rhs_labels_op, keep_label, cls);
+  for (const int64_t c : rhs_labels_op) {
+    if (!absl::c_linear_search(lhs_labels, c)) {
+      cls.free_rhs_labels.push_back(c);
+    }
+  }
+  return cls;
+}
+
+Indices BuildDefaultStepOutLabels(const ContractionClassification& cls) {
+  Indices out_labels = cls.batch_labels;
+  out_labels.insert(out_labels.end(), cls.free_lhs_labels.begin(),
+                    cls.free_lhs_labels.end());
+  out_labels.insert(out_labels.end(), cls.free_rhs_labels.begin(),
+                    cls.free_rhs_labels.end());
+  return out_labels;
+}
+
+Indices FilterBroadcastSqueezedLabels(const Dimensions& dedup_shape,
+                                      const Dimensions& label_size,
+                                      const Indices& labels) {
+  Indices remaining_labels;
+  remaining_labels.reserve(labels.size());
+  for (size_t d = 0; d < labels.size(); ++d) {
+    const int64_t c = labels[d];
+    if (!(dedup_shape[d] == 1 && label_size[c] != 1)) {
+      remaining_labels.push_back(c);
+    }
+  }
+  return remaining_labels;
+}
+
+Dimensions CountPostSqueezeLabels(size_t num_labels,
+                                  const std::vector<Indices>& op_labels) {
+  Dimensions post_squeeze_count(num_labels, 0);
+  for (const Indices& labels : op_labels) {
+    for (const int64_t c : labels) {
+      ++post_squeeze_count[c];
+    }
+  }
+  return post_squeeze_count;
+}
+
+Indices FilterPreReducedLabels(const std::vector<bool>& in_rhs,
+                               const Dimensions& post_squeeze_count,
+                               const Indices& labels) {
+  Indices remaining_labels;
+  remaining_labels.reserve(labels.size());
+  for (const int64_t c : labels) {
+    if (in_rhs[c] || post_squeeze_count[c] != 1) {
+      remaining_labels.push_back(c);
+    }
+  }
+  return remaining_labels;
+}
+
+std::vector<Indices> BuildInitialContractionLabels(
+    const ParsedEinsum& parsed, const std::vector<bool>& in_rhs) {
+  const size_t num_ops = parsed.dedup_operand_labels.size();
+  std::vector<Indices> op_labels(num_ops);
+  for (size_t i = 0; i < num_ops; ++i) {
+    op_labels[i] = FilterBroadcastSqueezedLabels(
+        parsed.dedup_operand_shapes[i], parsed.label_size,
+        parsed.dedup_operand_labels[i]);
+  }
+  const Dimensions post_squeeze_count =
+      CountPostSqueezeLabels(parsed.label_size.size(), op_labels);
+  for (size_t i = 0; i < num_ops; ++i) {
+    op_labels[i] =
+        FilterPreReducedLabels(in_rhs, post_squeeze_count, op_labels[i]);
+  }
+  return op_labels;
+}
+
+Indices FilterKeptPairOperandLabels(const std::vector<bool>& keep_label,
+                                    const Indices& other_labels,
+                                    const Indices& labels) {
+  Indices kept_labels;
+  kept_labels.reserve(labels.size());
+  for (const int64_t c : labels) {
+    if (keep_label[c] || absl::c_linear_search(other_labels, c)) {
+      kept_labels.push_back(c);
+    }
+  }
+  return kept_labels;
+}
+
+absl::Status ResolveSingleContractionStepDtype(
+    const ContractionStep& step, bool has_path, const std::vector<bool>& in_rhs,
+    std::vector<Indices>& op_labels, std::vector<at::ScalarType>& op_dtypes) {
+  Indices lhs_labels = std::move(op_labels[step.idx_a]);
+  Indices rhs_labels_op = std::move(op_labels[step.idx_b]);
+  const at::ScalarType lhs_dtype = op_dtypes[step.idx_a];
+  const at::ScalarType rhs_dtype = op_dtypes[step.idx_b];
+
+  op_labels.erase(op_labels.begin() + step.idx_b);
+  op_labels.erase(op_labels.begin() + step.idx_a);
+  op_dtypes.erase(op_dtypes.begin() + step.idx_b);
+  op_dtypes.erase(op_dtypes.begin() + step.idx_a);
+
+  const std::vector<bool> keep_label = BuildKeepLabelMask(in_rhs, op_labels);
+  lhs_labels =
+      FilterKeptPairOperandLabels(keep_label, rhs_labels_op, lhs_labels);
+  rhs_labels_op =
+      FilterKeptPairOperandLabels(keep_label, lhs_labels, rhs_labels_op);
+
+  const ContractionClassification cls =
+      ClassifyContractionLabels(lhs_labels, rhs_labels_op, keep_label);
+  if (!cls.contract_labels.empty()) {
+    TT_RET_CHECK(lhs_dtype == rhs_dtype, error::kInvalidArgument)
+        << "expected all tensors to have the same dtype, got "
+        << ToString(lhs_dtype) << " and " << ToString(rhs_dtype);
+  }
+  const at::ScalarType step_dtype =
+      cls.contract_labels.empty() ? c10::promoteTypes(lhs_dtype, rhs_dtype)
+                                  : lhs_dtype;
+  Indices out_labels = BuildDefaultStepOutLabels(cls);
+  if (has_path) {
+    op_labels.push_back(std::move(out_labels));
+    op_dtypes.push_back(step_dtype);
+  } else {
+    op_labels.insert(op_labels.begin(), std::move(out_labels));
+    op_dtypes.insert(op_dtypes.begin(), step_dtype);
+  }
+  return absl::OkStatus();
+}
+
+absl::Status ValidateAndResolveOperandDtypes(at::TensorList operands,
+                                             ParsedEinsum& parsed) {
+  parsed.operand_dtypes.reserve(operands.size());
+  bool all_same_dtype = true;
+  const at::ScalarType first_dtype = operands[0].scalar_type();
+  for (const at::Tensor& op : operands) {
+    TT_RET_CHECK(!IsBool(op), error::kPythonNotImplementedError)
+        << "expected non-bool dtype, got " << ToString(op.scalar_type());
+    const at::ScalarType dt = op.scalar_type();
+    parsed.operand_dtypes.push_back(dt);
+    if (dt != first_dtype) {
+      all_same_dtype = false;
+    }
+  }
+  if (all_same_dtype) {
+    parsed.output_dtype = first_dtype;
+    return absl::OkStatus();
+  }
+
+  const std::vector<bool> in_rhs = BuildInRhsMask(parsed);
+  std::vector<Indices> op_labels =
+      BuildInitialContractionLabels(parsed, in_rhs);
+  std::vector<at::ScalarType> op_dtypes = parsed.operand_dtypes;
+  for (const ContractionStep& step : parsed.contraction_steps) {
+    TT_RETURN_IF_ERROR(ResolveSingleContractionStepDtype(
+        step, parsed.has_path, in_rhs, op_labels, op_dtypes));
+  }
+  parsed.output_dtype = op_dtypes[0];
+  return absl::OkStatus();
+}
+
 // Parses and validates the einsum equation, operand shapes/dtypes, and
 // optional contraction path.
 absl::StatusOr<ParsedEinsum> ParseEinsumEquation(c10::string_view equation,
@@ -561,7 +770,7 @@ absl::StatusOr<ParsedEinsum> ParseEinsumEquation(c10::string_view equation,
   }
   TT_ASSIGN_OR_RETURN(ParsedEinsum parsed, ParseEinsumEquationFromShapes(
                                                equation, operand_shapes, path));
-  TT_RETURN_IF_ERROR(ValidateOperandDtypes(operands));
+  TT_RETURN_IF_ERROR(ValidateAndResolveOperandDtypes(operands, parsed));
   return parsed;
 }
 
@@ -590,7 +799,7 @@ absl::StatusOr<mlir::MlirOp> BuildExtractDiagonalShlo(mlir::MlirOp op,
   target_index_shape[dim1] = n;
   target_index_shape[dim2] = 1;
 
-  Indices broadcast_dimensions = {dim1, dim2};
+  const Indices broadcast_dimensions = {dim1, dim2};
   TT_ASSIGN_OR_RETURN(
       mlir::MlirOp index_bcast,
       Broadcast(index_2d, target_index_shape, broadcast_dimensions));
@@ -710,13 +919,8 @@ absl::Status PreReduceSingleOperandLabels(const ParsedEinsum& parsed,
                                           const std::vector<bool>& in_rhs,
                                           std::vector<mlir::MlirOp>& ops,
                                           std::vector<Indices>& op_labels) {
-  const int64_t total_labels = static_cast<int64_t>(parsed.label_size.size());
-  Dimensions post_squeeze_count(total_labels, 0);
-  for (const Indices& labels : op_labels) {
-    for (const int64_t c : labels) {
-      ++post_squeeze_count[c];
-    }
-  }
+  const Dimensions post_squeeze_count =
+      CountPostSqueezeLabels(parsed.label_size.size(), op_labels);
   for (size_t i = 0; i < ops.size(); ++i) {
     TT_RETURN_IF_ERROR(ReduceSingleOperandUnkeptDims(in_rhs, post_squeeze_count,
                                                      ops[i], op_labels[i]));
@@ -746,64 +950,48 @@ absl::Status SumUnkeptSingleOperandDims(const std::vector<bool>& keep_label,
   return absl::OkStatus();
 }
 
-std::vector<bool> BuildKeepLabelMask(const std::vector<bool>& in_rhs,
-                                     const std::vector<Indices>& op_labels) {
-  std::vector<bool> keep_label = in_rhs;
-  for (const Indices& rem_labels : op_labels) {
-    for (const int64_t c : rem_labels) {
-      keep_label[c] = true;
-    }
+absl::Status PromoteUncontractedPairOperands(mlir::MlirOp& lhs_op,
+                                             mlir::MlirOp& rhs_op) {
+  const mlir::ElementType lhs_elem = GetElementTypeOrDie(lhs_op);
+  const mlir::ElementType rhs_elem = GetElementTypeOrDie(rhs_op);
+  if (lhs_elem == rhs_elem) {
+    return absl::OkStatus();
   }
-  return keep_label;
+  const at::ScalarType promoted_dtype = c10::promoteTypes(
+      ConvertTo<at::ScalarType>(lhs_elem), ConvertTo<at::ScalarType>(rhs_elem));
+  TT_ASSIGN_OR_RETURN(const mlir::ElementType target_elem,
+                      ConvertTo<mlir::ElementType>(promoted_dtype));
+  TT_ASSIGN_OR_RETURN(lhs_op,
+                      ComplexSafeConvertElementType(lhs_op, target_elem));
+  TT_ASSIGN_OR_RETURN(rhs_op,
+                      ComplexSafeConvertElementType(rhs_op, target_elem));
+  return absl::OkStatus();
 }
 
-struct ContractionClassification {
-  Indices batch_labels;
-  Indices contract_labels;
-  Indices free_lhs_labels;
-  Indices free_rhs_labels;
-  Dimensions lhs_batch_dims;
-  Dimensions rhs_batch_dims;
-  Dimensions lhs_contract_dims;
-  Dimensions rhs_contract_dims;
-};
-
-void ClassifyLhsContractionLabels(const Indices& lhs_labels,
-                                  const Indices& rhs_labels_op,
-                                  const std::vector<bool>& keep_label,
-                                  ContractionClassification& cls) {
-  for (size_t d_a = 0; d_a < lhs_labels.size(); ++d_a) {
-    const int64_t c = lhs_labels[d_a];
-    auto it_b = absl::c_find(rhs_labels_op, c);
-    if (it_b != rhs_labels_op.end()) {
-      const int64_t d_b =
-          static_cast<int64_t>(std::distance(rhs_labels_op.begin(), it_b));
-      if (keep_label[c]) {
-        cls.batch_labels.push_back(c);
-        cls.lhs_batch_dims.push_back(static_cast<int64_t>(d_a));
-        cls.rhs_batch_dims.push_back(d_b);
-      } else {
-        cls.contract_labels.push_back(c);
-        cls.lhs_contract_dims.push_back(static_cast<int64_t>(d_a));
-        cls.rhs_contract_dims.push_back(d_b);
-      }
-    } else {
-      cls.free_lhs_labels.push_back(c);
-    }
+// On the final contraction step, if swapping `(lhs_op, rhs_op)` makes
+// `DotGeneral`'s output label order (`batch + free_rhs + free_lhs`) match
+// `rhs_labels` directly, swaps the operands to eliminate the final `Transpose`.
+void MaybeSwapFinalDotGeneralOperands(const Indices& rhs_labels,
+                                      mlir::MlirOp& lhs_op,
+                                      mlir::MlirOp& rhs_op,
+                                      ContractionClassification& cls,
+                                      Indices& out_labels) {
+  if (out_labels == rhs_labels) {
+    return;
   }
-}
-
-ContractionClassification ClassifyContractionLabels(
-    const Indices& lhs_labels, const Indices& rhs_labels_op,
-    const std::vector<bool>& keep_label) {
-  ContractionClassification cls;
-  ClassifyLhsContractionLabels(lhs_labels, rhs_labels_op, keep_label, cls);
-  for (const int64_t c : rhs_labels_op) {
-    if (!absl::c_linear_search(lhs_labels, c)) {
-      cls.free_rhs_labels.push_back(c);
-    }
+  Indices swapped_out_labels = cls.batch_labels;
+  swapped_out_labels.insert(swapped_out_labels.end(),
+                            cls.free_rhs_labels.begin(),
+                            cls.free_rhs_labels.end());
+  swapped_out_labels.insert(swapped_out_labels.end(),
+                            cls.free_lhs_labels.begin(),
+                            cls.free_lhs_labels.end());
+  if (swapped_out_labels == rhs_labels) {
+    std::swap(lhs_op, rhs_op);
+    std::swap(cls.lhs_batch_dims, cls.rhs_batch_dims);
+    std::swap(cls.lhs_contract_dims, cls.rhs_contract_dims);
+    out_labels = std::move(swapped_out_labels);
   }
-  return cls;
 }
 
 absl::Status ExecuteContractionStep(const ContractionStep& step,
@@ -830,42 +1018,24 @@ absl::Status ExecuteContractionStep(const ContractionStep& step,
 
   ContractionClassification cls =
       ClassifyContractionLabels(lhs_labels, rhs_labels_op, keep_label);
+  Indices out_labels = BuildDefaultStepOutLabels(cls);
 
-  Indices out_labels = cls.batch_labels;
-  out_labels.insert(out_labels.end(), cls.free_lhs_labels.begin(),
-                    cls.free_lhs_labels.end());
-  out_labels.insert(out_labels.end(), cls.free_rhs_labels.begin(),
-                    cls.free_rhs_labels.end());
-
-  // On the final contraction step, if swapping `(lhs_op, rhs_op)` makes
-  // `DotGeneral`'s output label order (`batch + free_rhs + free_lhs`) match
-  // `parsed.rhs_labels` directly, swap the operands to eliminate the final
-  // `Transpose`.
-  if (ops.empty() && out_labels != parsed.rhs_labels) {
-    Indices swapped_out_labels = cls.batch_labels;
-    swapped_out_labels.insert(swapped_out_labels.end(),
-                              cls.free_rhs_labels.begin(),
-                              cls.free_rhs_labels.end());
-    swapped_out_labels.insert(swapped_out_labels.end(),
-                              cls.free_lhs_labels.begin(),
-                              cls.free_lhs_labels.end());
-    if (swapped_out_labels == parsed.rhs_labels) {
-      std::swap(lhs_op, rhs_op);
-      std::swap(cls.lhs_batch_dims, cls.rhs_batch_dims);
-      std::swap(cls.lhs_contract_dims, cls.rhs_contract_dims);
-      out_labels = std::move(swapped_out_labels);
-    }
+  if (cls.contract_labels.empty()) {
+    TT_RETURN_IF_ERROR(PromoteUncontractedPairOperands(lhs_op, rhs_op));
   }
-
-  mlir::MlirOp contracted =
+  if (ops.empty()) {
+    MaybeSwapFinalDotGeneralOperands(parsed.rhs_labels, lhs_op, rhs_op, cls,
+                                     out_labels);
+  }
+  mlir::MlirOp step_result =
       BuildDotGeneral(lhs_op, rhs_op, cls.lhs_batch_dims, cls.rhs_batch_dims,
                       cls.lhs_contract_dims, cls.rhs_contract_dims, precision);
 
   if (parsed.has_path) {
-    ops.push_back(contracted);
+    ops.push_back(step_result);
     op_labels.push_back(std::move(out_labels));
   } else {
-    ops.insert(ops.begin(), contracted);
+    ops.insert(ops.begin(), step_result);
     op_labels.insert(op_labels.begin(), std::move(out_labels));
   }
   return absl::OkStatus();
@@ -880,7 +1050,7 @@ mlir::MlirOp TransposeToOutputOrder(mlir::MlirOp result,
   Dimensions perm;
   perm.reserve(rhs_labels.size());
   for (const int64_t target_c : rhs_labels) {
-    auto it = absl::c_find(final_labels, target_c);
+    const auto it = absl::c_find(final_labels, target_c);
     perm.push_back(
         static_cast<int64_t>(std::distance(final_labels.begin(), it)));
   }
@@ -917,10 +1087,7 @@ absl::StatusOr<mlir::MlirOp> BuildEinsumShlo(
 
   // Step 3: Unary pre-reduction (`BuildSumShlo`) for any label `c` that appears
   // in only 1 operand (post-squeeze) and is not in `rhs_labels`.
-  std::vector<bool> in_rhs(parsed.label_size.size(), false);
-  for (const int64_t c : parsed.rhs_labels) {
-    in_rhs[c] = true;
-  }
+  const std::vector<bool> in_rhs = BuildInRhsMask(parsed);
   TT_RETURN_IF_ERROR(
       PreReduceSingleOperandLabels(parsed, in_rhs, ops, op_labels));
 
@@ -1007,6 +1174,7 @@ std::vector<at::Tensor> UnpackSavedOperands(
 }
 
 std::string BuildBackwardLhs(size_t target_k, const at::Tensor& grad_out,
+                             at::ScalarType bwd_dtype,
                              const std::string& grad_out_sub,
                              const std::vector<at::Tensor>& unpacked_operands,
                              const std::vector<std::string>& raw_subs,
@@ -1015,7 +1183,8 @@ std::string BuildBackwardLhs(size_t target_k, const at::Tensor& grad_out,
                              std::vector<bool>& in_bwd_lhs) {
   const size_t num_ops = parsed.orig_operand_shapes.size();
   bwd_operands.reserve(num_ops);
-  bwd_operands.push_back(grad_out);
+  bwd_operands.push_back(
+      grad_out.scalar_type() == bwd_dtype ? grad_out : grad_out.to(bwd_dtype));
 
   std::string bwd_lhs = grad_out_sub;
   for (const int64_t c : parsed.rhs_labels) {
@@ -1027,7 +1196,11 @@ std::string BuildBackwardLhs(size_t target_k, const at::Tensor& grad_out,
       continue;
     }
     const at::Tensor& other_op = unpacked_operands[j];
-    bwd_operands.push_back(other_op.is_complex() ? other_op.conj() : other_op);
+    at::Tensor op_j = other_op.is_complex() ? other_op.conj() : other_op;
+    if (op_j.scalar_type() != bwd_dtype) {
+      op_j = op_j.to(bwd_dtype);
+    }
+    bwd_operands.push_back(std::move(op_j));
     bwd_lhs.push_back(',');
     bwd_lhs.append(raw_subs[j]);
     for (const int64_t c : parsed.raw_operand_labels[j]) {
@@ -1077,21 +1250,51 @@ at::Tensor RestoreAndScatterGrad(at::Tensor grad_k,
   return grad_k;
 }
 
+at::ScalarType ResolveBackwardEinsumDtype(
+    size_t target_k, at::ScalarType grad_out_dtype,
+    const std::vector<at::Tensor>& unpacked_operands) {
+  at::ScalarType bwd_dtype = grad_out_dtype;
+  for (size_t j = 0; j < unpacked_operands.size(); ++j) {
+    if (j != target_k) {
+      bwd_dtype =
+          c10::promoteTypes(bwd_dtype, unpacked_operands[j].scalar_type());
+    }
+  }
+  return bwd_dtype;
+}
+
+at::Tensor CastGradToTargetDtype(at::Tensor grad_k,
+                                 at::ScalarType target_dtype) {
+  if (grad_k.scalar_type() == target_dtype) {
+    return grad_k;
+  }
+  if (grad_k.is_complex() && !c10::isComplexType(target_dtype)) {
+    grad_k = at::real(grad_k);
+  }
+  if (grad_k.scalar_type() != target_dtype) {
+    grad_k = grad_k.to(target_dtype);
+  }
+  return grad_k;
+}
+
 at::Tensor ComputeOperandGrad(size_t k, const at::Tensor& grad_out,
                               const std::string& grad_out_sub,
                               const std::vector<at::Tensor>& unpacked_operands,
                               const std::vector<std::string>& raw_subs,
                               const ParsedEinsum& parsed) {
   const Dimensions& orig_shape = parsed.orig_operand_shapes[k];
+  const at::ScalarType target_dtype = parsed.operand_dtypes[k];
   if (grad_out.numel() == 0 || parsed.any_operand_zero_elements) {
-    return at::zeros(orig_shape, grad_out.options());
+    return at::zeros(orig_shape, grad_out.options().dtype(target_dtype));
   }
 
+  const at::ScalarType bwd_dtype =
+      ResolveBackwardEinsumDtype(k, grad_out.scalar_type(), unpacked_operands);
   std::vector<at::Tensor> bwd_operands;
   std::vector<bool> in_bwd_lhs(parsed.label_size.size(), false);
   const std::string bwd_lhs =
-      BuildBackwardLhs(k, grad_out, grad_out_sub, unpacked_operands, raw_subs,
-                       parsed, bwd_operands, in_bwd_lhs);
+      BuildBackwardLhs(k, grad_out, bwd_dtype, grad_out_sub, unpacked_operands,
+                       raw_subs, parsed, bwd_operands, in_bwd_lhs);
 
   const Indices& dedup_labels = parsed.dedup_operand_labels[k];
   const Dimensions& dedup_shape = parsed.dedup_operand_shapes[k];
@@ -1101,8 +1304,9 @@ at::Tensor ComputeOperandGrad(size_t k, const at::Tensor& grad_out,
 
   const std::string bwd_eq = bwd_lhs + "->" + bwd_rhs;
   at::Tensor grad_k = at::einsum(bwd_eq, bwd_operands);
-  return RestoreAndScatterGrad(std::move(grad_k), dim_kept, dedup_shape,
-                               parsed.diag_steps[k]);
+  grad_k = RestoreAndScatterGrad(std::move(grad_k), dim_kept, dedup_shape,
+                                 parsed.diag_steps[k]);
+  return CastGradToTargetDtype(std::move(grad_k), target_dtype);
 }
 
 // Custom autograd node (`torch::autograd::Node`) for `aten::einsum`.
@@ -1168,9 +1372,15 @@ absl::StatusOr<mlir::MlirOp> BuildEinsumShlo(
   TT_ASSIGN_OR_RETURN(const ParsedEinsum parsed,
                       ParseEinsumEquationFromShapes(equation, operand_shapes,
                                                     /*path=*/std::nullopt));
-  const mlir::Type elem_type = GetTensorTypeOrDie(inputs[0]).getElementType();
+  at::ScalarType promoted_dtype =
+      ConvertTo<at::ScalarType>(GetElementTypeOrDie(inputs[0]));
+  for (size_t i = 1; i < inputs.size(); ++i) {
+    promoted_dtype = c10::promoteTypes(
+        promoted_dtype,
+        ConvertTo<at::ScalarType>(GetElementTypeOrDie(inputs[i])));
+  }
   TT_ASSIGN_OR_RETURN(const mlir::ElementType out_dtype,
-                      ConvertTo<mlir::ElementType>(elem_type));
+                      ConvertTo<mlir::ElementType>(promoted_dtype));
   mlir::MlirOp first_input = inputs[0];
   mlir::MlirBuilder& builder = first_input.getBuilder();
   return BuildEinsumShlo(inputs, builder, parsed, out_dtype, precision);
@@ -1245,12 +1455,12 @@ at::Tensor AtenEinsum(c10::string_view equation, at::TensorList tensors,
     TT_ASSIGN_OR_THROW(ParsedEinsum parsed,
                        ParseEinsumEquation(equation, tensors, path));
     TT_ASSIGN_OR_THROW(const mlir::ElementType out_dtype,
-                       ConvertTo<mlir::ElementType>(tensors[0].scalar_type()));
+                       ConvertTo<mlir::ElementType>(parsed.output_dtype));
     const mlir::stablehlo::Precision current_precision =
         GetAndAddPrecisionTo(param_keys);
 
     Dimensions output_dims = parsed.output_dims;
-    std::vector<at::Tensor> inputs_vec(tensors.begin(), tensors.end());
+    const std::vector<at::Tensor> inputs_vec(tensors.begin(), tensors.end());
 
     auto op_builder =
         [parsed = std::move(parsed), out_dtype, current_precision](
