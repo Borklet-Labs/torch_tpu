@@ -14,7 +14,8 @@
 
 """TorchDeviceOps: the torch implementation of the DeviceOps protocol."""
 
-from typing import Any
+import collections
+from typing import Any, Callable
 
 import torch
 from torch_tpu._internal.benchmarks import xprof_adapter
@@ -22,6 +23,72 @@ from perflab import device_utils
 from perflab import target as target_lib
 
 _MB = 2**20
+_NS_PER_SECOND = 1e9
+
+
+def _merge_intervals(intervals: list[tuple[int, int]]) -> int:
+  """Returns the total duration of the union of (start, end) intervals."""
+  if not intervals:
+    return 0
+  sorted_intervals = sorted(intervals)
+  cur_start, cur_end = sorted_intervals[0]
+  total = 0
+  for start, end in sorted_intervals[1:]:
+    if start <= cur_end:
+      if end > cur_end:
+        cur_end = end
+    else:
+      total += cur_end - cur_start
+      cur_start, cur_end = start, end
+  total += cur_end - cur_start
+  return total
+
+
+def _cuda_device_time_from_profile(prof: Any) -> float:
+  """Computes active CUDA device time in seconds from a torch.profiler run.
+
+  Sums the union of CUDA device execution intervals (excluding pre-launch CPU
+  overhead and inter-kernel host idle gaps) per GPU device and returns the max
+  across devices, or -1.0 if no CUDA execution events were captured.
+
+  Args:
+    prof: A completed `torch.profiler.profile` context.
+
+  Returns:
+    Active CUDA device execution time in seconds, or -1.0 if unavailable.
+  """
+  kineto_results = getattr(
+      getattr(prof, "profiler", None), "kineto_results", None
+  )
+  if kineto_results is None:
+    return -1.0
+
+  intervals_by_device: dict[int, list[tuple[int, int]]] = (
+      collections.defaultdict(list)
+  )
+  for event in kineto_results.events():
+    if event.device_type() != torch.autograd.DeviceType.CUDA:
+      continue
+    if getattr(event, "activity_type", lambda: "")() == "gpu_user_annotation":
+      continue
+    if getattr(event, "is_user_annotation", lambda: False)():
+      continue
+    if getattr(event, "is_hidden_event", lambda: False)():
+      continue
+    if event.name() == "Context Sync":
+      continue
+    start_ns = int(event.start_ns())
+    end_ns = int(event.end_ns())
+    if end_ns > start_ns:
+      device_index = int(getattr(event, "device_index", lambda: 0)())
+      intervals_by_device[device_index].append((start_ns, end_ns))
+
+  if not intervals_by_device:
+    return -1.0
+  max_ns = max(
+      _merge_intervals(intervals) for intervals in intervals_by_device.values()
+  )
+  return float(max_ns) / _NS_PER_SECOND if max_ns > 0 else -1.0
 
 
 class DeviceCountMismatch(RuntimeError):
@@ -156,6 +223,27 @@ class TorchDeviceOps:
     return device_utils.get_total_device_time_from_xspace(
         xspace, expected_steps=expected_steps
     )
+
+  def supports_event_device_time(self) -> bool:
+    """Returns whether this backend can measure per-step device time via device events."""
+    return self.target.device_kind == target_lib.DeviceKind.CUDA
+
+  def measure_step_device_time(self, step_fn: Callable[[], Any]) -> float:
+    """Executes one step and returns its active device time in seconds, or -1.0."""
+    if not self.supports_event_device_time():
+      out = step_fn()
+      self.await_result(out)
+      self.check_result(out)
+      return -1.0
+    self.await_result(None)
+    with torch.profiler.profile(
+        activities=[torch.profiler.ProfilerActivity.CUDA],
+        record_shapes=False,
+    ) as prof:
+      out = step_fn()
+      self.await_result(out)
+    self.check_result(out)
+    return _cuda_device_time_from_profile(prof)
 
   def compile_count(self) -> int:
     """Monotonic count of successfully compiled frames this process."""

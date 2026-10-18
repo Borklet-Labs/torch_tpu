@@ -206,6 +206,102 @@ class TorchDeviceOpsTest(seed_test_utils.RepeatableTest):
 
     self.assertEqual(count, 7)
 
+  @mock.patch("torch.accelerator")
+  def test_measure_step_device_time_cuda_merges_intervals_and_excludes_gaps(
+      self, mock_accelerator
+  ):
+    mock_accelerator.device_count.return_value = 1
+    target = target_lib.make_target(platform=target_lib.Platform.B200_1)
+    ops = torch_device_ops.TorchDeviceOps(target)
+
+    self.assertTrue(ops.supports_event_device_time())
+    call_order = []
+    mock_accelerator.synchronize.side_effect = lambda: call_order.append("sync")
+
+    def _make_event(
+        start_ns,
+        end_ns,
+        *,
+        device_type=torch.autograd.DeviceType.CUDA,
+        device_index=0,
+        name="kernel",
+        activity_type="kernel",
+        is_user_annotation=False,
+    ):
+      ev = mock.MagicMock()
+      ev.start_ns.return_value = start_ns
+      ev.end_ns.return_value = end_ns
+      ev.device_type.return_value = device_type
+      ev.device_index.return_value = device_index
+      ev.name.return_value = name
+      ev.activity_type.return_value = activity_type
+      ev.is_user_annotation.return_value = is_user_annotation
+      ev.is_hidden_event.return_value = False
+      return ev
+
+    # Kernel 1: [1ms, 5ms] (4ms)
+    # Overlapping stream kernel 2: [3ms, 7ms] -> merged [1ms, 7ms] = 6ms
+    # Host idle gap: [7ms, 15ms] (8ms gap excluded!)
+    # Kernel 3: [15ms, 19ms] (4ms) -> total active GPU time = 6ms + 4ms = 10ms
+    events = [
+        _make_event(1_000_000, 5_000_000),
+        _make_event(3_000_000, 7_000_000),
+        _make_event(15_000_000, 19_000_000),
+        # Non-execution annotations/CPU events must be ignored:
+        _make_event(0, 50_000_000, activity_type="gpu_user_annotation"),
+        _make_event(0, 50_000_000, name="Context Sync"),
+        _make_event(0, 50_000_000, device_type=torch.autograd.DeviceType.CPU),
+    ]
+    fake_prof = mock.MagicMock()
+    fake_prof.__enter__.side_effect = lambda: (
+        call_order.append("prof_enter") or fake_prof
+    )
+    fake_prof.__exit__.side_effect = lambda *_: call_order.append("prof_exit")
+    fake_prof.profiler.kineto_results.events.return_value = events
+
+    def step_fn():
+      call_order.append("step")
+      return "step_out"
+
+    with mock.patch(
+        "torch.profiler.profile", return_value=fake_prof
+    ) as mock_profile:
+      elapsed_s = ops.measure_step_device_time(step_fn)
+
+    self.assertAlmostEqual(elapsed_s, 0.010)
+    mock_profile.assert_called_once_with(
+        activities=[torch.profiler.ProfilerActivity.CUDA],
+        record_shapes=False,
+    )
+    self.assertEqual(
+        call_order, ["sync", "prof_enter", "step", "sync", "prof_exit"]
+    )
+
+  @mock.patch("torch.accelerator")
+  def test_measure_step_device_time_cuda_empty_events_returns_negative_one(
+      self, mock_accelerator
+  ):
+    mock_accelerator.device_count.return_value = 1
+    target = target_lib.make_target(platform=target_lib.Platform.B200_1)
+    ops = torch_device_ops.TorchDeviceOps(target)
+
+    fake_prof = mock.MagicMock()
+    fake_prof.__enter__.return_value = fake_prof
+    fake_prof.profiler.kineto_results.events.return_value = []
+
+    with mock.patch("torch.profiler.profile", return_value=fake_prof):
+      self.assertEqual(ops.measure_step_device_time(lambda: "out"), -1.0)
+
+  def test_measure_step_device_time_non_cuda(self):
+    target = target_lib.make_target(platform=target_lib.Platform.CPU)
+    ops = torch_device_ops.TorchDeviceOps(target)
+
+    self.assertFalse(ops.supports_event_device_time())
+    with mock.patch.object(ops, "check_result") as mock_check:
+      elapsed_s = ops.measure_step_device_time(lambda: "out")
+    self.assertEqual(elapsed_s, -1.0)
+    mock_check.assert_called_once_with("out")
+
 
 if __name__ == "__main__":
   absltest.main()

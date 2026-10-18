@@ -87,8 +87,39 @@ class RecordingOps:
   def get_device_time(self, session_id=None):
     return -1.0
 
+  def supports_event_device_time(self) -> bool:
+    return False
+
+  def measure_step_device_time(self, step_fn):
+    out = step_fn()
+    self.await_result(out)
+    self.check_result(out)
+    return -1.0
+
   def compile_count(self):
     return self._recompiles
+
+
+class _EventTimingOps(RecordingOps):
+  """Fake RecordingOps that simulates event-timed step device time."""
+
+  def __init__(
+      self, timings=(), recompile_on_calls=None, fail_check_on_calls=None
+  ):
+    super().__init__(
+        recompile_on_calls=recompile_on_calls,
+        fail_check_on_calls=fail_check_on_calls,
+    )
+    self._timings = list(timings)
+
+  def supports_event_device_time(self) -> bool:
+    return True
+
+  def measure_step_device_time(self, step_fn):
+    out = step_fn()
+    self.await_result(out)
+    self.check_result(out)
+    return self._timings.pop(0) if self._timings else 0.010
 
 
 class _FailingXprofSession:
@@ -1045,6 +1076,68 @@ class MeasurePostWarmupXprofTest(seed_test_utils.RepeatableTest):
           m.post_warmup_run_session_xprof_url,
           "http://xprof/?session_id=post_warmup_id",
       )
+
+  def test_post_warmup_with_event_device_time_when_xprof_disabled(self):
+    step, ops = CountingStep(), _EventTimingOps([0.012, 0.018])
+    with mock.patch.object(
+        measure_lib.xprof_adapter, "XprofSession"
+    ) as mock_session_cls:
+      with flagsaver.flagsaver(post_warmup_steps=3, xprof_steps=2):
+        result = measure_lib._post_warmup_run(
+            step, ops, name="test_cuda_event_time", enable_xprof=False
+        )
+      mock_session_cls.assert_not_called()
+      self.assertIsNone(result.post_warmup_run_session_xprof_url)
+      # 3 E2E wall-time steps + 2 event-timed steps = 5 steps total.
+      self.assertEqual(step.calls, 5)
+      self.assertEqual(
+          ops.checked, ["out-1", "out-2", "out-3", "out-4", "out-5"]
+      )
+      self.assertAlmostEqual(
+          result.average_post_warmup_device_time_seconds, 0.015
+      )
+
+  def test_post_warmup_with_event_device_time_when_xprof_enabled(self):
+    step, ops = CountingStep(), _EventTimingOps([0.012, 0.018])
+    with mock.patch.object(
+        measure_lib.xprof_adapter, "XprofSession"
+    ) as mock_session_cls:
+      with flagsaver.flagsaver(post_warmup_steps=3, xprof_steps=2):
+        result = measure_lib._post_warmup_run(
+            step, ops, name="test_cuda_event_time_xprof_flag", enable_xprof=True
+        )
+      mock_session_cls.assert_not_called()
+      self.assertEqual(step.calls, 5)
+      self.assertAlmostEqual(
+          result.average_post_warmup_device_time_seconds, 0.015
+      )
+
+  def test_e2e_wall_time_excludes_event_device_time_profiling(self):
+    clock = FakeClock()
+    with mock.patch.object(measure_lib.time, "perf_counter", new=clock):
+      m = _run_measure(
+          TimedStep(clock, step_seconds=1.0),
+          _EventTimingOps([0.012, 0.018]),
+          steps=3,
+          min_warmup=2,
+          xprof_steps=2,
+          enable_xprof=False,
+      )
+
+    # 2 warmup steps + 3 post-warmup steps of 1 s each; 2 event-timed steps
+    # are excluded from e2e_wall_time_seconds.
+    self.assertEqual(m.e2e_wall_time_seconds, 5.0)
+    self.assertAlmostEqual(m.average_post_warmup_device_time_seconds, 0.015)
+
+  def test_post_warmup_recompile_during_event_timed_steps_raises(self):
+    step, ops = CountingStep(), _EventTimingOps(recompile_on_calls={4})
+    with flagsaver.flagsaver(post_warmup_steps=3, xprof_steps=2):
+      with self.assertRaises(  # ASSERT_RAISES_OK=benchmark
+          measure_lib.PostWarmupRecompileError
+      ):
+        measure_lib._post_warmup_run(
+            step, ops, name="test_cuda_recompile", enable_xprof=False
+        )
 
 
 if __name__ == "__main__":

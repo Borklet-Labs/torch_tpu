@@ -19,7 +19,7 @@ sure that everything framework specific is handled by the backend and not by
 the measuring utilities.
 """
 
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Callable, Protocol, runtime_checkable
 
 
 @runtime_checkable
@@ -109,6 +109,14 @@ class DeviceOps(Protocol):
     Returns:
       Total device time in seconds, or -1.0 if unsupported/unavailable.
     """
+    ...
+
+  def supports_event_device_time(self) -> bool:
+    """Returns whether this backend can measure per-step device time via device events."""
+    ...
+
+  def measure_step_device_time(self, step_fn: Callable[[], Any]) -> float:
+    """Executes one step and returns its active device time in seconds, or -1.0."""
     ...
 
   def compile_count(self) -> int:

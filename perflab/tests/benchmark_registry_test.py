@@ -124,15 +124,21 @@ class _DeviceOps:
   def peak_memory_mb(self):
     return 1.0
 
+  def supports_event_device_time(self) -> bool:
+    return True
+
+  def measure_step_device_time(self, step_fn):
+    out = step_fn()
+    self.await_result(out)
+    self.check_result(out)
+    return 0.5
+
   def compile_count(self):
     return 0
 
 
 def _exported_metrics() -> set[str]:
-  """Returns the metrics that a successful GCP benchmark case exports.
-
-  GCP benchmark runs do not enable xprof, so device time is never exported.
-  """
+  """Returns the metrics that a successful GCP benchmark case exports."""
   with flagsaver.flagsaver(
       min_warmup_steps=2, max_warmup_steps=2, post_warmup_steps=1
   ):

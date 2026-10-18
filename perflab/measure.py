@@ -492,13 +492,46 @@ def _post_warmup_run(
       )
     return elapsed
 
+  def _run_single_event_timed_step(expected_compile_count: int) -> float:
+    device_elapsed = device_ops.measure_step_device_time(step_fn)
+    stepper.post_warmup_hook()
+
+    step_compile_count = device_ops.compile_count()
+    if step_compile_count != expected_compile_count:
+      raise PostWarmupRecompileError(
+          "Recompilation happened inside the post warmup loop. Expected"
+          f" {expected_compile_count}, got {step_compile_count}"
+      )
+    return device_elapsed
+
   with gc_disabled():
     for step in range(POST_WARMUP_STEPS.value):
       timings[step] = _run_single_step(compile_count_before)
 
+  memory_usage = device_ops.peak_memory_mb()
+
   post_warmup_run_session_xprof_url = None
   xspace = None
-  if enable_xprof and XPROF_STEPS.value > 0:
+  avg_device_time = -1.0
+  if device_ops.supports_event_device_time() and XPROF_STEPS.value > 0:
+    profiling_start_time = time.perf_counter()
+    event_device_timings = np.zeros(XPROF_STEPS.value, dtype=np.float64)
+    with gc_disabled():
+      for xprof_step in range(XPROF_STEPS.value):
+        event_device_timings[xprof_step] = _run_single_event_timed_step(
+            compile_count_before
+        )
+    if profiling_time is not None:
+      profiling_time.seconds += time.perf_counter() - profiling_start_time
+    valid_event_timings = event_device_timings[event_device_timings >= 0.0]
+    if valid_event_timings.size == XPROF_STEPS.value:
+      avg_device_time = float(np.mean(valid_event_timings))
+    logging.info(
+        "Post Warmup Event Device Timings for %s: %s",
+        name,
+        event_device_timings,
+    )
+  elif enable_xprof and XPROF_STEPS.value > 0:
     profiling_start_time = time.perf_counter()
     with gc_disabled(), XprofContext(
         name="post_warmup_run",
@@ -515,14 +548,13 @@ def _post_warmup_run(
       post_warmup_run_session_xprof_url = (
           f"http://xprof/?session_id={xprof_context.session_id}"
       )
-
-  memory_usage = device_ops.peak_memory_mb()
-  avg_device_time = _calculate_avg_device_time(
-      device_ops, xspace, XPROF_STEPS.value
-  )
+    avg_device_time = _calculate_avg_device_time(
+        device_ops, xspace, XPROF_STEPS.value
+    )
 
   logging.info("Post Warmup Timings for %s: %s", name, timings)
-  logging.info("Post Warmup Xprof Timings for %s: %s", name, xprof_timings)
+  if enable_xprof and not device_ops.supports_event_device_time():
+    logging.info("Post Warmup Xprof Timings for %s: %s", name, xprof_timings)
 
   return metrics.PostWarmupRunResult(
       post_warmup_step_time_seconds=float(np.mean(timings)),

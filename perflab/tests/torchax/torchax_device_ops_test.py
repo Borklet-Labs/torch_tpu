@@ -120,6 +120,22 @@ class TorchaxDeviceOpsTest(seed_test_utils.RepeatableTest):
     ops = torchax_device_ops.TorchaxDeviceOps(target)
     self.assertEqual(ops.compile_count(), 0)
 
+  def test_event_device_time_unsupported(self):
+    class _FakeLeaf:
+
+      def __init__(self):
+        self.called = False
+
+      def block_until_ready(self):
+        self.called = True
+
+    target = target_lib.make_target(platform=target_lib.Platform.CPU)
+    ops = torchax_device_ops.TorchaxDeviceOps(target)
+    self.assertFalse(ops.supports_event_device_time())
+    leaf = _FakeLeaf()
+    self.assertEqual(ops.measure_step_device_time(lambda: leaf), -1.0)
+    self.assertTrue(leaf.called)
+
 
 if __name__ == "__main__":
   absltest.main()

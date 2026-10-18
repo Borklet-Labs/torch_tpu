@@ -14,7 +14,7 @@
 
 """TorchaxDeviceOps: the TorchAx (torch_xla2 / JAX) implementation of DeviceOps."""
 
-from typing import Any
+from typing import Any, Callable
 
 import jax
 from torch_tpu._internal.benchmarks import xprof_adapter
@@ -127,6 +127,17 @@ class TorchaxDeviceOps:
     return device_utils.get_total_device_time_from_xspace(
         xspace, expected_steps=expected_steps
     )
+
+  def supports_event_device_time(self) -> bool:
+    """Returns whether this backend can measure per-step device time via device events."""
+    return False
+
+  def measure_step_device_time(self, step_fn: Callable[[], Any]) -> float:
+    """Executes one step and returns its active device time in seconds, or -1.0."""
+    out = step_fn()
+    self.await_result(out)
+    self.check_result(out)
+    return -1.0
 
   def compile_count(self) -> int:
     """Monotonic count of compilations performed so far."""
