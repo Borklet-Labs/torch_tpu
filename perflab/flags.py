@@ -14,10 +14,7 @@
 
 """Common command-line flags for benchmark tests."""
 
-from typing import Any
-
 from absl import flags
-from perflab import context as context_lib
 from perflab import target as target_lib
 
 SKIP_BEHAVIOR = flags.DEFINE_enum(  # PYTHON_FLAG_OK=benchmark
@@ -64,38 +61,30 @@ FAKE_TENSOR_MODE = flags.DEFINE_bool(  # PYTHON_FLAG_OK=benchmark
     False,
     "Whether to construct models and execute benchmark steps inside PyTorch's"
     " FakeTensorMode(allow_non_fake_inputs=True). Only valid with"
-    " BENCHMARK_PLATFORM=cpu and --run_scope=presubmit, so it cannot skew real"
-    " measurements; flag parsing fails otherwise. FakeTensorMode validates"
-    " PyTorch op dispatch, tensor shapes, dtypes, and autograd graphs without"
-    " allocating storage or executing CPU compute kernels. Model configs are"
-    " then read without the local weights cache directory. Building each case"
-    " (not its steps) must also fit in the HBM of a v7 TensorCore; see"
-    " perflab/fake_memory.py.",
+    " BENCHMARK_PLATFORM=cpu, so it cannot skew real measurements; flag parsing"
+    " fails otherwise. FakeTensorMode validates PyTorch op dispatch, tensor"
+    " shapes, dtypes, and autograd graphs without allocating storage or"
+    " executing CPU compute kernels, so it can also build models at their"
+    " --run_scope=full sizes. Model configs are then read without the local"
+    " weights cache directory. Building each case (not its steps) must also"
+    " fit in the HBM of a v7 TensorCore; see perflab/fake_memory.py.",
 )
 
 
-def _check_fake_tensor_mode(flag_values: dict[str, Any]) -> bool:
-  """Checks that `--fake_tensor_mode` is only set in CPU presubmit runs."""
-  if not flag_values[FAKE_TENSOR_MODE.name]:
+def _check_fake_tensor_mode(fake_tensor_mode: bool) -> bool:
+  """Checks that `--fake_tensor_mode` is only set in CPU runs."""
+  if not fake_tensor_mode:
     return True
   platform = target_lib.platform_from_env()
-  run_scope = flag_values[context_lib.RUN_SCOPE.name]
-  if (
-      platform is not target_lib.Platform.CPU
-      or run_scope is not context_lib.RunScope.PRESUBMIT
-  ):
+  if platform is not target_lib.Platform.CPU:
     raise flags.ValidationError(
         f"--{FAKE_TENSOR_MODE.name} is only valid with"
-        f" {target_lib.PLATFORM_ENV_VAR}=cpu and"
-        f" --{context_lib.RUN_SCOPE.name}=presubmit; got"
-        f" {target_lib.PLATFORM_ENV_VAR}={platform.value} and"
-        f" --{context_lib.RUN_SCOPE.name}={run_scope.value}"
+        f" {target_lib.PLATFORM_ENV_VAR}=cpu; got"
+        f" {target_lib.PLATFORM_ENV_VAR}={platform.value}"
     )
   return True
 
 
 # Registered with the flag so that every binary that accepts it fails at flag
 # parsing, before any benchmark is built or measured.
-flags.register_multi_flags_validator(
-    [FAKE_TENSOR_MODE, context_lib.RUN_SCOPE], _check_fake_tensor_mode
-)
+flags.register_validator(FAKE_TENSOR_MODE, _check_fake_tensor_mode)

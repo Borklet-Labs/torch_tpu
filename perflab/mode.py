@@ -574,11 +574,10 @@ def _with_constants(data: Any) -> Any:
 
 @contextlib.contextmanager
 def fake_tensor_context() -> Iterator[None]:
-  """Enters FakeTensorMode for the FakeTensorMode CPU presubmit smoke.
+  """Enters FakeTensorMode for the FakeTensorMode CPU smoke test.
 
   Callers enter it only if `fake_tensor_smoke_enabled()`; `--fake_tensor_mode`
-  is validated at flag-parse time to be set only with BENCHMARK_PLATFORM=cpu and
-  `--run_scope=presubmit`.
+  is validated at flag-parse time to be set only with BENCHMARK_PLATFORM=cpu.
 
   While active, this disables FakeTensor memoization and the argument validation
   of `torch.distributions`, makes `torch.nn.init.trunc_normal_` a no-op and lets
@@ -676,9 +675,9 @@ def allow_data_dependent_fake_outputs() -> None:
 
 
 def fake_tensor_smoke_enabled() -> bool:
-  """Returns whether this run is the FakeTensorMode CPU presubmit smoke.
+  """Returns whether this run is the FakeTensorMode CPU smoke test.
 
   That is, whether `--fake_tensor_mode` is set; flag parsing fails unless it is
-  set with BENCHMARK_PLATFORM=cpu and `--run_scope=presubmit`.
+  set with BENCHMARK_PLATFORM=cpu.
   """
   return flags_lib.FAKE_TENSOR_MODE.value

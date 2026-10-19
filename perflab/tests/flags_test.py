@@ -29,32 +29,26 @@ from tests import seed_test_utils
 
 class FakeTensorModeValidatorTest(seed_test_utils.RepeatableTest):
 
-  def test_accepted_in_cpu_presubmit(self):
+  @parameterized.parameters(
+      context_lib.RunScope.PRESUBMIT, context_lib.RunScope.FULL
+  )
+  def test_accepted_on_cpu(self, run_scope: context_lib.RunScope):
     with (
         mock.patch.dict(os.environ, {target_lib.PLATFORM_ENV_VAR: "cpu"}),
         flagsaver.flagsaver(
-            (context_lib.RUN_SCOPE, context_lib.RunScope.PRESUBMIT),
+            (context_lib.RUN_SCOPE, run_scope),
             (flags_lib.FAKE_TENSOR_MODE, True),
         ),
     ):
       self.assertTrue(flags_lib.FAKE_TENSOR_MODE.value)
 
-  @parameterized.parameters(
-      ("v5e_1x1", context_lib.RunScope.PRESUBMIT),
-      ("cpu", context_lib.RunScope.FULL),
-      ("b200_1", context_lib.RunScope.FULL),
-  )
-  def test_rejected_outside_cpu_presubmit(
-      self, platform: str, run_scope: context_lib.RunScope
-  ):
+  @parameterized.parameters("v5e_1x1", "b200_1", "v7_1x1x1")
+  def test_rejected_outside_cpu(self, platform: str):
     with mock.patch.dict(os.environ, {target_lib.PLATFORM_ENV_VAR: platform}):
       with self.assertRaisesRegex(
           flags.IllegalFlagValueError, "fake_tensor_mode is only valid"
       ):
-        with flagsaver.flagsaver(
-            (context_lib.RUN_SCOPE, run_scope),
-            (flags_lib.FAKE_TENSOR_MODE, True),
-        ):
+        with flagsaver.flagsaver((flags_lib.FAKE_TENSOR_MODE, True)):
           pass
 
 

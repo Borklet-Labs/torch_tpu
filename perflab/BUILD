@@ -125,7 +125,6 @@ torch_tpu_py_library(
     name = "flags",
     srcs = ["flags.py"],
     deps = [
-        ":context",
         ":target",
         "//shims/absl_py/flags",
     ],
@@ -389,6 +388,67 @@ torch_tpu_py_test(
     shard_count = 8,
     tags = [
         "nofastbuild",  # Runs in the .opt presubmit.
+        "nosan",  # *san tests provide no benefit for benchmarks.
+    ],
+    use_tcmalloc = True,
+    deps = [
+        ":base_test",
+        ":cases",
+        ":common",
+        ":compile",
+        ":context",
+        ":discovery",
+        ":fake_memory",
+        ":flags",
+        ":measure",
+        ":metrics",
+        ":mode",
+        ":registry",
+        ":step_lib",
+        ":target",
+        ":torch_device_ops",
+        "//perflab/models",
+        "//perflab/steps",
+        "//shims/absl_py/logging",
+        "//shims/absl_py/testing:absltest",
+        "//shims/absl_py/testing:parameterized",
+        "//shims/torch:pytorch",
+        "//src/torch_tpu",
+        "//src/torch_tpu/_internal/distributed:multiprocessing",
+    ],
+)
+
+# Full-scope counterpart of `torch_benchmark_cpu_smoke_test`: builds and steps
+# every case at the batch sizes, sequence lengths, and depths of the nightly
+# benchmark runs (`--run_scope=full`), still on CPU under FakeTensorMode, so
+# that changes to full-scope shapes, e.g. `_GEN_FULL_SCOPE_BATCH_SIZES`, are
+# checked before submission too. Its 16 shards run only at submit, through the
+# benchmark-smoke tag, rather than on every snapshot.
+torch_tpu_py_test(
+    name = "torch_benchmark_cpu_full_scope_smoke_test",
+    timeout = "long",
+    srcs = ["torch_benchmark_test.py"],
+    args = [
+        "--run_scope=full",
+        "--min_warmup_steps=1",
+        "--max_warmup_steps=1",
+        "--post_warmup_steps=0",
+        "--fake_tensor_mode",
+        "--norun_in_subprocess",
+    ],
+    data = [
+        "//perflab/huggingface_transformers:model_configs_data",
+        "//shims/model_configs:google_model_configs_data",
+    ],
+    env = {
+        "BENCHMARK_PLATFORM": "cpu",
+    },
+    main = "torch_benchmark_test.py",
+    notest_oss = True,  # Not yet verified in OSS.  # NOTEST_OSS_OK=out of scope for the CPU smoke stack
+    shard_count = 16,
+    tags = [
+        "benchmark-smoke",  # Runs in the third_party.py.torch_tpu.benchmark_smoke presubmit.
+        "nofastbuild",
         "nosan",  # *san tests provide no benefit for benchmarks.
     ],
     use_tcmalloc = True,

@@ -25,8 +25,7 @@ Environment & Flags:
   --run_in_subprocess  isolate each case in a child process    (default: true)
   --fake_tensor_mode   build and run each case under FakeTensorMode, and check
                        that building it fits in the HBM of a v7 TensorCore;
-                       only valid with BENCHMARK_PLATFORM=cpu and
-                       --run_scope=presubmit; also skips the
+                       only valid with BENCHMARK_PLATFORM=cpu; also skips the
                        weights cache dir                       (default: false)
 """
 
