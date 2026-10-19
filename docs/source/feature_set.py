@@ -71,7 +71,6 @@ def _(mo):
     | **TPU Support** | <ul><li>v8i, v8t</li></ul> |  |
     | **Basic functionality** | <ul><li>Streams</li><li>Graph capture</li><li>Eager mode with fast startup time</li><li>Dynamic ops (no recompilation)</li></ul> |  |
     | **Model Architectures** | <ul><li>Day 1 model support</li></ul> |  |
-    | **Kernel Support** |  |  |
     | **Quantization** | <ul><li>Block-wise FP8/FP4 w/ torchao (peak perf on TPUv8t)</li></ul> |  |
     | **Distributed** | <ul><li>FSDPv2 (w/ perf)</li><li>MPMD (w/ perf)</li><li>Training \> 8K chips</li><li>Multi-tier checkpointing</li><li>Goodput</li></ul> | <ul><li>Training >> 8K chips</li></ul>  |
     | **Ecosystem Integrations** | <ul><li>VeRL</li></ul> |  |
