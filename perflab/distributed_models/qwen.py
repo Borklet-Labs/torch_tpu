@@ -369,6 +369,7 @@ def _load_qwen3_5_397b(
         scope=compile_lib.Scope.MODEL, dynamic=False
     ),
     skipped_run_modes={"eager_default", "eager_optimized"},
+    presubmit=registry_lib.PresubmitPolicy.RUN,
 )
 def qwen3_5_397b_a17b_forward(
     ctx: context_lib.Context,

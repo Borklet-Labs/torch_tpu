@@ -50,11 +50,10 @@ def _load_timm_model(
   return model, example_inputs
 
 
-# Full-scope batch sizes are chosen so that device time dominates the measured
-# step time; smaller batches leave these models host-overhead bound.
-
-
-@registry_lib.register_benchmark(stepper=step_lib.StepperType.FORWARD)
+@registry_lib.register_benchmark(
+    stepper=step_lib.StepperType.FORWARD,
+    presubmit=registry_lib.PresubmitPolicy.RUN,
+)
 def timm_resnet_50_forward(ctx: context_lib.Context):
   """Benchmark factory for TIMM ResNet-50 (resnet50d) forward."""
   batch_size = 2 if ctx.run_scope == context_lib.RunScope.PRESUBMIT else 128
@@ -67,7 +66,10 @@ def timm_resnet_50_forward(ctx: context_lib.Context):
   return model, input_args, {}
 
 
-@registry_lib.register_benchmark(stepper=step_lib.StepperType.TRAINING)
+@registry_lib.register_benchmark(
+    stepper=step_lib.StepperType.TRAINING,
+    presubmit=registry_lib.PresubmitPolicy.RUN,
+)
 def timm_resnet_50_training(ctx: context_lib.Context):
   """Benchmark factory for TIMM ResNet-50 (resnet50d) training."""
   batch_size = 2 if ctx.run_scope == context_lib.RunScope.PRESUBMIT else 64
@@ -86,7 +88,10 @@ def timm_resnet_50_training(ctx: context_lib.Context):
   return model, input_args, {}, opt
 
 
-@registry_lib.register_benchmark(stepper=step_lib.StepperType.FORWARD)
+@registry_lib.register_benchmark(
+    stepper=step_lib.StepperType.FORWARD,
+    presubmit=registry_lib.PresubmitPolicy.RUN,
+)
 def timm_vit_small_dino_forward(ctx: context_lib.Context):
   """Benchmark factory for TIMM ViT-Small DINO forward."""
   batch_size = 1 if ctx.run_scope == context_lib.RunScope.PRESUBMIT else 8
@@ -99,7 +104,10 @@ def timm_vit_small_dino_forward(ctx: context_lib.Context):
   return model, input_args, {}
 
 
-@registry_lib.register_benchmark(stepper=step_lib.StepperType.TRAINING)
+@registry_lib.register_benchmark(
+    stepper=step_lib.StepperType.TRAINING,
+    presubmit=registry_lib.PresubmitPolicy.RUN,
+)
 def timm_vit_small_dino_training(ctx: context_lib.Context):
   """Benchmark factory for TIMM ViT-Small DINO training."""
   batch_size = 1 if ctx.run_scope == context_lib.RunScope.PRESUBMIT else 8

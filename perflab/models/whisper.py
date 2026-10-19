@@ -87,7 +87,10 @@ def _load_hf_whisper(
   return model, inputs
 
 
-@registry_lib.register_benchmark(stepper=step_lib.StepperType.FORWARD)
+@registry_lib.register_benchmark(
+    stepper=step_lib.StepperType.FORWARD,
+    presubmit=registry_lib.PresubmitPolicy.RUN,
+)
 def whisper_large_v3_forward(ctx: context_lib.Context):
   """Benchmark factory for Whisper-Large-v3 forward."""
   if ctx.run_scope == context_lib.RunScope.PRESUBMIT:

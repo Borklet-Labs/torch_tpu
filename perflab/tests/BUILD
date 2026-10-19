@@ -219,6 +219,7 @@ torch_tpu_py_test(
     srcs = ["models_presubmit_scope_test.py"],
     deps = [
         "//perflab:context",
+        "//perflab:registry",
         "//perflab:target",
         "//perflab/models",
         "//shims/absl_py/testing:absltest",
@@ -252,6 +253,7 @@ torch_tpu_py_test(
     ],
     notest_oss = True,  # NOTEST_OSS_OK=checks the internal in-tree model configs, which OSS does not export
     deps = [
+        "//perflab:cases",
         "//perflab:context",
         "//perflab:flags",
         "//perflab:mode",
@@ -391,6 +393,7 @@ torch_tpu_py_test(
     deps = [
         "//perflab:cases",
         "//perflab:common",
+        "//perflab:context",
         "//perflab:known_failures",
         "//perflab:mode",
         "//perflab:registry",
@@ -398,6 +401,7 @@ torch_tpu_py_test(
         "//perflab:target",
         "//shims/absl_py/flags",
         "//shims/absl_py/testing:absltest",
+        "//shims/absl_py/testing:flagsaver",
         "//src/torch_tpu",
         "//tests:seed_test_utils",
     ],

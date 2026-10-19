@@ -59,7 +59,10 @@ def _load_hf_gemma(
 # --- Gemma 3 270M ---
 
 
-@registry_lib.register_benchmark(stepper=step_lib.StepperType.FORWARD)
+@registry_lib.register_benchmark(
+    stepper=step_lib.StepperType.FORWARD,
+    presubmit=registry_lib.PresubmitPolicy.RUN,
+)
 def gemma_3_270m_forward(ctx: context_lib.Context):
   """Benchmark factory for Gemma-3 270M forward."""
   if ctx.run_scope == context_lib.RunScope.PRESUBMIT:
@@ -82,7 +85,10 @@ def gemma_3_270m_forward(ctx: context_lib.Context):
   return model, (), inputs
 
 
-@registry_lib.register_benchmark(stepper=step_lib.StepperType.TRAINING)
+@registry_lib.register_benchmark(
+    stepper=step_lib.StepperType.TRAINING,
+    presubmit=registry_lib.PresubmitPolicy.RUN,
+)
 def gemma_3_270m_training(ctx: context_lib.Context):
   """Benchmark factory for Gemma-3 270M training."""
   if ctx.run_scope == context_lib.RunScope.PRESUBMIT:
@@ -114,7 +120,10 @@ def gemma_3_270m_training(ctx: context_lib.Context):
 # --- Gemma 2 2B ---
 
 
-@registry_lib.register_benchmark(stepper=step_lib.StepperType.FORWARD)
+@registry_lib.register_benchmark(
+    stepper=step_lib.StepperType.FORWARD,
+    presubmit=registry_lib.PresubmitPolicy.RUN,
+)
 def gemma_2_2b_forward(ctx: context_lib.Context):
   """Benchmark factory for Gemma-2 2B forward."""
   if ctx.run_scope == context_lib.RunScope.PRESUBMIT:
@@ -137,7 +146,10 @@ def gemma_2_2b_forward(ctx: context_lib.Context):
   return model, (), inputs
 
 
-@registry_lib.register_benchmark(stepper=step_lib.StepperType.TRAINING)
+@registry_lib.register_benchmark(
+    stepper=step_lib.StepperType.TRAINING,
+    presubmit=registry_lib.PresubmitPolicy.RUN,
+)
 def gemma_2_2b_training(ctx: context_lib.Context):
   """Benchmark factory for Gemma-2 2B training."""
   if ctx.run_scope == context_lib.RunScope.PRESUBMIT:
@@ -169,7 +181,10 @@ def gemma_2_2b_training(ctx: context_lib.Context):
 # --- Gemma 4 31B (6 Layers) ---
 
 
-@registry_lib.register_benchmark(stepper=step_lib.StepperType.FORWARD)
+@registry_lib.register_benchmark(
+    stepper=step_lib.StepperType.FORWARD,
+    presubmit=registry_lib.PresubmitPolicy.RUN,
+)
 def gemma_4_31b_6_layers_forward(ctx: context_lib.Context):
   """Benchmark factory for Gemma-4 31B 6 layers forward."""
   if ctx.run_scope == context_lib.RunScope.PRESUBMIT:
@@ -189,16 +204,17 @@ def gemma_4_31b_6_layers_forward(ctx: context_lib.Context):
   return model, (), inputs
 
 
-@registry_lib.register_benchmark(stepper=step_lib.StepperType.TRAINING)
+@registry_lib.register_benchmark(
+    stepper=step_lib.StepperType.TRAINING,
+    presubmit=registry_lib.PresubmitPolicy.CPU_SMOKE_ONLY,
+    presubmit_reason=(
+        "Gemma 4 31B training uses too much memory to run on TPUs with"
+        " smaller memory."
+    ),
+)
 def gemma_4_31b_6_layers_training(ctx: context_lib.Context):
   """Benchmark factory for Gemma-4 31B 6 layers training."""
-  if model_helpers.presubmit_smoke_or_raise(
-      ctx,
-      unsupported_reason=(
-          "Gemma 4 31B training uses too much memory to run on TPUs with"
-          " smaller memory."
-      ),
-  ):
+  if model_helpers.is_presubmit_smoke(ctx):
     batch_size = model_helpers.SMOKE_BATCH_SIZE
     seq_len = model_helpers.SMOKE_SEQ_LEN
   else:
@@ -224,7 +240,10 @@ def gemma_4_31b_6_layers_training(ctx: context_lib.Context):
 # --- Gemma 4 E2B ---
 
 
-@registry_lib.register_benchmark(stepper=step_lib.StepperType.FORWARD)
+@registry_lib.register_benchmark(
+    stepper=step_lib.StepperType.FORWARD,
+    presubmit=registry_lib.PresubmitPolicy.RUN,
+)
 def gemma_4_e2b_forward(ctx: context_lib.Context):
   """Benchmark factory for Gemma-4 E2B forward."""
   if ctx.run_scope == context_lib.RunScope.PRESUBMIT:
@@ -247,16 +266,17 @@ def gemma_4_e2b_forward(ctx: context_lib.Context):
   return model, (), inputs
 
 
-@registry_lib.register_benchmark(stepper=step_lib.StepperType.TRAINING)
+@registry_lib.register_benchmark(
+    stepper=step_lib.StepperType.TRAINING,
+    presubmit=registry_lib.PresubmitPolicy.CPU_SMOKE_ONLY,
+    presubmit_reason=(
+        "Gemma 4 E2B training uses too much memory to run on TPUs with"
+        " smaller memory."
+    ),
+)
 def gemma_4_e2b_training(ctx: context_lib.Context):
   """Benchmark factory for Gemma-4 E2B training."""
-  if model_helpers.presubmit_smoke_or_raise(
-      ctx,
-      unsupported_reason=(
-          "Gemma 4 E2B training uses too much memory to run on TPUs with"
-          " smaller memory."
-      ),
-  ):
+  if model_helpers.is_presubmit_smoke(ctx):
     batch_size = model_helpers.SMOKE_BATCH_SIZE
     seq_len = model_helpers.SMOKE_SEQ_LEN
     # Layers 0-4 cover both the sliding-window and full-attention layer types;
@@ -286,7 +306,10 @@ def gemma_4_e2b_training(ctx: context_lib.Context):
 # --- Gemma 4 26B A4B Ragged MoE ---
 
 
-@registry_lib.register_benchmark(stepper=step_lib.StepperType.FORWARD)
+@registry_lib.register_benchmark(
+    stepper=step_lib.StepperType.FORWARD,
+    presubmit=registry_lib.PresubmitPolicy.RUN,
+)
 def gemma_4_26b_a4b_6_layers_forward(ctx: context_lib.Context):
   """Benchmark factory for Gemma-4 26B-A4B Ragged MoE forward."""
   if ctx.run_scope == context_lib.RunScope.PRESUBMIT:
@@ -306,16 +329,17 @@ def gemma_4_26b_a4b_6_layers_forward(ctx: context_lib.Context):
   return model, (), inputs
 
 
-@registry_lib.register_benchmark(stepper=step_lib.StepperType.TRAINING)
+@registry_lib.register_benchmark(
+    stepper=step_lib.StepperType.TRAINING,
+    presubmit=registry_lib.PresubmitPolicy.CPU_SMOKE_ONLY,
+    presubmit_reason=(
+        "Gemma 4 26B-A4B training uses too much memory to run on TPUs with"
+        " smaller memory."
+    ),
+)
 def gemma_4_26b_a4b_6_layers_training(ctx: context_lib.Context):
   """Benchmark factory for Gemma-4 26B-A4B Ragged MoE training."""
-  if model_helpers.presubmit_smoke_or_raise(
-      ctx,
-      unsupported_reason=(
-          "Gemma 4 26B-A4B training uses too much memory to run on TPUs with"
-          " smaller memory."
-      ),
-  ):
+  if model_helpers.is_presubmit_smoke(ctx):
     batch_size = model_helpers.SMOKE_BATCH_SIZE
     seq_len = model_helpers.SMOKE_SEQ_LEN
   else:

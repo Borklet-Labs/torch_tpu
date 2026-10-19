@@ -12,11 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests that presubmit scope registers generated benchmarks only in the smoke.
+"""Tests the registration and presubmit policies of the generated benchmarks.
 
-Generated benchmarks are registered in presubmit scope only under the
-FakeTensorMode CPU smoke (`--fake_tensor_mode`), and then every one whose model
-config is in-tree, so that the smoke test needs no network access.
+Every generated benchmark is registered regardless of the run scope, and their
+`PresubmitPolicy` keeps them out of presubmit scope except in the FakeTensorMode
+CPU smoke (`--fake_tensor_mode`). Under `--fake_tensor_mode`, only the ones
+whose model config is in-tree are registered, so that the smoke test needs no
+network access.
 """
 
 import copy
@@ -29,6 +31,7 @@ from absl.testing import absltest
 from absl.testing import flagsaver
 from absl.testing import parameterized
 import torch
+from perflab import cases
 from perflab import context as context_lib
 from perflab import flags as flags_lib
 from perflab import mode as mode_lib
@@ -48,8 +51,16 @@ _MODERNBERT_BENCHMARKS = (
 )
 
 
+def _gen_names() -> set[str]:
+  """Returns the names of all generated benchmarks."""
+  return {
+      spec.benchmark_name(is_training=is_training, suffix="gen")
+      for spec, is_training, _ in gen_benchmarks._iter_gen_benchmark_specs()  # pylint: disable=protected-access
+  }
+
+
 def _fake_tensor_smoke_names() -> set[str]:
-  """Returns the generated benchmarks expected in the presubmit-scope smoke."""
+  """Returns the generated benchmarks expected in the FakeTensorMode smoke."""
   names = set()
   for spec, is_training, _ in gen_benchmarks._iter_gen_benchmark_specs():  # pylint: disable=protected-access
     name = spec.benchmark_name(is_training=is_training, suffix="gen")
@@ -63,19 +74,22 @@ def _fake_tensor_smoke_names() -> set[str]:
 
 class GenBenchmarksPresubmitScopeTest(seed_test_utils.RepeatableTest):
 
-  def _registered_names(
-      self, *, platform: str, fake_tensor_mode: bool
-  ) -> set[str]:
-    with (
-        mock.patch.dict(os.environ, {target_lib.PLATFORM_ENV_VAR: platform}),
-        flagsaver.flagsaver(
-            run_scope=context_lib.RunScope.PRESUBMIT,
-            fake_tensor_mode=fake_tensor_mode,
-        ),
-        mock.patch.dict(registry_lib.REGISTRY, clear=True),
+  def setUp(self):
+    super().setUp()
+    self.enter_context(mock.patch.dict(registry_lib.REGISTRY, clear=True))
+    # `--fake_tensor_mode` is only valid on CPU.
+    self.enter_context(
+        mock.patch.dict(os.environ, {target_lib.PLATFORM_ENV_VAR: "cpu"})
+    )
+
+  def _register(
+      self, run_scope: context_lib.RunScope, fake_tensor_mode: bool
+  ) -> dict[str, registry_lib.BenchmarkSpec]:
+    with flagsaver.flagsaver(
+        run_scope=run_scope, fake_tensor_mode=fake_tensor_mode
     ):
       gen_benchmarks._register_gen_benchmarks()  # pylint: disable=protected-access
-      return set(registry_lib.REGISTRY)
+    return dict(registry_lib.REGISTRY)
 
   def _registered_names_at_import_time(self, argv: list[str]) -> set[str]:
     # Unparsed flags, as when production imports gen_benchmarks.
@@ -83,13 +97,25 @@ class GenBenchmarksPresubmitScopeTest(seed_test_utils.RepeatableTest):
     for flag in (context_lib.RUN_SCOPE, flags_lib.FAKE_TENSOR_MODE):
       import_time_flags[flag.name] = copy.deepcopy(flags.FLAGS[flag.name])
     with (
-        mock.patch.dict(os.environ, {target_lib.PLATFORM_ENV_VAR: "cpu"}),
         mock.patch.object(flags, "FLAGS", import_time_flags),
         mock.patch.object(sys, "argv", argv),
-        mock.patch.dict(registry_lib.REGISTRY, clear=True),
     ):
       gen_benchmarks._register_gen_benchmarks()  # pylint: disable=protected-access
-      return set(registry_lib.REGISTRY)
+    return set(registry_lib.REGISTRY)
+
+  def _case_benchmarks(
+      self, run_scope: context_lib.RunScope, fake_tensor_mode: bool
+  ) -> set[str]:
+    with flagsaver.flagsaver(
+        run_scope=run_scope, fake_tensor_mode=fake_tensor_mode
+    ):
+      gen_benchmarks._register_gen_benchmarks()  # pylint: disable=protected-access
+      return {
+          spec.name
+          for _, spec, _ in cases.get_cases(
+              target_lib.Platform.CPU, mode_lib.Framework.TORCH
+          )
+      }
 
   def test_fake_tensor_smoke_covers_every_in_tree_model(self):
     names = _fake_tensor_smoke_names()
@@ -98,31 +124,73 @@ class GenBenchmarksPresubmitScopeTest(seed_test_utils.RepeatableTest):
     self.assertGreater(len(names), 300)
     self.assertContainsSubset(_MODERNBERT_BENCHMARKS, names)
 
-  def test_cpu_presubmit_with_fake_tensor_mode_registers_in_tree_models(self):
+  @parameterized.parameters(
+      context_lib.RunScope.FULL, context_lib.RunScope.PRESUBMIT
+  )
+  def test_registers_every_generated_benchmark_without_fake_tensor_mode(
+      self, run_scope: context_lib.RunScope
+  ):
+    self.assertEqual(set(self._register(run_scope, False)), _gen_names())
+
+  @parameterized.parameters(
+      context_lib.RunScope.FULL, context_lib.RunScope.PRESUBMIT
+  )
+  def test_fake_tensor_mode_registers_in_tree_models(
+      self, run_scope: context_lib.RunScope
+  ):
     self.assertEqual(
-        self._registered_names(platform="cpu", fake_tensor_mode=True),
+        set(self._register(run_scope, True)), _fake_tensor_smoke_names()
+    )
+
+  def test_import_time_fake_tensor_mode_registers_in_tree_models(self):
+    self.assertEqual(
+        self._registered_names_at_import_time(
+            ["prog", "--run_scope=presubmit", "--fake_tensor_mode"]
+        ),
         _fake_tensor_smoke_names(),
     )
 
+  def test_presubmit_policies(self):
+    for name, spec in self._register(context_lib.RunScope.FULL, False).items():
+      with self.subTest(name=name):
+        self.assertIs(
+            spec.presubmit, registry_lib.PresubmitPolicy.CPU_SMOKE_ONLY
+        )
+        self.assertTrue(spec.presubmit_reason)
+
   def test_fake_tensor_smoke_steps_benchmarks_that_run_on_accelerators(self):
-    with (
-        mock.patch.dict(os.environ, {target_lib.PLATFORM_ENV_VAR: "cpu"}),
-        flagsaver.flagsaver(
-            run_scope=context_lib.RunScope.PRESUBMIT, fake_tensor_mode=True
-        ),
-        mock.patch.dict(registry_lib.REGISTRY, clear=True),
-    ):
-      gen_benchmarks._register_gen_benchmarks()  # pylint: disable=protected-access
-      skipped_run_modes = {
-          name: spec.skipped_run_modes
-          for name, spec in registry_lib.REGISTRY.items()
-      }
+    skipped_run_modes = {
+        name: spec.skipped_run_modes
+        for name, spec in self._register(
+            context_lib.RunScope.PRESUBMIT, True
+        ).items()
+    }
     # Skips eager_default, the only run mode of CPU targets, but runs compiled
     # on TPUs and GPUs.
     self.assertNotIn("eager_default", skipped_run_modes["t5_small_train_gen"])
     # Runs in no run mode.
     self.assertIn(
         "eager_default", skipped_run_modes["all_minilm_l6_v2_train_gen"]
+    )
+
+  def test_full_scope_collects_every_generated_benchmark(self):
+    self.assertEqual(
+        self._case_benchmarks(context_lib.RunScope.FULL, False), _gen_names()
+    )
+
+  @parameterized.parameters(
+      context_lib.RunScope.FULL, context_lib.RunScope.PRESUBMIT
+  )
+  def test_cpu_smoke_collects_in_tree_models(
+      self, run_scope: context_lib.RunScope
+  ):
+    self.assertEqual(
+        self._case_benchmarks(run_scope, True), _fake_tensor_smoke_names()
+    )
+
+  def test_presubmit_without_fake_tensor_mode_collects_nothing(self):
+    self.assertEmpty(
+        self._case_benchmarks(context_lib.RunScope.PRESUBMIT, False)
     )
 
   @parameterized.parameters(
@@ -198,53 +266,6 @@ class GenBenchmarksPresubmitScopeTest(seed_test_utils.RepeatableTest):
         ),
         "the config of Alibaba-NLP/gte-modernbert-base is not in-tree",
     )
-
-  @parameterized.parameters(
-      "cpu",
-      "v5e_1x1",
-      # The platform is only read with --fake_tensor_mode.
-      "not_a_platform",
-  )
-  def test_presubmit_registers_nothing_without_fake_tensor_mode(
-      self, platform: str
-  ):
-    self.assertEmpty(
-        self._registered_names(platform=platform, fake_tensor_mode=False)
-    )
-
-  def test_import_time_cpu_presubmit_with_fake_tensor_mode_registers_models(
-      self,
-  ):
-    self.assertEqual(
-        self._registered_names_at_import_time(
-            ["prog", "--run_scope=presubmit", "--fake_tensor_mode"]
-        ),
-        _fake_tensor_smoke_names(),
-    )
-
-  @parameterized.named_parameters(
-      {
-          "testcase_name": "after_double_dash",
-          "args": ["--run_scope=presubmit", "--", "--fake_tensor_mode"],
-      },
-      {
-          "testcase_name": "negated",
-          "args": [
-              "--run_scope",
-              "presubmit",
-              "--fake_tensor_mode",
-              "--nofake_tensor_mode",
-          ],
-      },
-      {
-          "testcase_name": "false",
-          "args": ["--run_scope=presubmit", "--fake_tensor_mode=false"],
-      },
-  )
-  def test_import_time_presubmit_without_fake_tensor_mode_registers_nothing(
-      self, args: list[str]
-  ):
-    self.assertEmpty(self._registered_names_at_import_time(["prog", *args]))
 
 
 if __name__ == "__main__":

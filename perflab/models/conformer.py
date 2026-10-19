@@ -295,14 +295,20 @@ def _load_conformer(
   return model, example_inputs
 
 
-@registry_lib.register_benchmark(stepper=step_lib.StepperType.FORWARD)
+@registry_lib.register_benchmark(
+    stepper=step_lib.StepperType.FORWARD,
+    presubmit=registry_lib.PresubmitPolicy.RUN,
+)
 def conformer_forward(ctx: context_lib.Context):
   """Benchmark factory for Conformer forward."""
   model, input_args = _load_conformer(ctx, is_training=False)
   return model, input_args, {}
 
 
-@registry_lib.register_benchmark(stepper=step_lib.StepperType.TRAINING)
+@registry_lib.register_benchmark(
+    stepper=step_lib.StepperType.TRAINING,
+    presubmit=registry_lib.PresubmitPolicy.RUN,
+)
 def conformer_training(ctx: context_lib.Context):
   """Benchmark factory for Conformer training."""
   model, input_args = _load_conformer(ctx, is_training=True)

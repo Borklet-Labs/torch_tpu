@@ -60,7 +60,10 @@ def _load_hf_llama(
   )
 
 
-@registry_lib.register_benchmark(stepper=step_lib.StepperType.FORWARD)
+@registry_lib.register_benchmark(
+    stepper=step_lib.StepperType.FORWARD,
+    presubmit=registry_lib.PresubmitPolicy.RUN,
+)
 def llama_1b_forward(ctx):
   """Benchmark factory for Llama 3.2 1B inference."""
   model, inputs = _load_hf_llama(
@@ -70,7 +73,8 @@ def llama_1b_forward(ctx):
 
 
 @registry_lib.register_benchmark(
-    stepper=step_lib.StepperType.DECODER_ONLY_DECODE
+    stepper=step_lib.StepperType.DECODER_ONLY_DECODE,
+    presubmit=registry_lib.PresubmitPolicy.RUN,
 )
 def llama_1b_decode(ctx):
   """Benchmark factory for Llama 3.2 1B decode."""
@@ -82,6 +86,7 @@ def llama_1b_decode(ctx):
 
 @registry_lib.register_benchmark(
     stepper=step_lib.StepperType.TRAINING,
+    presubmit=registry_lib.PresubmitPolicy.RUN,
 )
 def llama_1b_training(ctx):
   """Benchmark factory for Llama 3.2 1B training."""
@@ -97,7 +102,10 @@ def llama_1b_training(ctx):
   return model, (), inputs, opt
 
 
-@registry_lib.register_benchmark(stepper=step_lib.StepperType.FORWARD)
+@registry_lib.register_benchmark(
+    stepper=step_lib.StepperType.FORWARD,
+    presubmit=registry_lib.PresubmitPolicy.RUN,
+)
 def llama_3_1_8b_forward(ctx: context_lib.Context):
   """Benchmark factory for Llama 3.1 8B forward."""
   model, inputs = _load_hf_llama(
@@ -106,7 +114,10 @@ def llama_3_1_8b_forward(ctx: context_lib.Context):
   return model, (), inputs
 
 
-@registry_lib.register_benchmark(stepper=step_lib.StepperType.FORWARD)
+@registry_lib.register_benchmark(
+    stepper=step_lib.StepperType.FORWARD,
+    presubmit=registry_lib.PresubmitPolicy.RUN,
+)
 def llama_3_2_3b_forward(ctx: context_lib.Context):
   """Benchmark factory for Llama 3.2 3B forward."""
   model, inputs = _load_hf_llama(
@@ -115,7 +126,10 @@ def llama_3_2_3b_forward(ctx: context_lib.Context):
   return model, (), inputs
 
 
-@registry_lib.register_benchmark(stepper=step_lib.StepperType.TRAINING)
+@registry_lib.register_benchmark(
+    stepper=step_lib.StepperType.TRAINING,
+    presubmit=registry_lib.PresubmitPolicy.RUN,
+)
 def llama_3_2_3b_training(ctx: context_lib.Context):
   """Benchmark factory for Llama 3.2 3B training."""
   model, inputs = _load_hf_llama(

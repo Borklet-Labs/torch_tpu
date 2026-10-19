@@ -129,13 +129,9 @@ class DistributedSyntheticBenchmarkTest(
       "synthetic_fsdp_1024_params_training",
   )
   def test_presubmit_skips_large_sweeps(self, name):
-    factory = registry_lib.REGISTRY[name].factory
-    with self.assertRaisesRegex(
-        target_lib.UnsupportedBenchmark, "only run in the full scope"
-    ):
-      factory(
-          _ctx(target_lib.Platform.V7_1X1X1_2TC, context_lib.RunScope.PRESUBMIT)
-      )
+    spec = registry_lib.REGISTRY[name]
+    self.assertIs(spec.presubmit, registry_lib.PresubmitPolicy.SKIP)
+    self.assertIn("only run in the full scope", spec.presubmit_reason)
 
   @parameterized.parameters(
       (

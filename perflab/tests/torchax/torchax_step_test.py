@@ -208,6 +208,7 @@ class TorchaxStepTest(seed_test_utils.RepeatableTest):
         name="test_forward",
         factory=forward_factory,
         stepper=step_lib.StepperType.FORWARD,
+        presubmit=registry_lib.PresubmitPolicy.RUN,
     )
 
     wrapper = torchax_step.TorchaxForwardStepper()
@@ -255,6 +256,7 @@ class TorchaxStepTest(seed_test_utils.RepeatableTest):
         name="test_train",
         factory=train_factory,
         stepper=step_lib.StepperType.TRAINING,
+        presubmit=registry_lib.PresubmitPolicy.RUN,
     )
 
     wrapper = torchax_step.TorchaxBackwardStepper()
@@ -290,6 +292,7 @@ class TorchaxStepTest(seed_test_utils.RepeatableTest):
         name="test_forward",
         factory=lambda f_ctx: (DummyModule(), (torch.randn(2, 4),), {}),
         stepper=step_lib.StepperType.FORWARD,
+        presubmit=registry_lib.PresubmitPolicy.RUN,
     )
     train_spec = registry_lib.BenchmarkSpec(
         name="test_train",
@@ -300,6 +303,7 @@ class TorchaxStepTest(seed_test_utils.RepeatableTest):
             torch.optim.Adam(DummyModule().parameters()),
         ),
         stepper=step_lib.StepperType.TRAINING,
+        presubmit=registry_lib.PresubmitPolicy.RUN,
     )
 
     # Resolution by StepperType
@@ -362,6 +366,7 @@ class TorchaxStepTest(seed_test_utils.RepeatableTest):
         name="test_legacy_tensor_constructor",
         factory=factory,
         stepper=stepper_type,
+        presubmit=registry_lib.PresubmitPolicy.RUN,
     )
 
     # Exiting a nested `with env:` resets `env.enabled` to False while the
@@ -397,6 +402,7 @@ class TorchaxStepTest(seed_test_utils.RepeatableTest):
         name="test_failing_factory",
         factory=failing_factory,
         stepper=step_lib.StepperType.FORWARD,
+        presubmit=registry_lib.PresubmitPolicy.RUN,
     )
     wrapper = torchax_step.TorchaxForwardStepper()
     with self.assertRaisesRegex(ValueError, "factory failed"):
@@ -432,6 +438,7 @@ class TorchaxStepTest(seed_test_utils.RepeatableTest):
         name="test_parametrized",
         factory=factory,
         stepper=step_lib.StepperType.FORWARD,
+        presubmit=registry_lib.PresubmitPolicy.RUN,
     )
 
     wrapper = torchax_step.TorchaxForwardStepper()
@@ -469,6 +476,7 @@ class TorchaxStepTest(seed_test_utils.RepeatableTest):
         name="test_parametrized_training",
         factory=factory,
         stepper=step_lib.StepperType.TRAINING,
+        presubmit=registry_lib.PresubmitPolicy.RUN,
     )
 
     wrapper = torchax_step.TorchaxBackwardStepper()
@@ -523,6 +531,7 @@ class TorchaxStepTest(seed_test_utils.RepeatableTest):
         name="test_unregistered_tensor_attribute",
         factory=factory,
         stepper=step_lib.StepperType.FORWARD,
+        presubmit=registry_lib.PresubmitPolicy.RUN,
     )
 
     wrapper = torchax_step.TorchaxForwardStepper()
@@ -551,6 +560,7 @@ class TorchaxStepTest(seed_test_utils.RepeatableTest):
         name="test_custom_compute_loss",
         factory=factory,
         stepper=step_lib.StepperType.TRAINING,
+        presubmit=registry_lib.PresubmitPolicy.RUN,
     )
     seen_models = []
 
@@ -634,6 +644,7 @@ class TorchaxStepTest(seed_test_utils.RepeatableTest):
         name="test_non_tensor_python_inputs",
         factory=factory,
         stepper=stepper_type,
+        presubmit=registry_lib.PresubmitPolicy.RUN,
     )
 
     wrapper = torchax_step.resolve_torchax_stepper(stepper_type)

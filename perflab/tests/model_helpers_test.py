@@ -32,41 +32,40 @@ def _context(run_scope: context_lib.RunScope) -> context_lib.Context:
   )
 
 
-class PresubmitSmokeOrRaiseTest(seed_test_utils.RepeatableTest):
+class IsPresubmitSmokeTest(seed_test_utils.RepeatableTest):
 
   def setUp(self):
     super().setUp()
+    # `--fake_tensor_mode` is only valid on CPU.
     self.enter_context(
         mock.patch.dict(os.environ, {target_lib.PLATFORM_ENV_VAR: "cpu"})
     )
-    self.enter_context(
-        flagsaver.flagsaver(run_scope=context_lib.RunScope.PRESUBMIT)
-    )
 
-  @flagsaver.flagsaver(fake_tensor_mode=False)
-  def test_full_scope_returns_false(self):
-    self.assertFalse(
-        model_helpers.presubmit_smoke_or_raise(
-            _context(context_lib.RunScope.FULL), unsupported_reason="unused"
-        )
-    )
-
-  @flagsaver.flagsaver(fake_tensor_mode=False)
-  def test_presubmit_without_fake_tensor_mode_raises(self):
-    with self.assertRaisesRegex(target_lib.UnsupportedBenchmark, "too large"):
-      model_helpers.presubmit_smoke_or_raise(
-          _context(context_lib.RunScope.PRESUBMIT),
-          unsupported_reason="too large",
+  def test_presubmit_with_fake_tensor_mode(self):
+    with flagsaver.flagsaver(fake_tensor_mode=True):
+      self.assertTrue(
+          model_helpers.is_presubmit_smoke(
+              _context(context_lib.RunScope.PRESUBMIT)
+          )
       )
 
-  @flagsaver.flagsaver(fake_tensor_mode=True)
-  def test_presubmit_with_fake_tensor_mode_returns_true(self):
-    self.assertTrue(
-        model_helpers.presubmit_smoke_or_raise(
-            _context(context_lib.RunScope.PRESUBMIT),
-            unsupported_reason="unused",
-        )
-    )
+  def test_presubmit_without_fake_tensor_mode(self):
+    with flagsaver.flagsaver(fake_tensor_mode=False):
+      self.assertFalse(
+          model_helpers.is_presubmit_smoke(
+              _context(context_lib.RunScope.PRESUBMIT)
+          )
+      )
+
+  def test_full_scope(self):
+    for fake_tensor_mode in (False, True):
+      with self.subTest(fake_tensor_mode=fake_tensor_mode):
+        with flagsaver.flagsaver(fake_tensor_mode=fake_tensor_mode):
+          self.assertFalse(
+              model_helpers.is_presubmit_smoke(
+                  _context(context_lib.RunScope.FULL)
+              )
+          )
 
 
 if __name__ == "__main__":

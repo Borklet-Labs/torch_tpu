@@ -22,8 +22,10 @@ from unittest import mock
 
 from absl import flags
 from absl.testing import absltest
+from absl.testing import flagsaver
 from perflab import cases
 from perflab import common
+from perflab import context as context_lib
 from perflab import known_failures
 from perflab import mode as mode_lib
 from perflab import registry as registry_lib
@@ -36,17 +38,151 @@ def _factory() -> tuple[Any, ...]:
   return ("model", (), {}, None)
 
 
+_RUN = registry_lib.PresubmitPolicy.RUN
+
+
 def _make_spec(
     name: str,
     skipped_run_modes: frozenset[str] = frozenset(),
     stepper: step_lib.StepperType = step_lib.StepperType.FORWARD,
+    presubmit: registry_lib.PresubmitPolicy = _RUN,
+    presubmit_reason: str | None = None,
 ) -> registry_lib.BenchmarkSpec:
   return registry_lib.BenchmarkSpec(
       name=name,
       factory=_factory,
       stepper=stepper,
       skipped_run_modes=skipped_run_modes,
+      presubmit=presubmit,
+      presubmit_reason=presubmit_reason,
   )
+
+
+# One spec per presubmit policy.
+_PRESUBMIT_REGISTRY = {
+    "run": _make_spec("run", presubmit=registry_lib.PresubmitPolicy.RUN),
+    "smoke_only": _make_spec(
+        "smoke_only",
+        presubmit=registry_lib.PresubmitPolicy.CPU_SMOKE_ONLY,
+        presubmit_reason="too big",
+    ),
+    "skipped": _make_spec(
+        "skipped",
+        presubmit=registry_lib.PresubmitPolicy.SKIP,
+        presubmit_reason="never in presubmit",
+    ),
+}
+
+
+class PresubmitPolicyTest(seed_test_utils.RepeatableTest):
+
+  def setUp(self):
+    super().setUp()
+    # `--fake_tensor_mode` is only valid on CPU.
+    self.enter_context(
+        mock.patch.dict(os.environ, {target_lib.PLATFORM_ENV_VAR: "cpu"})
+    )
+
+  def _case_benchmarks(
+      self, run_scope: context_lib.RunScope, fake_tensor_mode: bool
+  ) -> set[str]:
+    with (
+        mock.patch.dict(registry_lib.REGISTRY, _PRESUBMIT_REGISTRY, clear=True),
+        flagsaver.flagsaver(
+            run_scope=run_scope, fake_tensor_mode=fake_tensor_mode
+        ),
+    ):
+      return {
+          spec.name
+          for _, spec, _ in cases.get_cases(
+              target_lib.Platform.CPU, mode_lib.Framework.TORCH
+          )
+      }
+
+  def test_full_scope_collects_every_benchmark(self):
+    for fake_tensor_mode in (False, True):
+      with self.subTest(fake_tensor_mode=fake_tensor_mode):
+        self.assertEqual(
+            self._case_benchmarks(context_lib.RunScope.FULL, fake_tensor_mode),
+            set(_PRESUBMIT_REGISTRY),
+        )
+
+  def test_presubmit_scope_collects_runnable_benchmarks(self):
+    self.assertEqual(
+        self._case_benchmarks(context_lib.RunScope.PRESUBMIT, False), {"run"}
+    )
+
+  def test_presubmit_cpu_smoke_also_collects_smoke_only_benchmarks(self):
+    self.assertEqual(
+        self._case_benchmarks(context_lib.RunScope.PRESUBMIT, True),
+        {"run", "smoke_only"},
+    )
+
+  def test_get_cases_logs_left_out_benchmarks(self):
+    with self.assertLogs(level="INFO") as logs:
+      self._case_benchmarks(context_lib.RunScope.PRESUBMIT, False)
+    output = "\n".join(logs.output)
+    self.assertIn("Left 2 benchmarks out", output)
+    self.assertIn("CPU_SMOKE_ONLY (too big): smoke_only", output)
+    self.assertIn("SKIP (never in presubmit): skipped", output)
+
+  def test_get_cases_logs_nothing_in_full_scope(self):
+    with self.assertNoLogs(level="INFO"):
+      self._case_benchmarks(context_lib.RunScope.FULL, False)
+
+  def test_presubmit_skip_reason(self):
+    for name, fake_tensor_mode, expected in (
+        ("run", False, None),
+        ("run", True, None),
+        ("smoke_only", True, None),
+        (
+            "smoke_only",
+            False,
+            (
+                "Benchmark smoke_only runs in presubmit scope only in the"
+                " FakeTensorMode CPU smoke (--fake_tensor_mode): too big"
+            ),
+        ),
+        (
+            "skipped",
+            True,
+            (
+                "Benchmark skipped does not run in presubmit scope: never in"
+                " presubmit"
+            ),
+        ),
+    ):
+      with self.subTest(name=name, fake_tensor_mode=fake_tensor_mode):
+        self.assertEqual(
+            cases.get_presubmit_skip_reason(
+                _PRESUBMIT_REGISTRY[name], fake_tensor_mode=fake_tensor_mode
+            ),
+            expected,
+        )
+
+  def test_get_skip_reason_applies_presubmit_policy_in_presubmit_scope(self):
+    spec = _PRESUBMIT_REGISTRY["skipped"]
+    for run_scope, expected in (
+        (context_lib.RunScope.FULL, None),
+        (
+            context_lib.RunScope.PRESUBMIT,
+            (
+                "Benchmark skipped does not run in presubmit scope: never in"
+                " presubmit"
+            ),
+        ),
+    ):
+      with self.subTest(run_scope=run_scope):
+        with flagsaver.flagsaver(run_scope=run_scope):
+          self.assertEqual(
+              cases.get_skip_reason(
+                  spec,
+                  common.RunMode.COMPILED,
+                  framework=mode_lib.Framework.TORCH,
+                  device_kind=target_lib.DeviceKind.TPU,
+              ),
+              expected,
+          )
 
 
 class GetSkipReasonTest(seed_test_utils.RepeatableTest):

@@ -21,7 +21,6 @@ from perflab import context as context_lib
 from perflab import model_helpers
 from perflab import registry as registry_lib
 from perflab import step_lib
-from perflab import target as target_lib
 from perflab import torch_device_ops
 
 
@@ -68,14 +67,16 @@ def _load_diffusers_wan(
   return model, inputs
 
 
-@registry_lib.register_benchmark(stepper=step_lib.StepperType.FORWARD)
-def wan_2_2_ti2v_5b_forward(ctx: context_lib.Context):
-  """Benchmark factory for Wan2.2-TI2V-5B forward."""
-  if ctx.run_scope == context_lib.RunScope.PRESUBMIT:
-    raise target_lib.UnsupportedBenchmark(
+@registry_lib.register_benchmark(
+    stepper=step_lib.StepperType.FORWARD,
+    presubmit=registry_lib.PresubmitPolicy.SKIP,
+    presubmit_reason=(
         "Wan2.2-TI2V-5B uses too much memory to run on TPUs with smaller"
         " memory."
-    )
+    ),
+)
+def wan_2_2_ti2v_5b_forward(ctx: context_lib.Context):
+  """Benchmark factory for Wan2.2-TI2V-5B forward."""
   model, inputs = _load_diffusers_wan(
       ctx,
       "Wan-AI/Wan2.2-TI2V-5B-Diffusers",
@@ -89,14 +90,14 @@ def wan_2_2_ti2v_5b_forward(ctx: context_lib.Context):
     # The legacy suite measured the 256x256 variants in compiled mode only;
     # eager modes are covered by the full-resolution specs.
     skipped_run_modes=frozenset({"eager_default", "eager_optimized"}),
+    presubmit=registry_lib.PresubmitPolicy.SKIP,
+    presubmit_reason=(
+        "Wan2.2-TI2V-5B uses too much memory to run on TPUs with smaller"
+        " memory."
+    ),
 )
 def wan_2_2_ti2v_5b_256x256_forward(ctx: context_lib.Context):
   """Benchmark factory for Wan2.2-TI2V-5B (256x256) forward."""
-  if ctx.run_scope == context_lib.RunScope.PRESUBMIT:
-    raise target_lib.UnsupportedBenchmark(
-        "Wan2.2-TI2V-5B uses too much memory to run on TPUs with smaller"
-        " memory."
-    )
   model, inputs = _load_diffusers_wan(
       ctx,
       "Wan-AI/Wan2.2-TI2V-5B-Diffusers",
@@ -110,14 +111,16 @@ def wan_2_2_ti2v_5b_256x256_forward(ctx: context_lib.Context):
   return model, (), inputs
 
 
-@registry_lib.register_benchmark(stepper=step_lib.StepperType.TRAINING)
-def wan_2_2_ti2v_5b_training(ctx: context_lib.Context):
-  """Benchmark factory for Wan2.2-TI2V-5B training."""
-  if ctx.run_scope == context_lib.RunScope.PRESUBMIT:
-    raise target_lib.UnsupportedBenchmark(
+@registry_lib.register_benchmark(
+    stepper=step_lib.StepperType.TRAINING,
+    presubmit=registry_lib.PresubmitPolicy.SKIP,
+    presubmit_reason=(
         "Wan2.2-TI2V-5B uses too much memory to run on TPUs with smaller"
         " memory."
-    )
+    ),
+)
+def wan_2_2_ti2v_5b_training(ctx: context_lib.Context):
+  """Benchmark factory for Wan2.2-TI2V-5B training."""
   model, inputs = _load_diffusers_wan(
       ctx,
       "Wan-AI/Wan2.2-TI2V-5B-Diffusers",
@@ -137,14 +140,14 @@ def wan_2_2_ti2v_5b_training(ctx: context_lib.Context):
     # The legacy suite measured the 256x256 variants in compiled mode only;
     # eager modes are covered by the full-resolution specs.
     skipped_run_modes=frozenset({"eager_default", "eager_optimized"}),
+    presubmit=registry_lib.PresubmitPolicy.SKIP,
+    presubmit_reason=(
+        "Wan2.2-TI2V-5B uses too much memory to run on TPUs with smaller"
+        " memory."
+    ),
 )
 def wan_2_2_ti2v_5b_256x256_training(ctx: context_lib.Context):
   """Benchmark factory for Wan2.2-TI2V-5B (256x256) training."""
-  if ctx.run_scope == context_lib.RunScope.PRESUBMIT:
-    raise target_lib.UnsupportedBenchmark(
-        "Wan2.2-TI2V-5B uses too much memory to run on TPUs with smaller"
-        " memory."
-    )
   model, inputs = _load_diffusers_wan(
       ctx,
       "Wan-AI/Wan2.2-TI2V-5B-Diffusers",

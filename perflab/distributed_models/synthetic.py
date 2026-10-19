@@ -110,18 +110,11 @@ class _ManyParamsScalarLoss(_ManyOutputs):
     ).sum()
 
 
-def _check_supported(ctx: context_lib.Context, num_outputs: int) -> None:
+def _check_supported(ctx: context_lib.Context) -> None:
   """Raises UnsupportedBenchmark if this configuration should not run."""
   if ctx.target.platform not in _SUPPORTED_PLATFORMS:
     raise target_lib.UnsupportedBenchmark(
         f"Synthetic distributed benchmarks do not support {ctx.target.platform}"
-    )
-  if (
-      ctx.run_scope == context_lib.RunScope.PRESUBMIT
-      and num_outputs > _PRESUBMIT_MAX_NUM_OUTPUTS
-  ):
-    raise target_lib.UnsupportedBenchmark(
-        f"{num_outputs} outputs only run in the full scope."
     )
   if not torch.distributed.is_initialized():
     raise target_lib.UnsupportedBenchmark(
@@ -204,7 +197,7 @@ def _make_replicated_forward_factory(num_outputs: int) -> registry_lib.Factory:
   """Creates a replicated forward benchmark factory with `num_outputs` outputs."""
 
   def factory(ctx: context_lib.Context):
-    _check_supported(ctx, num_outputs)
+    _check_supported(ctx)
     device = ctx.device_kind.value
     dtype = torch_device_ops.get_torch_dtype(ctx.dtype)
     model = build_replicated_model(num_outputs, device, dtype)
@@ -218,7 +211,7 @@ def _make_fsdp_training_factory(num_params: int) -> registry_lib.Factory:
   """Creates a SimpleFSDP training benchmark factory with `num_params` params."""
 
   def factory(ctx: context_lib.Context):
-    _check_supported(ctx, num_params)
+    _check_supported(ctx)
     device = ctx.device_kind.value
     dtype = torch_device_ops.get_torch_dtype(ctx.dtype)
     model = build_fsdp_model(
@@ -235,6 +228,18 @@ def _make_fsdp_training_factory(num_params: int) -> registry_lib.Factory:
   return factory
 
 
+def _presubmit_policy(
+    num_outputs: int,
+) -> tuple[registry_lib.PresubmitPolicy, str | None]:
+  """Returns the presubmit policy and reason for a sweep point."""
+  if num_outputs <= _PRESUBMIT_MAX_NUM_OUTPUTS:
+    return registry_lib.PresubmitPolicy.RUN, None
+  return (
+      registry_lib.PresubmitPolicy.SKIP,
+      f"{num_outputs} outputs only run in the full scope.",
+  )
+
+
 # Compile settings differ from `models/synthetic.py` on purpose, to match the
 # other distributed benchmarks:
 # * dynamic=False, as in `qwen.py` and `qwen3_8.py`: all shapes are static, and
@@ -245,6 +250,7 @@ def _make_fsdp_training_factory(num_params: int) -> registry_lib.Factory:
 #   `models/synthetic.py`.
 def _register_synthetic_distributed_benchmarks() -> None:
   for n in _NUM_OUTPUTS_SWEEP:
+    presubmit, presubmit_reason = _presubmit_policy(n)
     registry_lib.add_benchmark(
         factory=_make_replicated_forward_factory(n),
         stepper=step_lib.StepperType.FORWARD,
@@ -255,6 +261,8 @@ def _register_synthetic_distributed_benchmarks() -> None:
         ),
         name=f"synthetic_replicated_{n}_outputs_forward",
         skipped_run_modes=_EAGER_RUN_MODES,
+        presubmit=presubmit,
+        presubmit_reason=presubmit_reason,
     )
     registry_lib.add_benchmark(
         factory=_make_fsdp_training_factory(n),
@@ -268,6 +276,8 @@ def _register_synthetic_distributed_benchmarks() -> None:
         ),
         name=f"synthetic_fsdp_{n}_params_training",
         skipped_run_modes=_EAGER_RUN_MODES,
+        presubmit=presubmit,
+        presubmit_reason=presubmit_reason,
     )
 
 

@@ -167,6 +167,7 @@ def cross_entropy_loss(
         "eager_optimized",
         "eager_defer_never_and_launch_blocking",
     },
+    presubmit=registry_lib.PresubmitPolicy.RUN,
 )
 def qwen3_8_27b_4_layers_simple_fsdp_training(
     ctx: context_lib.Context,

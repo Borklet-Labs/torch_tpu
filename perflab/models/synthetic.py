@@ -31,7 +31,6 @@ import torch
 from perflab import context as context_lib
 from perflab import registry as registry_lib
 from perflab import step_lib
-from perflab import target as target_lib
 from perflab import torch_device_ops
 
 # Small enough that device time is negligible, large enough to be a realistic
@@ -65,16 +64,6 @@ class _ManyParamsScalarLoss(_ManyOutputs):
     return torch.stack([(x * w).sum() for w in self.weights]).sum()
 
 
-def _check_scope(ctx: context_lib.Context, num_outputs: int) -> None:
-  if (
-      ctx.run_scope == context_lib.RunScope.PRESUBMIT
-      and num_outputs > _PRESUBMIT_MAX_NUM_OUTPUTS
-  ):
-    raise target_lib.UnsupportedBenchmark(
-        f"{num_outputs} outputs only run in the full scope."
-    )
-
-
 def _make_input(ctx: context_lib.Context) -> torch.Tensor:
   return torch.randn(
       _TENSOR_SHAPE,
@@ -87,7 +76,6 @@ def _make_forward_factory(num_outputs: int) -> registry_lib.Factory:
   """Creates a forward benchmark factory with `num_outputs` outputs."""
 
   def factory(ctx: context_lib.Context):
-    _check_scope(ctx, num_outputs)
     model = _ManyOutputs(
         num_outputs,
         dtype=torch_device_ops.get_torch_dtype(ctx.dtype),
@@ -102,7 +90,6 @@ def _make_training_factory(num_params: int) -> registry_lib.Factory:
   """Creates a training benchmark factory with `num_params` parameters."""
 
   def factory(ctx: context_lib.Context):
-    _check_scope(ctx, num_params)
     model = _ManyParamsScalarLoss(
         num_params,
         dtype=torch_device_ops.get_torch_dtype(ctx.dtype),
@@ -119,17 +106,34 @@ def _make_training_factory(num_params: int) -> registry_lib.Factory:
   return factory
 
 
+def _presubmit_policy(
+    num_outputs: int,
+) -> tuple[registry_lib.PresubmitPolicy, str | None]:
+  """Returns the presubmit policy and reason for a sweep point."""
+  if num_outputs <= _PRESUBMIT_MAX_NUM_OUTPUTS:
+    return registry_lib.PresubmitPolicy.RUN, None
+  return (
+      registry_lib.PresubmitPolicy.SKIP,
+      f"{num_outputs} outputs only run in the full scope.",
+  )
+
+
 def _register_synthetic_benchmarks() -> None:
   for n in _NUM_OUTPUTS_SWEEP:
+    presubmit, presubmit_reason = _presubmit_policy(n)
     registry_lib.add_benchmark(
         factory=_make_forward_factory(n),
         stepper=step_lib.StepperType.FORWARD,
         name=f"synthetic_{n}_outputs_forward",
+        presubmit=presubmit,
+        presubmit_reason=presubmit_reason,
     )
     registry_lib.add_benchmark(
         factory=_make_training_factory(n),
         stepper=step_lib.StepperType.TRAINING,
         name=f"synthetic_{n}_params_training",
+        presubmit=presubmit,
+        presubmit_reason=presubmit_reason,
     )
 
 

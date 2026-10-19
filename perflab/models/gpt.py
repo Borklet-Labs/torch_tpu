@@ -67,15 +67,16 @@ def _load_hf_gpt(
 # --- GPT-OSS-20B ---
 
 
-@registry_lib.register_benchmark(stepper=step_lib.StepperType.FORWARD)
+@registry_lib.register_benchmark(
+    stepper=step_lib.StepperType.FORWARD,
+    presubmit=registry_lib.PresubmitPolicy.CPU_SMOKE_ONLY,
+    presubmit_reason=(
+        "GPT-OSS 20B uses too much memory to run on TPUs with smaller memory."
+    ),
+)
 def gpt_oss_20b_forward(ctx: context_lib.Context):
   """Benchmark factory for GPT-OSS 20B forward."""
-  if model_helpers.presubmit_smoke_or_raise(
-      ctx,
-      unsupported_reason=(
-          "GPT-OSS 20B uses too much memory to run on TPUs with smaller memory."
-      ),
-  ):
+  if model_helpers.is_presubmit_smoke(ctx):
     batch_size = model_helpers.SMOKE_BATCH_SIZE
     seq_len = model_helpers.SMOKE_SEQ_LEN
     num_layers = 2
@@ -94,16 +95,17 @@ def gpt_oss_20b_forward(ctx: context_lib.Context):
   return model, (), inputs
 
 
-@registry_lib.register_benchmark(stepper=step_lib.StepperType.TRAINING)
+@registry_lib.register_benchmark(
+    stepper=step_lib.StepperType.TRAINING,
+    presubmit=registry_lib.PresubmitPolicy.CPU_SMOKE_ONLY,
+    presubmit_reason=(
+        "GPT-OSS 20B training uses too much memory to run on TPUs with"
+        " smaller memory."
+    ),
+)
 def gpt_oss_20b_4_layers_training(ctx: context_lib.Context):
   """Benchmark factory for GPT-OSS 20B (4 Layers) training."""
-  if model_helpers.presubmit_smoke_or_raise(
-      ctx,
-      unsupported_reason=(
-          "GPT-OSS 20B training uses too much memory to run on TPUs with"
-          " smaller memory."
-      ),
-  ):
+  if model_helpers.is_presubmit_smoke(ctx):
     batch_size = model_helpers.SMOKE_BATCH_SIZE
     seq_len = model_helpers.SMOKE_SEQ_LEN
   else:
@@ -129,16 +131,16 @@ def gpt_oss_20b_4_layers_training(ctx: context_lib.Context):
 # --- GPT-OSS-120B ---
 
 
-@registry_lib.register_benchmark(stepper=step_lib.StepperType.FORWARD)
+@registry_lib.register_benchmark(
+    stepper=step_lib.StepperType.FORWARD,
+    presubmit=registry_lib.PresubmitPolicy.CPU_SMOKE_ONLY,
+    presubmit_reason=(
+        "GPT-OSS 120B uses too much memory to run on TPUs with smaller memory."
+    ),
+)
 def gpt_oss_120b_4_layers_forward(ctx: context_lib.Context):
   """Benchmark factory for GPT-OSS 120B (4 Layers) forward."""
-  if model_helpers.presubmit_smoke_or_raise(
-      ctx,
-      unsupported_reason=(
-          "GPT-OSS 120B uses too much memory to run on TPUs with smaller"
-          " memory."
-      ),
-  ):
+  if model_helpers.is_presubmit_smoke(ctx):
     batch_size = model_helpers.SMOKE_BATCH_SIZE
     seq_len = model_helpers.SMOKE_SEQ_LEN
   else:
@@ -155,16 +157,17 @@ def gpt_oss_120b_4_layers_forward(ctx: context_lib.Context):
   return model, (), inputs
 
 
-@registry_lib.register_benchmark(stepper=step_lib.StepperType.TRAINING)
+@registry_lib.register_benchmark(
+    stepper=step_lib.StepperType.TRAINING,
+    presubmit=registry_lib.PresubmitPolicy.CPU_SMOKE_ONLY,
+    presubmit_reason=(
+        "GPT-OSS 120B training uses too much memory to run on TPUs with"
+        " smaller memory."
+    ),
+)
 def gpt_oss_120b_2_layers_training(ctx: context_lib.Context):
   """Benchmark factory for GPT-OSS 120B (2 Layers) training."""
-  if model_helpers.presubmit_smoke_or_raise(
-      ctx,
-      unsupported_reason=(
-          "GPT-OSS 120B training uses too much memory to run on TPUs with"
-          " smaller memory."
-      ),
-  ):
+  if model_helpers.is_presubmit_smoke(ctx):
     batch_size = model_helpers.SMOKE_BATCH_SIZE
     seq_len = model_helpers.SMOKE_SEQ_LEN
   else:

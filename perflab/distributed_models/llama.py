@@ -147,7 +147,10 @@ def _load_meta_llama(
     torch.set_default_dtype(prev_dtype)
 
 
-@registry_lib.register_benchmark(stepper=step_lib.StepperType.FORWARD)
+@registry_lib.register_benchmark(
+    stepper=step_lib.StepperType.FORWARD,
+    presubmit=registry_lib.PresubmitPolicy.RUN,
+)
 def meta_llama_8b_forward(ctx: context_lib.Context):
   """Benchmark factory for Meta Llama 3.2 8B forward across single-host and multi-host slices."""
   supported = [

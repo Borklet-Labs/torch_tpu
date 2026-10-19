@@ -65,7 +65,10 @@ def _load_hf_qwen(
 # --- Qwen3 0.6B ---
 
 
-@registry_lib.register_benchmark(stepper=step_lib.StepperType.FORWARD)
+@registry_lib.register_benchmark(
+    stepper=step_lib.StepperType.FORWARD,
+    presubmit=registry_lib.PresubmitPolicy.RUN,
+)
 def qwen3_0_6b_forward(ctx: context_lib.Context):
   """Benchmark factory for Qwen3-0.6B forward."""
   if ctx.run_scope == context_lib.RunScope.PRESUBMIT:
@@ -88,7 +91,10 @@ def qwen3_0_6b_forward(ctx: context_lib.Context):
   return model, (), inputs
 
 
-@registry_lib.register_benchmark(stepper=step_lib.StepperType.TRAINING)
+@registry_lib.register_benchmark(
+    stepper=step_lib.StepperType.TRAINING,
+    presubmit=registry_lib.PresubmitPolicy.RUN,
+)
 def qwen3_0_6b_training(ctx: context_lib.Context):
   """Benchmark factory for Qwen3-0.6B training."""
   if ctx.run_scope == context_lib.RunScope.PRESUBMIT:
@@ -118,7 +124,9 @@ def qwen3_0_6b_training(ctx: context_lib.Context):
 
 
 @registry_lib.register_benchmark(
-    stepper=step_lib.StepperType.DECODER_ONLY_DECODE
+    stepper=step_lib.StepperType.DECODER_ONLY_DECODE,
+    # Builds the same (full-size) model in every scope.
+    presubmit=registry_lib.PresubmitPolicy.RUN,
 )
 def qwen3_0_6b_decode(ctx):
   """Benchmark factory for Qwen3-0.6B decode."""
@@ -129,7 +137,10 @@ def qwen3_0_6b_decode(ctx):
 # --- Qwen3 1.7B ---
 
 
-@registry_lib.register_benchmark(stepper=step_lib.StepperType.FORWARD)
+@registry_lib.register_benchmark(
+    stepper=step_lib.StepperType.FORWARD,
+    presubmit=registry_lib.PresubmitPolicy.RUN,
+)
 def qwen3_1_7b_forward(ctx: context_lib.Context):
   """Benchmark factory for Qwen3-1.7B forward."""
   if ctx.run_scope == context_lib.RunScope.PRESUBMIT:
@@ -152,7 +163,10 @@ def qwen3_1_7b_forward(ctx: context_lib.Context):
   return model, (), inputs
 
 
-@registry_lib.register_benchmark(stepper=step_lib.StepperType.TRAINING)
+@registry_lib.register_benchmark(
+    stepper=step_lib.StepperType.TRAINING,
+    presubmit=registry_lib.PresubmitPolicy.RUN,
+)
 def qwen3_1_7b_training(ctx: context_lib.Context):
   """Benchmark factory for Qwen3-1.7B training."""
   if ctx.run_scope == context_lib.RunScope.PRESUBMIT:
@@ -184,7 +198,10 @@ def qwen3_1_7b_training(ctx: context_lib.Context):
 # --- Qwen3 4B ---
 
 
-@registry_lib.register_benchmark(stepper=step_lib.StepperType.FORWARD)
+@registry_lib.register_benchmark(
+    stepper=step_lib.StepperType.FORWARD,
+    presubmit=registry_lib.PresubmitPolicy.RUN,
+)
 def qwen3_4b_forward(ctx: context_lib.Context):
   """Benchmark factory for Qwen3-4B forward."""
   if ctx.run_scope == context_lib.RunScope.PRESUBMIT:
@@ -207,7 +224,10 @@ def qwen3_4b_forward(ctx: context_lib.Context):
   return model, (), inputs
 
 
-@registry_lib.register_benchmark(stepper=step_lib.StepperType.TRAINING)
+@registry_lib.register_benchmark(
+    stepper=step_lib.StepperType.TRAINING,
+    presubmit=registry_lib.PresubmitPolicy.RUN,
+)
 def qwen3_4b_training(ctx: context_lib.Context):
   """Benchmark factory for Qwen3-4B training."""
   if ctx.run_scope == context_lib.RunScope.PRESUBMIT:
@@ -239,7 +259,10 @@ def qwen3_4b_training(ctx: context_lib.Context):
 # --- Qwen3 8B ---
 
 
-@registry_lib.register_benchmark(stepper=step_lib.StepperType.FORWARD)
+@registry_lib.register_benchmark(
+    stepper=step_lib.StepperType.FORWARD,
+    presubmit=registry_lib.PresubmitPolicy.RUN,
+)
 def qwen3_8b_forward(ctx: context_lib.Context):
   """Benchmark factory for Qwen3-8B forward."""
   if ctx.run_scope == context_lib.RunScope.PRESUBMIT:
@@ -265,7 +288,10 @@ def qwen3_8b_forward(ctx: context_lib.Context):
 # --- Qwen3-Coder-30B MoE ---
 
 
-@registry_lib.register_benchmark(stepper=step_lib.StepperType.FORWARD)
+@registry_lib.register_benchmark(
+    stepper=step_lib.StepperType.FORWARD,
+    presubmit=registry_lib.PresubmitPolicy.RUN,
+)
 def qwen3_coder_30b_moe_forward(ctx: context_lib.Context):
   """Benchmark factory for Qwen3-Coder-30B-A3B forward."""
   if ctx.run_scope == context_lib.RunScope.PRESUBMIT:
@@ -291,16 +317,16 @@ def qwen3_coder_30b_moe_forward(ctx: context_lib.Context):
 # --- Qwen3.5-397B MoE (4 Layers) ---
 
 
-@registry_lib.register_benchmark(stepper=step_lib.StepperType.FORWARD)
+@registry_lib.register_benchmark(
+    stepper=step_lib.StepperType.FORWARD,
+    presubmit=registry_lib.PresubmitPolicy.CPU_SMOKE_ONLY,
+    presubmit_reason=(
+        "Qwen3.5-397B uses too much memory to run on TPUs with smaller memory."
+    ),
+)
 def qwen3_5_397b_4_layers_forward(ctx: context_lib.Context):
   """Benchmark factory for Qwen3.5-397B-A17B (4 Layers) MoE forward."""
-  if model_helpers.presubmit_smoke_or_raise(
-      ctx,
-      unsupported_reason=(
-          "Qwen3.5-397B uses too much memory to run on TPUs with smaller"
-          " memory."
-      ),
-  ):
+  if model_helpers.is_presubmit_smoke(ctx):
     batch_size = model_helpers.SMOKE_BATCH_SIZE
     seq_len = model_helpers.SMOKE_SEQ_LEN
   else:

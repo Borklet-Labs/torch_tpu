@@ -14,6 +14,7 @@
 
 """Provides logic to resolve benchmark cases."""
 
+import collections
 from collections.abc import Iterable, Iterator, Mapping, MutableMapping, Sequence
 import hashlib
 import os
@@ -22,8 +23,10 @@ from typing import Any
 import unittest
 
 from absl import flags
+from absl import logging
 from absl.testing import absltest
 from perflab import common
+from perflab import context as context_lib
 from perflab import flags as flags_lib
 from perflab import known_failures
 from perflab import mode as mode_lib
@@ -407,6 +410,16 @@ def get_cases(
   Ordering uses a deterministic hash (seeded by TORCH_TPU_BENCHMARK_ORDER_SEED
   when set) so all shards agree on the partition without alphabetical tail bias.
 
+  Likewise, in presubmit scope (`--run_scope=presubmit`), benchmarks whose
+  `PresubmitPolicy` keeps them out of this run emit no cases at all (see
+  `get_presubmit_skip_reason`), rather than cases that `get_skip_reason` skips.
+  Otherwise every presubmit-scope run would list hundreds of generated
+  benchmarks, each in every run mode, as skipped cases. Collection usually runs
+  at import, before flag parsing, so this reads `--run_scope` and
+  `--fake_tensor_mode` with `flags_lib.collection_flag_values`, as
+  `gen_benchmarks` does to register benchmarks. The benchmarks left out, and
+  why, are logged once per call.
+
   Args:
     platform: Target hardware platform on which the benchmarks will run.
     framework: Execution framework (e.g. TORCH or TORCHAX) filtering modes.
@@ -418,15 +431,64 @@ def get_cases(
   """
   if order_seed is None:
     order_seed = _get_order_seed()
+  run_scope, fake_tensor_mode = flags_lib.collection_flag_values()
   target_kind = target_lib.make_target(platform).device_kind
   ordered_names = sorted(
       registry_lib.REGISTRY,
       key=lambda name: _case_order_key(name, order_seed),
   )
+  # The names of the benchmarks left out, by presubmit policy and reason.
+  excluded: dict[tuple[str, str | None], list[str]] = collections.defaultdict(
+      list
+  )
   for name in ordered_names:
     spec = registry_lib.REGISTRY[name]
+    if (
+        run_scope is context_lib.RunScope.PRESUBMIT
+        and get_presubmit_skip_reason(spec, fake_tensor_mode=fake_tensor_mode)
+        is not None
+    ):
+      excluded[(spec.presubmit.name, spec.presubmit_reason)].append(spec.name)
+      continue
     for mode in mode_lib.modes_for(framework, target_kind):
       yield f"{spec.name}_{mode.value}", spec, mode
+  if excluded:
+    logging.info(
+        "Left %d benchmarks out of this presubmit-scope run"
+        " (--fake_tensor_mode=%s) for their presubmit policy:\n%s",
+        sum(len(names) for names in excluded.values()),
+        fake_tensor_mode,
+        "\n".join(
+            f"  {policy} ({reason}): {', '.join(sorted(names))}"
+            for (policy, reason), names in sorted(excluded.items())
+        ),
+    )
+
+
+def get_presubmit_skip_reason(
+    spec: registry_lib.BenchmarkSpec, *, fake_tensor_mode: bool
+) -> str | None:
+  """Returns why `spec` does not run in this presubmit-scope run, or None.
+
+  Args:
+    spec: Benchmark specification.
+    fake_tensor_mode: Whether this run is the FakeTensorMode CPU smoke.
+  """
+  if spec.presubmit is registry_lib.PresubmitPolicy.SKIP:
+    return (
+        f"Benchmark {spec.name} does not run in presubmit scope:"
+        f" {spec.presubmit_reason}"
+    )
+  if (
+      spec.presubmit is registry_lib.PresubmitPolicy.CPU_SMOKE_ONLY
+      and not fake_tensor_mode
+  ):
+    return (
+        f"Benchmark {spec.name} runs in presubmit scope only in the"
+        " FakeTensorMode CPU smoke (--fake_tensor_mode):"
+        f" {spec.presubmit_reason}"
+    )
+  return None
 
 
 def get_skip_reason(
@@ -438,8 +500,9 @@ def get_skip_reason(
 ) -> str | None:
   """Returns why a case should be skipped, or None if it should run.
 
-  A case is skipped if it matches an entry in `known_failures.KNOWN_FAILURES` or
-  if `spec.skipped_run_modes` lists `mode`.
+  A case is skipped if it matches an entry in `known_failures.KNOWN_FAILURES`,
+  if `spec.skipped_run_modes` lists `mode`, or if, in presubmit scope, the
+  benchmark's `PresubmitPolicy` keeps it out of this run.
   """
   failure_reason = known_failures.get_known_failure_reason(
       spec.name, framework=framework, device_kind=device_kind, run_mode=mode
@@ -448,4 +511,7 @@ def get_skip_reason(
     return f"Benchmark {spec.name} is known to fail: {failure_reason}"
   if mode.value in spec.skipped_run_modes:
     return f"Benchmark {spec.name} explicitly skips run mode {mode.value}"
+  run_scope, fake_tensor_mode = flags_lib.collection_flag_values()
+  if run_scope is context_lib.RunScope.PRESUBMIT:
+    return get_presubmit_skip_reason(spec, fake_tensor_mode=fake_tensor_mode)
   return None

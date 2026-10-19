@@ -21,7 +21,6 @@ from perflab import context as context_lib
 from perflab import model_helpers
 from perflab import registry as registry_lib
 from perflab import step_lib
-from perflab import target as target_lib
 from perflab import torch_device_ops
 
 
@@ -56,14 +55,16 @@ def _load_hf_nemotron(
   )
 
 
-@registry_lib.register_benchmark(stepper=step_lib.StepperType.FORWARD)
-def nemotron_3_nano_30b_6_layers_forward(ctx: context_lib.Context):
-  """Benchmark factory for NVIDIA-Nemotron-3-Nano-30B-A3B-BF16 (6 Layers) forward."""
-  if ctx.run_scope == context_lib.RunScope.PRESUBMIT:
-    raise target_lib.UnsupportedBenchmark(
+@registry_lib.register_benchmark(
+    stepper=step_lib.StepperType.FORWARD,
+    presubmit=registry_lib.PresubmitPolicy.SKIP,
+    presubmit_reason=(
         "Nemotron-3-Nano-30B uses too much memory to run on TPUs with smaller"
         " memory."
-    )
+    ),
+)
+def nemotron_3_nano_30b_6_layers_forward(ctx: context_lib.Context):
+  """Benchmark factory for NVIDIA-Nemotron-3-Nano-30B-A3B-BF16 (6 Layers) forward."""
   model, inputs = _load_hf_nemotron(
       ctx,
       "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",

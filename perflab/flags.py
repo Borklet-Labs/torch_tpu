@@ -14,7 +14,11 @@
 
 """Common command-line flags for benchmark tests."""
 
+import copy
+import sys
+
 from absl import flags
+from perflab import context as context_lib
 from perflab import target as target_lib
 
 SKIP_BEHAVIOR = flags.DEFINE_enum(  # PYTHON_FLAG_OK=benchmark
@@ -88,3 +92,27 @@ def _check_fake_tensor_mode(fake_tensor_mode: bool) -> bool:
 # Registered with the flag so that every binary that accepts it fails at flag
 # parsing, before any benchmark is built or measured.
 flags.register_validator(FAKE_TENSOR_MODE, _check_fake_tensor_mode)
+
+
+def collection_flag_values() -> tuple[context_lib.RunScope, bool]:
+  """Returns the values of `--run_scope` and `--fake_tensor_mode`.
+
+  Benchmark binaries collect their test cases at import time, usually before
+  `flags.FLAGS` is parsed. These two flags are then parsed from `sys.argv` by
+  absl's parser, so `--`, `--noflag`, `=false` and `--flagfile` work as in the
+  full parse, but into a scratch `FlagValues` that holds copies of just them.
+  Parsing `flags.FLAGS` itself here would mark it parsed with only the flags
+  defined so far, and the full parse in `app.run` would then append the values
+  of multi-value flags a second time. An invalid `--fake_tensor_mode` still
+  fails the full parse.
+  """
+  if flags.FLAGS.is_parsed():
+    return context_lib.RUN_SCOPE.value, FAKE_TENSOR_MODE.value
+  flag_values = flags.FlagValues()
+  for flag in (context_lib.RUN_SCOPE, FAKE_TENSOR_MODE):
+    flag_values[flag.name] = copy.deepcopy(flags.FLAGS[flag.name])
+  flag_values(sys.argv, known_only=True)
+  return (
+      getattr(flag_values, context_lib.RUN_SCOPE.name),
+      getattr(flag_values, FAKE_TENSOR_MODE.name),
+  )

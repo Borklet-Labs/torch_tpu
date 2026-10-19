@@ -16,7 +16,8 @@
 
 Large models run in presubmit scope only under the FakeTensorMode CPU smoke
 (`--fake_tensor_mode`), which allocates no storage. Without it they would build
-their full weights on the host, so they stay unsupported.
+their full weights on the host, so their `PresubmitPolicy.CPU_SMOKE_ONLY` keeps
+them out of every other presubmit-scope run.
 """
 
 import os
@@ -27,6 +28,7 @@ from absl.testing import flagsaver
 from absl.testing import parameterized
 import torch
 from perflab import context as context_lib
+from perflab import registry as registry_lib
 from perflab import target as target_lib
 from perflab.models import gemma
 from perflab.models import gpt
@@ -106,16 +108,13 @@ class LargeModelPresubmitScopeTest(seed_test_utils.RepeatableTest):
     )
 
   @parameterized.named_parameters(*_LARGE_MODEL_CASES)
-  @flagsaver.flagsaver(fake_tensor_mode=False)
-  def test_cpu_presubmit_without_fake_tensor_mode_raises(
+  def test_runs_in_presubmit_scope_only_in_cpu_smoke(
       self, factory, module, loader_name
   ):
-    with mock.patch.object(module, loader_name) as load:
-      with self.assertRaisesRegex(
-          target_lib.UnsupportedBenchmark, "uses too much memory"
-      ):
-        factory(_cpu_presubmit_context())
-    load.assert_not_called()
+    del module, loader_name  # Unused.
+    spec = registry_lib.REGISTRY[factory.__name__]
+    self.assertIs(spec.presubmit, registry_lib.PresubmitPolicy.CPU_SMOKE_ONLY)
+    self.assertIn("uses too much memory", spec.presubmit_reason)
 
   @parameterized.named_parameters(*_LARGE_MODEL_CASES)
   @flagsaver.flagsaver(fake_tensor_mode=True)

@@ -27,9 +27,14 @@ Two rules the shape of this file encodes:
 
 A benchmark is expected to run every mode in its matrix cell like only compiled
 for torchax, eager/eager_optimized/compiled for TorchTPU.
+
+Every benchmark must also declare how it runs in presubmit scope
+(`PresubmitPolicy`), so that presubmit coverage is an explicit, reviewed
+decision. The run scope itself is still chosen per invocation.
 """
 
 import dataclasses
+import enum
 from typing import Any, Callable, Dict, Mapping, Tuple
 
 from perflab import compile as compile_lib
@@ -38,6 +43,34 @@ from perflab import target as target_lib
 
 # factory returns variable number of outputs (e.g., model, input_args, ...)
 Factory = Callable[..., Tuple[Any, ...]]
+
+
+class PresubmitPolicy(enum.Enum):
+  """How a benchmark runs in presubmit scope (`--run_scope=presubmit`).
+
+  Presubmit scope runs every benchmark once to catch breakages, so each
+  benchmark must say whether and how it fits there. Each policy runs the
+  benchmark in a different set of presubmit-scope runs; the harness, not the
+  factory, applies it.
+  """
+
+  # Runs in every presubmit-scope run. The factory must keep the workload small
+  # enough for presubmit, e.g. by building fewer layers, a shorter sequence or a
+  # smaller batch when `ctx.run_scope` is `RunScope.PRESUBMIT`.
+  RUN = "run"
+  # Too large to build for real in presubmit scope. Runs in presubmit scope only
+  # in the FakeTensorMode CPU smoke (`--fake_tensor_mode`), which allocates no
+  # storage. Requires a `presubmit_reason`.
+  CPU_SMOKE_ONLY = "cpu_smoke_only"
+  # Never runs in presubmit scope. Requires a `presubmit_reason`.
+  SKIP = "skip"
+
+
+# Policies that keep a benchmark out of all or part of presubmit, and so must
+# say why.
+_POLICIES_WITH_REASON = frozenset(
+    {PresubmitPolicy.CPU_SMOKE_ONLY, PresubmitPolicy.SKIP}
+)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -50,12 +83,33 @@ class BenchmarkSpec:
   name: str
   factory: Factory
   stepper: step_lib.StepperType
+  presubmit: PresubmitPolicy
   stepper_kwargs: Mapping[str, Any] = dataclasses.field(default_factory=dict)
   dtype: target_lib.DType = target_lib.DType.BF16
   compile_config: compile_lib.CompileConfig | None = None
   skipped_run_modes: frozenset[str] = dataclasses.field(
       default_factory=frozenset
   )
+  presubmit_reason: str | None = None
+
+  def __post_init__(self):
+    if not isinstance(self.presubmit, PresubmitPolicy):
+      raise TypeError(
+          f"Benchmark {self.name!r}: presubmit must be a PresubmitPolicy, got"
+          f" {self.presubmit!r}"
+      )
+    if self.presubmit in _POLICIES_WITH_REASON:
+      if not self.presubmit_reason:
+        raise ValueError(
+            f"Benchmark {self.name!r}: presubmit policy"
+            f" {self.presubmit.name} requires a presubmit_reason"
+        )
+    elif self.presubmit_reason is not None:
+      allowed = sorted(p.name for p in _POLICIES_WITH_REASON)
+      raise ValueError(
+          f"Benchmark {self.name!r}: presubmit_reason is only allowed with"
+          f" presubmit policies {allowed}, got {self.presubmit.name}"
+      )
 
 
 REGISTRY: Dict[str, BenchmarkSpec] = {}
@@ -69,6 +123,9 @@ def add_benchmark(
     compile_config: compile_lib.CompileConfig | None = None,
     name: str | None = None,
     skipped_run_modes: frozenset[str] | set[str] | None = None,
+    *,
+    presubmit: PresubmitPolicy,
+    presubmit_reason: str | None = None,
 ) -> None:
   """Adds a benchmark spec to REGISTRY.
 
@@ -81,6 +138,10 @@ def add_benchmark(
     name: Optional explicit name for the benchmark. If not provided, the
       factory's name is used.
     skipped_run_modes: Optional set of run modes to skip for this benchmark.
+    presubmit: How the benchmark runs in presubmit scope. Required.
+    presubmit_reason: Why the benchmark does not run (everywhere) in presubmit
+      scope. Required for `CPU_SMOKE_ONLY` and `SKIP`, and not allowed
+      otherwise.
   """
   if stepper_kwargs is None:
     stepper_kwargs = {}
@@ -104,6 +165,8 @@ def add_benchmark(
       dtype=dtype,
       compile_config=compile_config,
       skipped_run_modes=skipped_run_modes,
+      presubmit=presubmit,
+      presubmit_reason=presubmit_reason,
   )
 
 
@@ -113,6 +176,9 @@ def register_benchmark(
     dtype: target_lib.DType = target_lib.DType.BF16,
     compile_config: compile_lib.CompileConfig | None = None,
     skipped_run_modes: frozenset[str] | set[str] | None = None,
+    *,
+    presubmit: PresubmitPolicy,
+    presubmit_reason: str | None = None,
 ) -> Callable[[Factory], Factory]:
   """Decorator to wrap a benchmark factory and add its spec to REGISTRY.
 
@@ -122,6 +188,10 @@ def register_benchmark(
     dtype: The data type for running the benchmark (defaults to BF16).
     compile_config: Optional compile configuration (defaults to None).
     skipped_run_modes: Optional set of run modes to skip for this benchmark.
+    presubmit: How the benchmark runs in presubmit scope. Required.
+    presubmit_reason: Why the benchmark does not run (everywhere) in presubmit
+      scope. Required for `CPU_SMOKE_ONLY` and `SKIP`, and not allowed
+      otherwise.
 
   Returns:
     A decorator that registers the factory function and returns it unchanged.
@@ -137,6 +207,8 @@ def register_benchmark(
         dtype=dtype,
         compile_config=compile_config,
         skipped_run_modes=skipped_run_modes,
+        presubmit=presubmit,
+        presubmit_reason=presubmit_reason,
     )
     return factory
 

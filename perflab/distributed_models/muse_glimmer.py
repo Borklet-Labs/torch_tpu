@@ -121,6 +121,7 @@ def build_model(
         "eager_optimized",
         "eager_defer_never_and_launch_blocking",
     },
+    presubmit=registry_lib.PresubmitPolicy.RUN,
 )
 def muse_glimmer_30b_4_layers_simple_fsdp_training(
     ctx: context_lib.Context,

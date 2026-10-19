@@ -14,7 +14,9 @@
 
 """Tests for perflab/flags.py."""
 
+import copy
 import os
+import sys
 from unittest import mock
 
 from absl import flags
@@ -50,6 +52,72 @@ class FakeTensorModeValidatorTest(seed_test_utils.RepeatableTest):
       ):
         with flagsaver.flagsaver((flags_lib.FAKE_TENSOR_MODE, True)):
           pass
+
+
+class CollectionFlagValuesTest(seed_test_utils.RepeatableTest):
+
+  def _values_before_parsing(
+      self, argv: list[str]
+  ) -> tuple[context_lib.RunScope, bool]:
+    # Unparsed flags, as when a benchmark binary collects its cases at import.
+    import_time_flags = flags.FlagValues()
+    for flag in (context_lib.RUN_SCOPE, flags_lib.FAKE_TENSOR_MODE):
+      import_time_flags[flag.name] = copy.deepcopy(flags.FLAGS[flag.name])
+    with (
+        mock.patch.object(flags, "FLAGS", import_time_flags),
+        mock.patch.object(sys, "argv", ["prog", *argv]),
+    ):
+      values = flags_lib.collection_flag_values()
+      self.assertFalse(import_time_flags.is_parsed())
+      return values
+
+  def test_reads_parsed_flags(self):
+    with flagsaver.flagsaver(
+        (context_lib.RUN_SCOPE, context_lib.RunScope.PRESUBMIT),
+        (flags_lib.FAKE_TENSOR_MODE, False),
+    ):
+      self.assertEqual(
+          flags_lib.collection_flag_values(),
+          (context_lib.RunScope.PRESUBMIT, False),
+      )
+
+  def test_defaults_before_parsing(self):
+    self.assertEqual(
+        self._values_before_parsing([]), (context_lib.RunScope.FULL, False)
+    )
+
+  def test_reads_argv_before_parsing(self):
+    self.assertEqual(
+        self._values_before_parsing(
+            ["--run_scope=presubmit", "--fake_tensor_mode"]
+        ),
+        (context_lib.RunScope.PRESUBMIT, True),
+    )
+
+  @parameterized.named_parameters(
+      {
+          "testcase_name": "after_double_dash",
+          "argv": ["--run_scope=presubmit", "--", "--fake_tensor_mode"],
+      },
+      {
+          "testcase_name": "negated",
+          "argv": [
+              "--run_scope",
+              "presubmit",
+              "--fake_tensor_mode",
+              "--nofake_tensor_mode",
+          ],
+      },
+      {
+          "testcase_name": "false",
+          "argv": ["--run_scope=presubmit", "--fake_tensor_mode=false"],
+      },
+  )
+  def test_parses_argv_like_absl_before_parsing(self, argv: list[str]):
+    self.assertEqual(
+        self._values_before_parsing(argv),
+        (context_lib.RunScope.PRESUBMIT, False),
+    )
 
 
 if __name__ == "__main__":

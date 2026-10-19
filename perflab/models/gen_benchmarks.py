@@ -15,12 +15,9 @@
 """Dynamic registration of benchmarks against static model list."""
 
 from collections.abc import Mapping
-import copy
 import functools
 import itertools
-import sys
 
-from absl import flags
 import torch
 from perflab import common
 from perflab import context as context_lib
@@ -65,6 +62,10 @@ _FAKE_TENSOR_MODE_DATA_DEPENDENT: frozenset[str] = frozenset({
     "zoedepth_nyu_kitti_forward_gen",
     # go/keep-sorted end
 })
+
+_PRESUBMIT_REASON = (
+    "Generated benchmark; too many to run on accelerators in presubmit scope."
+)
 
 
 @functools.cache
@@ -143,38 +144,15 @@ def _iter_gen_benchmark_specs():
     yield model_gen_spec, is_training, step
 
 
-def _registration_flags() -> tuple[context_lib.RunScope, bool]:
-  """Returns the values of `--run_scope` and `--fake_tensor_mode`.
-
-  Generated benchmarks are registered at import time, usually before
-  `flags.FLAGS` is parsed. These two flags are then parsed from `sys.argv` by
-  absl's parser, so `--`, `--noflag`, `=false` and `--flagfile` work as in the
-  full parse, but into a scratch `FlagValues` that holds copies of just them.
-  Parsing `flags.FLAGS` itself here would mark it parsed with only the flags
-  defined so far, and the full parse in `app.run` would then append the values
-  of multi-value flags a second time. An invalid `--fake_tensor_mode` still
-  fails the full parse.
-  """
-  if flags.FLAGS.is_parsed():
-    return context_lib.RUN_SCOPE.value, mode_lib.fake_tensor_smoke_enabled()
-  flag_values = flags.FlagValues()
-  for flag in (context_lib.RUN_SCOPE, flags_lib.FAKE_TENSOR_MODE):
-    flag_values[flag.name] = copy.deepcopy(flags.FLAGS[flag.name])
-  flag_values(sys.argv, known_only=True)
-  return (
-      getattr(flag_values, context_lib.RUN_SCOPE.name),
-      getattr(flag_values, flags_lib.FAKE_TENSOR_MODE.name),
-  )
-
-
 def _register_gen_benchmarks():
-  """Registers generated benchmarks in the global registry."""
-  run_scope, fake_tensor_mode = _registration_flags()
+  """Registers generated benchmarks in the global registry.
 
-  if run_scope is context_lib.RunScope.PRESUBMIT and not fake_tensor_mode:
-    # We will need to split the target up to prevent timeouts.
-    return
-
+  Every generated benchmark is registered regardless of the run scope, with
+  `PresubmitPolicy.CPU_SMOKE_ONLY`. Under `--fake_tensor_mode`, in any run
+  scope, only the benchmarks that the FakeTensorMode CPU smoke can build are
+  registered (see `fake_tensor_smoke_skip_reason`).
+  """
+  _, fake_tensor_mode = flags_lib.collection_flag_values()
   for model_gen_spec, is_training, step in _iter_gen_benchmark_specs():
     name = model_gen_spec.benchmark_name(is_training=is_training, suffix="gen")
     if fake_tensor_mode and fake_tensor_smoke_skip_reason(
@@ -207,6 +185,8 @@ def _register_gen_benchmarks():
         stepper_kwargs=step_kwargs,
         name=name,
         skipped_run_modes=skipped_run_modes,
+        presubmit=registry_lib.PresubmitPolicy.CPU_SMOKE_ONLY,
+        presubmit_reason=_PRESUBMIT_REASON,
     )
 
 

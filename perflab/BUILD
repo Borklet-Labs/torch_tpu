@@ -125,6 +125,7 @@ torch_tpu_py_library(
     name = "flags",
     srcs = ["flags.py"],
     deps = [
+        ":context",
         ":target",
         "//shims/absl_py/flags",
     ],
@@ -262,6 +263,7 @@ torch_tpu_py_library(
     srcs = ["cases.py"],
     deps = [
         ":common",
+        ":context",
         ":flags",
         ":known_failures",
         ":mode",
@@ -269,6 +271,7 @@ torch_tpu_py_library(
         ":step_lib",
         ":target",
         "//shims/absl_py/flags",
+        "//shims/absl_py/logging",
         "//shims/absl_py/testing:absltest",
     ],
 )
@@ -289,7 +292,6 @@ torch_tpu_py_library(
     deps = [
         ":context",
         ":mode",
-        ":target",
         "//shims/torch:pytorch",
         "//tests:module_registry",
     ],

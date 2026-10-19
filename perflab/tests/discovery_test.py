@@ -84,7 +84,8 @@ class DiscoveryTest(seed_test_utils.RepeatableTest):
               from perflab import step_lib
 
               @registry_lib.register_benchmark(
-                  stepper=step_lib.StepperType.FORWARD
+                  stepper=step_lib.StepperType.FORWARD,
+                  presubmit=registry_lib.PresubmitPolicy.RUN,
               )
               def discovered_probe():
                 return ("m", (), {}, None)
