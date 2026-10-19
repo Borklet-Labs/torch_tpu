@@ -1225,14 +1225,15 @@ presubmit {
     # For now, we only disallow cc_library and cc_test. We will also disallow
     # cc_binary after we define a wrapper for it.
     prohibited_regexp: "\\b(cc_library|cc_test)\\("
-    suppression_regexp: "\\bALLOW_CC_TARGETS=.+"
+    match_multi_line: true
+    suppression_regexp: "\\b(cc_library|cc_test)\\((.*# ALLOW_CC_TARGETS=.+|\\n\\s*# ALLOW_CC_TARGETS=.+)"
     failure_message:
       "Please use torch_tpu_cc_library instead of "
       "cc_library, and use torch_tpu_cc_test instead of cc_test. This enforces "
       "that the code follows best practices consistently. "
       "If you have a legitimate reason to bypass this check, add "
       "a comment `# ALLOW_CC_TARGETS=<reason>` on the same line as "
-      "the `cc_library` or `cc_test`."
+      "(or the first line after) the `cc_library` or `cc_test`."
     check_delta_only: true  # Only check new/changed lines.
   }
 
