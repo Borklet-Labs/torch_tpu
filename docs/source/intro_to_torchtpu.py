@@ -86,17 +86,17 @@ def _(mo):
     * **Custom TPU kernels:** Author custom kernels in [Pallas](https://docs.jax.dev/en/latest/pallas/index.html) (callable via `torch.tpu.pallas.jax_op` with direct inter-chip RDMA collectives support), write tile-based kernels using the experimental [Helion](https://pytorch.org/blog/helion/) DSL, or import optimized pre-built TPU kernels from Tokamax.
     * **Ecosystem integrations:** Works out of the box with standard PyTorch serving and training frameworks and profiling suites, including `torch.profiler` (TensorBoard/XProf), vLLM, SGLang, TorchTitan, Ray, and TorchRec.
 
-    ## Known limitations and future work
+    ## Limitations and future work
 
-    As an early product, TorchTPU does currently have known limitations that will be addressed over time. While our initial release delivers robust, out-of-the-box coverage for major workloads, TorchTPU is a collaborative, community-driven effort. Please review our [feature set and roadmap](./feature_set.md) to see what is on the horizon, or jump right in by [submitting PRs](https://github.com/google-pytorch/torch_tpu) on GitHub to help us resolve these limitations. This is a community project, and we'd love to hear from you and invite you to collaborate with us via [GitHub](https://github.com/google-pytorch/torch_tpu), [https://discuss.pytorch.org/c/tpu](https://discuss.pytorch.org/c/tpu), [https://dev-discuss.pytorch.org/c/tpu/](https://dev-discuss.pytorch.org/c/tpu/) and [torchtpu-feedback@google.com](mailto:torchtpu-feedback@google.com).
+    As any product, TorchTPU does have known limitations, which will be addressed over time. While our initial release delivers robust, out-of-the-box coverage for major workloads, TorchTPU is a collaborative, community-driven effort. Please review our [feature set and roadmap](./feature_set.md) to see what is on the horizon, or jump right in by [submitting PRs](https://github.com/google-pytorch/torch_tpu) on GitHub to help us resolve these limitations. This is a community project, and we'd love to hear from you and invite you to collaborate with us via [GitHub](https://github.com/google-pytorch/torch_tpu), [https://discuss.pytorch.org/c/tpu](https://discuss.pytorch.org/c/tpu), [https://dev-discuss.pytorch.org/c/tpu/](https://dev-discuss.pytorch.org/c/tpu/) and [torchtpu-feedback@google.com](mailto:torchtpu-feedback@google.com).
 
     * Dynamic Shapes cause recompilations
       * `torch.compile` sets `dynamic=False` by default on TorchTPU. `dynamic=None` or `dynamic=True` are not yet supported for production. [See discussion on dynamic shapes](./dynamic_shapes.md)
       * As example, running decode/generate step on Hugging Face LLMs will involve recompilations at each step unless bounded dynamism is enabled.
     * View ops may be expensive on TPU (see [TorchTPU memory model](./torchtpu_memory_model.md)
     * MPMD with collectives is supported for functionality, but it will not reach peak performance yet. Collective overlap with compute has [some constraints](./distributed_support.md):
-      * Full stream support with offload will come in the near future.
-      * Use SimpleFSDP with `torch.compile()` as opposed to FSDPv2 with eager or `torch.compile` mode [FSDP best practices](./case_studies_fsdp.md)
+      * Full stream support with SparseCore offload will come in the near future.
+      * Use SimpleFSDP with `torch.compile()` as opposed to FSDPv2 with eager or `torch.compile` see [FSDP best practices](./case_studies_fsdp.md)
       * Use the `spmd_safe` decorator on regions **users guarantee** to be exactly the same is the recommended way to get peak performance from XLA optimizations on communicating modules (i.e., to enable compute/communication overlap)
     * TorchTPU does not currently have native FlexAttention support
     * Current generation TPUs do not support matmul accumulation in lower precision than fp32 (e.g., tf32).

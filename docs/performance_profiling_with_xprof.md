@@ -4,24 +4,17 @@ Understanding where time is spent is critical for training large models on TPU.
 This guide covers how to capture execution traces with the TPU Profiler and
 analyze them in TensorBoard.
 
-!!! warning
+> **Warning:** **Prerequisite:** TensorBoard requires `setuptools<81`. The
+> latest version removes `pkg_resources`, which TensorBoard depends on. Install
+> it first:
+>
+> ```shell
+> pip install "setuptools<81"
+> pip install xprof tensorboard
+> ```
 
-````
-**Prerequisite:** TensorBoard requires `setuptools<81`. The latest
-version removes `pkg_resources`, which TensorBoard depends on. Install it
-first:
-```shell
-pip install "setuptools<81"
-pip install xprof tensorboard
-```
-````
-
-!!! note
-
-```
-**PyTorch version:** the native `torch.profiler` TPU integration requires
-PyTorch 2.12 or newer.
-```
+> **Note:** **PyTorch version:** the native `torch.profiler` TPU integration
+> requires PyTorch 2.12 or newer.
 
 ## 1. The TPU profiler
 
@@ -100,12 +93,8 @@ points:
 4.  (Optional) Pass `experimental_config` with `TpuProfilerConfig` to control
     tracer levels
 
-!!! important
-
-```
-The profiler adds overhead. Profile only a representative subset of steps (e.g.,
-100–1000), not your entire training run.
-```
+> **Important:** The profiler adds overhead. Profile only a representative
+> subset of steps (e.g., 100–1000), not your entire training run.
 
 ```python
 # Build a small model and optimizer
@@ -174,12 +163,8 @@ xprof --logdir=/tmp/profiler_output --port=6006
 **Step 3:** Open `http://localhost:6006` in your browser and select the
 **"Profile"** tab.
 
-!!! note
-
-```
-You must run TensorBoard from the VS Code integrated terminal so that port
-forwarding works automatically.
-```
+> **Note:** You must run TensorBoard from the VS Code integrated terminal so
+> that port forwarding works automatically.
 
 **On GKE:** write the trace directory to a Cloud Storage bucket mounted with the
 [Cloud Storage FUSE CSI driver](https://docs.cloud.google.com/kubernetes-engine/docs/how-to/persistent-volumes/cloud-storage-fuse-csi-driver)
@@ -243,12 +228,9 @@ Kernel profiling enables the collection of fine-grained hardware performance
 counters (e.g., for Pallas kernels) to diagnose performance bottlenecks that are
 otherwise invisible in standard event traces.
 
-!!! note
-
-```
-Fine-grained performance counter sampling is an advanced hardware feature
-available for **Ironwood (TPU v7/TPU7x)** and subsequent TPU generations.
-```
+> **Note:** Fine-grained performance counter sampling is an advanced hardware
+> feature available for **Ironwood (TPU v7/TPU7x)** and subsequent TPU
+> generations.
 
 ### Enabling performance counters
 
@@ -285,8 +267,5 @@ Step        | Command / Code
 **View**    | `tensorboard --logdir=/tmp/profiler_output`
 <!-- mdformat on -->
 
-!!! note
-
-```
-Profile only 100–1000 steps to keep trace files manageable. The profiler adds ~5–10% overhead per step.
-```
+> **Note:** Profile only 100–1000 steps to keep trace files manageable. The
+> profiler adds ~5–10% overhead per step.

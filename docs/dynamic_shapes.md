@@ -208,7 +208,7 @@ step (~100x faster) with zero recompilations:
     every subsequent step dispatches the pre-compiled XLA executable directly
     without recompiling.
 
-> [!TIP] If you already know which dimension will vary ahead of time, you can
+> **Tip:** If you already know which dimension will vary ahead of time, you can
 > call `torch._dynamo.mark_dynamic(kv_cache, 2, min=16, max=128)` before the
 > first step. This tells Dynamo to trace `dim=2` as dynamic immediately on Step
 > 1—skipping the initial static compilation on Step 1 and letting you specify

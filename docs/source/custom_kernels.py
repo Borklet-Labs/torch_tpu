@@ -126,9 +126,8 @@ def _(mo):
     you can use [Helion](https://helionlang.com/), a PyTorch-native DSL for
     kernel authoring.
 
-    !!! note
-        Helion support on TorchTPU is currently **experimental**. For production
-        workloads, use Tokamax or `torch.tpu.pallas.jax_op`.
+    > **Note:** Helion support on TorchTPU is currently **experimental**. For
+    > production workloads, use Tokamax or `torch.tpu.pallas.jax_op`.
 
     ### How to write a Helion kernel
 

@@ -60,14 +60,11 @@ You can configure matrix multiplication precision in two ways:
     warning (`TORCH_WARN_ONCE`). Keep the default `"medium"` mode unless you
     observe precision-related convergence issues.
 
-!!! note
-
-```
-Entering or exiting `torch.tpu.precision` introduces a `torch.compile`
-graph break. When using `torch.compile(..., fullgraph=True)`, set precision
-outside the compiled function with `torch.set_float32_matmul_precision(...)`
-or wrap the outer call in `with torch.tpu.precision(...):`.
-```
+> **Note:** Entering or exiting `torch.tpu.precision` introduces a
+> `torch.compile` graph break. When using `torch.compile(..., fullgraph=True)`,
+> set precision outside the compiled function with
+> `torch.set_float32_matmul_precision(...)` or wrap the outer call in `with
+> torch.tpu.precision(...):`.
 
 Use `torch.tpu.precision` to compare steady-state execution time across the
 three modes:
@@ -225,14 +222,10 @@ defaults to `False`):
     True` to allow the compiler to elide intermediate downcasts and keep fused
     intermediate results in `float32`.
 
-!!! important
-
-```
-Set `torch.tpu.allow_excess_precision` at the very beginning of your script
-before running or compiling any TPU operations. The XLA runtime locks this
-flag when the first compilation starts; attempting to change it to a
-different value afterward raises a `RuntimeError`.
-```
+> **Important:** Set `torch.tpu.allow_excess_precision` at the very beginning of
+> your script before running or compiling any TPU operations. The XLA runtime
+> locks this flag when the first compilation starts; attempting to change it to
+> a different value afterward raises a `RuntimeError`.
 
 ## Understand TPU MXU precision
 

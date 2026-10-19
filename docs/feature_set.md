@@ -15,9 +15,9 @@ two tiers:
     features. These are functional and available for early feedback, but may
     undergo behavioral refinement or API changes based on community input.
 
-!!! note TorchTPU is evolving rapidly in the open. For the most up-to-date
-status or to request specific features, visit our
-[GitHub](https://github.com/google-pytorch/torch_tpu).*
+> **Note:** TorchTPU is evolving rapidly in the open. For the most up-to-date
+> status or to request specific features, visit our
+> [GitHub](https://github.com/google-pytorch/torch_tpu).
 
 <!-- mdformat off(reason: standard GFM table rendering in Critique and Code Search) -->
 |  | **Validated** | **Experimental** |

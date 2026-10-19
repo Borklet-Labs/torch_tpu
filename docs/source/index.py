@@ -30,10 +30,10 @@ def _():
 def _(mo):
   mo.md(r"""
 <p align="center">
- <img src="images/torchtpu_banner.png" alt="TorchTPU" style="width: 70%;">
+ <img src="images/torchtpu_logo.avif" alt="TorchTPU" style="width: 100%;">
 </p>
 <p align="center">
-<a href="https://github.com/google-pytorch/torch_tpu"><b>GitHub</b></a> | <a href="https://discuss.pytorch.org/c/tpu/45"><b>Discussion Forum</b></a> | <a href="https://docs.cloud.google.com/tpu/docs/pytorch-stack"><b>PyTorch on TPU</b></a>
+<a href="https://github.com/google-pytorch/torch_tpu"><b>GitHub</b></a> | <a href="https://discuss.pytorch.org/c/tpu/45"><b>Discussion Forum</b></a> | <a href="https://docs.cloud.google.com/tpu/docs/pytorch-on-tpu"><b>PyTorch on TPU</b></a>
 </p>
 
 ## About
@@ -45,7 +45,7 @@ TorchTPU is an open-source, native PyTorch backend for Google Cloud TPUs, develo
 <!-- mdformat off(reason: preserve MkDocs grid card comments and 4-space list indentation) -->
 <!--mkdocs:<div class="grid cards two-columns" markdown>-->
 
-- **<!--mkdocs::material-rocket-launch:{ .lg .middle }--> Get Started**
+- **<!--mkdocs::material-rocket-launch:{ .lg .middle }--> Get started**
 
     Provision environments, understand fundamental architectures, and run your first workloads.
 
@@ -56,7 +56,7 @@ TorchTPU is an open-source, native PyTorch backend for Google Cloud TPUs, develo
     - [<!--mkdocs::octicons-arrow-right-24:--> API reference](api_reference.py): The TorchTPU API and environment variables for the current release.
     - [<!--mkdocs::octicons-arrow-right-24:--> TorchTPU FAQ](faq.py): Frequently asked questions about TorchTPU.
 
-- **<!--mkdocs::material-sine-wave:{ .lg .middle }--> In-Depth**
+- **<!--mkdocs::material-sine-wave:{ .lg .middle }--> In-depth architecture & core concepts**
 
     Deep-dive into the mechanics of memory layouts, execution engines, and distributed execution.
 
@@ -67,12 +67,12 @@ TorchTPU is an open-source, native PyTorch backend for Google Cloud TPUs, develo
     - [<!--mkdocs::octicons-arrow-right-24:--> Custom kernel support](custom_kernels.py): How to write custom kernels for TorchTPU.
     - [<!--mkdocs::octicons-arrow-right-24:--> Dynamic shapes](dynamic_shapes.py): Support for dynamic tensor shapes.
 
-- **<!--mkdocs::material-book-open-variant:{ .lg .middle }--> Case Studies**
+- **<!--mkdocs::material-book-open-variant:{ .lg .middle }--> Case studies**
 
     Explore practical examples of how to use TorchTPU to solve real-world problems.
 
     - [<!--mkdocs::octicons-arrow-right-24:--> FLUX Optimization](case_studies_flux.py): Example demonstrating how to identify and apply multiple optimizations on FLUX.
-    - [<!--mkdocs::octicons-arrow-right-24:--> Muse Glimmer 30B inference:](case_studies_muse_glimmer_30b_inference.py): Example of iterative decoding using real weights with static/dynamic KV cache.
+    - [<!--mkdocs::octicons-arrow-right-24:--> Muse Glimmer 30B inference](case_studies_muse_glimmer_30b_inference.py): Example of iterative decoding using real weights with static/dynamic KV cache.
     - [<!--mkdocs::octicons-arrow-right-24:--> Muse Glimmer 30B training](case_studies_muse_glimmer_30b_training.py): A training loop on a standalone implementation of Muse Glimmer 30B.
     - [<!--mkdocs::octicons-arrow-right-24:--> Using FSDP](case_studies_fsdp.py): The recommended approach to using FSDP for TorchTPU.
 

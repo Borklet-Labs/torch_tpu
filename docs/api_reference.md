@@ -13,9 +13,9 @@ environment variables. It is designed to help you:
 *   **Configure the runtime**: Tune compilation caching, debugging checks, and
     multi-host launch settings through environment variables.
 
-!!! note For the exhaustive, automatically generated source-of-truth list of all
-public Python APIs and environment variables, see
-[TorchTPU Public APIs (`public_apis.md`)](https://github.com/google-pytorch/torch_tpu/blob/main/docs/public_apis.md).
+> **Note:** For the exhaustive, automatically generated source-of-truth list of
+> all public Python APIs and environment variables, see
+> [TorchTPU Public APIs (`public_apis.md`)](https://github.com/google-pytorch/torch_tpu/blob/main/docs/public_apis.md).
 
 ## **Core Device Queries**
 
@@ -133,10 +133,10 @@ rare case that you use an older PyTorch version, use
 `torch.tpu.current_stream()`, `torch.tpu.set_stream()`, or
 `torch.tpu.synchronize()` instead.
 
-!!! note Streams are a CUDA concept with no direct analogy in TPU. In TorchTPU's
-deferred execution model, the XLA compiler and PjRt runtime schedule and overlap
-operations automatically based on data dependencies, so manual multi-stream
-management is not needed.
+> **Note:** Streams are a CUDA concept with no direct analogy in TPU. In
+> TorchTPU's deferred execution model, the XLA compiler and PjRt runtime
+> schedule and overlap operations automatically based on data dependencies, so
+> manual multi-stream management is not needed.
 
 ## **TPU-Specific APIs**
 

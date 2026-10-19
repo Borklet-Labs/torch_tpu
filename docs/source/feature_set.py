@@ -40,8 +40,7 @@ def _(mo):
     * **Validated:** Capabilities that have end-to-end continuous testing, automated CI/CD coverage, and benchmark verification across standard model architectures.  
     * **Experimental:** Early-stage implementations, emerging APIs, or prototype features. These are functional and available for early feedback, but may undergo behavioral refinement or API changes based on community input.
 
-    !!! note
-        TorchTPU is evolving rapidly in the open. For the most up-to-date status or to request specific features, visit our [GitHub](https://github.com/google-pytorch/torch_tpu).*
+    > **Note:** TorchTPU is evolving rapidly in the open. For the most up-to-date status or to request specific features, visit our [GitHub](https://github.com/google-pytorch/torch_tpu).
 
     |  | **Validated** | **Experimental** |
     | ----- | ----- | ----- |

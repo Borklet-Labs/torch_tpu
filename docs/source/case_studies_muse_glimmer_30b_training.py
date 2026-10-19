@@ -29,7 +29,7 @@ def _():
 @app.cell(hide_code=True)
 def _(mo):
   mo.md(r"""
-# Muse Glimmer 30B
+# Muse Glimmer 30B: training
 
 In this case study, we will go through our standalone Muse Glimmer 30B example,
 which demonstrates a simple training loop for the full model, using FSDP
@@ -219,15 +219,14 @@ def _():
 @app.cell(hide_code=True)
 def _(mo):
   mo.md(r"""
-!!! note
-    Activation checkpointing (AC) is applied inside the model layer
-    (`DecoderBlock` module) `forward` method, and `torch.compile` is applied
-    outside / on the layer itself – this ordering is important.
-    You could keep AC inside the layer, and apply `torch.compile` on the whole model
-    – this would work fine.
-    But you cannot swap them, e.g. if you were to apply AC the same way,
-    but apply `torch.compile` inside on attention and FFN sub-layers separately,
-    it would not work as expected.
+> **Note:** Activation checkpointing (AC) is applied inside the model layer
+> (`DecoderBlock` module) `forward` method, and `torch.compile` is applied
+> outside / on the layer itself – this ordering is important.
+> You could keep AC inside the layer, and apply `torch.compile` on the whole model
+> – this would work fine.
+> But you cannot swap them, e.g. if you were to apply AC the same way,
+> but apply `torch.compile` inside on attention and FFN sub-layers separately,
+> it would not work as expected.
 
 `torch.compile` works particularly well with AC in TorchTPU: during the (global)
 backward pass, each layer performs a small joint forward+backward pass (due to
@@ -246,9 +245,8 @@ In this example, we wanted to demonstrate the simplest possible way of doing
 FSDP (fully-sharded data-parallel) training, using native PyTorch collective ops
 directly.
 
-> [!TIP]
-> For an even simpler description of this approach, take a look at our
-[manual FSDP example](https://github.com/google-pytorch/torch_tpu/tree/main/examples/fsdp/manual).
+> **Tip:** For an even simpler description of this approach, take a look at our
+> [manual FSDP example](https://github.com/google-pytorch/torch_tpu/tree/main/examples/fsdp/manual).
 
 We do FSDP by manually sharding all attention and FFN projection weights, e.g.:
 """)
@@ -264,11 +262,10 @@ def _():
 @app.cell(hide_code=True)
 def _(mo):
   mo.md(r"""
-> [!NOTE]
-> PyTorch `nn.Linear` layer stores its weight matrix transposed, which is why
-we shard on the 2nd dimension here. The actual shape of the weight will be
-`[num_q_heads * dh / world_size, dm]`. This is important because PyTorch
-all-gather / reduce-scatter collectives work on the 1st dimension.
+> **Note:** PyTorch `nn.Linear` layer stores its weight matrix transposed, which
+> is why we shard on the 2nd dimension here. The actual shape of the weight will
+> be `[num_q_heads * dh / world_size, dm]`. This is important because PyTorch
+> all-gather / reduce-scatter collectives work on the 1st dimension.
 
 Then, during the forward pass, we use PyTorch's functional collectives to
 gather the weights before using them:

@@ -206,8 +206,7 @@ def _(mo):
     * **Step 3 (`seq_len=18 -> 19`):** The bounded-dynamic output buffer produced by step 2 has XLA's padded output layout, so TorchTPU compiles the `[17, 128]` bucket once more for that steady-state XLA layout.
     * **Steps 4–10 (`seq_len=19 -> 26`):** Both the sequence length (within the `<= 128` bucket) and the XLA buffer layout match the cached executable, so every subsequent step dispatches the pre-compiled XLA executable directly without recompiling.
 
-    > [!TIP]
-    > If you already know which dimension will vary ahead of time, you can call `torch._dynamo.mark_dynamic(kv_cache, 2, min=16, max=128)` before the first step. This tells Dynamo to trace `dim=2` as dynamic immediately on Step 1—skipping the initial static compilation on Step 1 and letting you specify explicit `[min, max]` bounds.
+    > **Tip:** If you already know which dimension will vary ahead of time, you can call `torch._dynamo.mark_dynamic(kv_cache, 2, min=16, max=128)` before the first step. This tells Dynamo to trace `dim=2` as dynamic immediately on Step 1—skipping the initial static compilation on Step 1 and letting you specify explicit `[min, max]` bounds.
     """)
   return
 

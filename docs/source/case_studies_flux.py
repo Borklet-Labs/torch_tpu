@@ -151,8 +151,7 @@ def _(mo):
 
     The optimized implementation keeps the `3` axis adjacent to `(H, D)` and splits it with `torch.unbind`. The backward pass then stacks the Q, K, and V gradients directly into the original layout, so no extra copy is needed. In the results table, the effect on step time is small (**178.61 ms to 178.30 ms** in eager mode, **159.33 ms to 159.08 ms** compiled) because the copy is a small fraction of the step, but it is removed at no cost.
 
-    !!! note
-        The cells in this milestone only show that the two approaches produce the same Q, K, and V. In the forward pass, both return the same strided views, so their outputs look identical. The extra HBM copy from `einops.rearrange` only occurs in the backward pass, and is visible in an XProf trace of a full training step rather than in the cell output. See [Milestone 1 of the FLUX Optimization Tutorial](https://github.com/google-pytorch/torch_tpu/blob/main/examples/FLUX_optimization/README.md#milestone-1) for the traces.
+    > **Note:** The cells in this milestone only show that the two approaches produce the same Q, K, and V. In the forward pass, both return the same strided views, so their outputs look identical. The extra HBM copy from `einops.rearrange` only occurs in the backward pass, and is visible in an XProf trace of a full training step rather than in the cell output. See [Milestone 1 of the FLUX Optimization Tutorial](https://github.com/google-pytorch/torch_tpu/blob/main/examples/FLUX_optimization/README.md#milestone-1) for the traces.
     """)
   return
 
@@ -242,8 +241,7 @@ def _(mo):
 
     Because both versions perform the same multiplications and additions on the same operands, they produce identical results. The cell below runs the optimized version on the same inputs and compares it against the reference:
 
-    !!! note
-        These cells show the smaller frequency tensor and that both versions produce identical results. The speedup only appears when RoPE runs inside the compiled `DoubleStreamBlock`, where the elementwise rotation fuses with the surrounding ops. See [Milestone 2 of the FLUX Optimization Tutorial](https://github.com/google-pytorch/torch_tpu/blob/main/examples/FLUX_optimization/README.md#milestone-2) for the XProf traces.
+    > **Note:** These cells show the smaller frequency tensor and that both versions produce identical results. The speedup only appears when RoPE runs inside the compiled `DoubleStreamBlock`, where the elementwise rotation fuses with the surrounding ops. See [Milestone 2 of the FLUX Optimization Tutorial](https://github.com/google-pytorch/torch_tpu/blob/main/examples/FLUX_optimization/README.md#milestone-2) for the XProf traces.
     """)
   return
 
@@ -352,8 +350,7 @@ def _(mo):
 
     The same pattern applies to any function. The cell below compiles the fused RoPE and checks that it matches eager execution:
 
-    !!! note
-        These cells only check that compiling doesn't change the result. The fusion and the speedup show up in XProf and step-time measurements of the full `DoubleStreamBlock`, not in the cell output. See [Milestone 3 of the FLUX Optimization Tutorial](https://github.com/google-pytorch/torch_tpu/blob/main/examples/FLUX_optimization/README.md#milestone-3) for eager vs. compiled traces.
+    > **Note:** These cells only check that compiling doesn't change the result. The fusion and the speedup show up in XProf and step-time measurements of the full `DoubleStreamBlock`, not in the cell output. See [Milestone 3 of the FLUX Optimization Tutorial](https://github.com/google-pytorch/torch_tpu/blob/main/examples/FLUX_optimization/README.md#milestone-3) for eager vs. compiled traces.
     """)
   return
 
@@ -419,8 +416,7 @@ def _(mo):
     torch_fwd_fn.register_autograd(backward, setup_context=setup_context)
     ```
 
-    !!! important
-        **JAX is not executed at runtime.** Pallas is distributed inside the `jax` package, so the kernel is written with `jax` syntax. However, `torch.tpu.pallas.jax_op` only uses JAX once, at trace time, with abstract shape/dtype placeholders to export the kernel as an MLIR module. During training and inference, both in eager mode and under `torch.compile`, the kernel runs directly on `torch.Tensor` TPU buffers.
+    > **Important:** **JAX is not executed at runtime.** Pallas is distributed inside the `jax` package, so the kernel is written with `jax` syntax. However, `torch.tpu.pallas.jax_op` only uses JAX once, at trace time, with abstract shape/dtype placeholders to export the kernel as an MLIR module. During training and inference, both in eager mode and under `torch.compile`, the kernel runs directly on `torch.Tensor` TPU buffers.
 
     **Results**: In the results table, SplashAttention alone is **1.19x** faster than the eager baseline (178.61 ms to 149.81 ms). With zero-copy views and fused RoPE enabled, it is faster than standard SDPA in both eager (**182.61 ms to 156.73 ms, 1.17x**) and compiled (**153.60 ms to 122.51 ms, 1.25x**) modes.
 

@@ -1,4 +1,4 @@
-<h1>TorchTPU <img src="docs/images/logo.png" alt="TorchTPU Logo" height="65"></h1>
+<img src="docs/images/torchtpu_logo.avif" alt="TorchTPU Logo" style="width: 60%;">
 
 ## Description
 
@@ -19,8 +19,9 @@ inference.
 
 ## User Guide and Interactive Notebooks
 
-A user guide is available at http://google-pytorch.github.io/torch_tpu/ . This
-is a static version of the interactive notebooks. They are available in the docs
+A user guide is available at
+[https://torchtpu.readthedocs.io/](https://torchtpu.readthedocs.io/). This is a
+static version of the interactive notebooks. They are available in the docs
 folder.
 
 The notebooks are Marimo (similar to Jupyter). They can be run with `marimo edit
@@ -131,9 +132,8 @@ nightlies, or install the CPU build separately.
 Some pointers to get you started:
 
 *   [PyTorch: Official PyTorch documentation](https://github.com/pytorch/pytorch)
-*   [Tutorials: easy to understand PyTorch code using TorchTPU](./examples/tutorials)
-*   [Examples: get you started with sample PyTorch models on TPU](./examples/README.md)
-*   [Public APIs: the TorchTPU APIs that you can use](./docs/markdown/public_apis.md)
+*   [Tutorials and examples: easy to understand PyTorch code using TorchTPU](https://torchtpu.readthedocs.io/)
+*   [Public APIs: the TorchTPU APIs that you can use](./docs/public_apis.md)
 
 ## Dependencies
 

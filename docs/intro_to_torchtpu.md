@@ -105,13 +105,13 @@ print(f"Result shape on CPU: {result.shape}, sum: {result.sum():.4f}")
     `torch.profiler` (TensorBoard/XProf), vLLM, SGLang, TorchTitan, Ray, and
     TorchRec.
 
-## Known limitations and future work
+## Limitations and future work
 
-As an early product, TorchTPU does currently have known limitations that will be
-addressed over time. While our initial release delivers robust, out-of-the-box
-coverage for major workloads, TorchTPU is a collaborative, community-driven
-effort. Please review our [feature set and roadmap](./feature_set.md) to see
-what is on the horizon, or jump right in by
+As any product, TorchTPU does have known limitations, which will be addressed
+over time. While our initial release delivers robust, out-of-the-box coverage
+for major workloads, TorchTPU is a collaborative, community-driven effort.
+Please review our [feature set and roadmap](./feature_set.md) to see what is on
+the horizon, or jump right in by
 [submitting PRs](https://github.com/google-pytorch/torch_tpu) on GitHub to help
 us resolve these limitations. This is a community project, and we'd love to hear
 from you and invite you to collaborate with us via
@@ -131,9 +131,10 @@ and [torchtpu-feedback@google.com](mailto:torchtpu-feedback@google.com).
 *   MPMD with collectives is supported for functionality, but it will not reach
     peak performance yet. Collective overlap with compute has
     [some constraints](./distributed_support.md):
-    *   Full stream support with offload will come in the near future.
+    *   Full stream support with SparseCore offload will come in the near
+        future.
     *   Use SimpleFSDP with `torch.compile()` as opposed to FSDPv2 with eager or
-        `torch.compile` mode [FSDP best practices](./case_studies_fsdp.md)
+        `torch.compile` see [FSDP best practices](./case_studies_fsdp.md)
     *   Use the `spmd_safe` decorator on regions **users guarantee** to be
         exactly the same is the recommended way to get peak performance from XLA
         optimizations on communicating modules (i.e., to enable
