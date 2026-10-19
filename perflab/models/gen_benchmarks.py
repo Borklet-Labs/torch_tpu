@@ -37,28 +37,34 @@ _ACCELERATOR_ONLY_RUN_MODES = frozenset({
     common.RunMode.EAGER_OPTIMIZED.value,
 })
 
-_DATA_DEPENDENT_SCALAR = (
-    "reads a Python scalar from a tensor (aten._local_scalar_dense), which"
-    " FakeTensorMode cannot evaluate"
-)
-_DATA_DEPENDENT_SHAPE = (
-    "uses an op whose output shape depends on tensor values (e.g."
-    " aten.nonzero), which FakeTensorMode cannot evaluate"
-)
-
 # Generated benchmarks that the FakeTensorMode CPU smoke test
 # (`--fake_tensor_mode`) cannot run, with the reason. Every other generated
 # benchmark whose model config is in-tree runs in the smoke test, so that a
 # change to the shared model loading (e.g. `tests/module_registry.py`) that
 # breaks a generated benchmark fails in presubmit instead of in the nightly
 # benchmark runs.
-_FAKE_TENSOR_MODE_UNSUPPORTED: Mapping[str, str] = {
+_FAKE_TENSOR_MODE_UNSUPPORTED: Mapping[str, str] = {}
+
+# Generated benchmarks whose model forward branches or indexes on values
+# computed from floating-point model weights (non-constant FakeTensors):
+# * `lahja_sa_ahmad_v1_forward_gen` (`VitsModel`): sizes its output time axis
+#   with `torch.arange(predicted_lengths.max(), ...)` from `duration_predictor`.
+# * `lightglue_superpoint_forward_gen` (`LightGlueForKeypointMatching`):
+#   extracts keypoint coordinates with `torch.nonzero(scores[0] > threshold)`,
+#   prunes keypoints with boolean masks, and checks `torch.any(early_stopped)`.
+# * `zoedepth_nyu_kitti_forward_gen` (`ZoeDepthForDepthEstimation`): selects a
+#   metric depth head via `names[torch.argmax(domain_vote, dim=-1).item()]`.
+# The FakeTensorMode CPU smoke test enables placeholder outputs for non-constant
+# scalar reads (`_local_scalar_dense`), `nonzero`, and boolean mask indexing
+# only for these benchmarks, so other benchmarks still fail loudly on unexpected
+# data-dependent control flow.
+_FAKE_TENSOR_MODE_DATA_DEPENDENT: frozenset[str] = frozenset({
     # go/keep-sorted start
-    "lahja_sa_ahmad_v1_forward_gen": _DATA_DEPENDENT_SCALAR,
-    "lightglue_superpoint_forward_gen": _DATA_DEPENDENT_SHAPE,
-    "zoedepth_nyu_kitti_forward_gen": _DATA_DEPENDENT_SCALAR,
+    "lahja_sa_ahmad_v1_forward_gen",
+    "lightglue_superpoint_forward_gen",
+    "zoedepth_nyu_kitti_forward_gen",
     # go/keep-sorted end
-}
+})
 
 
 @functools.cache
@@ -102,10 +108,13 @@ def _make_factory(
     is_training: bool,
     model_load_fn: gen_utils.ModelLoadFn,
     full_scope_batch_size: int,
+    allow_data_dependent_outputs: bool = False,
 ):
   """Creates a benchmark factory for a given model."""
 
   def factory(ctx: context_lib.Context):
+    if allow_data_dependent_outputs:
+      mode_lib.allow_data_dependent_fake_outputs()
     model, inputs = model_load_fn(
         ctx, model_id, is_training, full_scope_batch_size
     )
@@ -190,6 +199,9 @@ def _register_gen_benchmarks():
             is_training,
             model_load_fn,
             extra_config.full_scope_batch_size,
+            allow_data_dependent_outputs=(
+                name in _FAKE_TENSOR_MODE_DATA_DEPENDENT
+            ),
         ),
         stepper=step,
         stepper_kwargs=step_kwargs,

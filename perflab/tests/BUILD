@@ -254,6 +254,7 @@ torch_tpu_py_test(
     deps = [
         "//perflab:context",
         "//perflab:flags",
+        "//perflab:mode",
         "//perflab:registry",
         "//perflab:target",
         "//perflab/models",
@@ -261,6 +262,7 @@ torch_tpu_py_test(
         "//shims/absl_py/testing:absltest",
         "//shims/absl_py/testing:flagsaver",
         "//shims/absl_py/testing:parameterized",
+        "//shims/torch:pytorch",
         "//src/torch_tpu",
         "//tests:seed_test_utils",
     ],

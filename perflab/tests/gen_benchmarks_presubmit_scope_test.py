@@ -28,8 +28,10 @@ from absl import flags
 from absl.testing import absltest
 from absl.testing import flagsaver
 from absl.testing import parameterized
+import torch
 from perflab import context as context_lib
 from perflab import flags as flags_lib
+from perflab import mode as mode_lib
 from perflab import registry as registry_lib
 from perflab import target as target_lib
 from perflab.models import gen_benchmarks
@@ -147,6 +149,47 @@ class GenBenchmarksPresubmitScopeTest(seed_test_utils.RepeatableTest):
         self.assertIn(name, model_ids)
         self.assertTrue(gen_benchmarks.has_in_tree_config(model_ids[name]))
         self.assertNotEmpty(reason)
+
+  def test_data_dependent_benchmarks_have_in_tree_configs_and_opt_in(self):
+    model_ids = {
+        spec.benchmark_name(
+            is_training=is_training, suffix="gen"
+        ): spec.model_id
+        for spec, is_training, _ in gen_benchmarks._iter_gen_benchmark_specs()  # pylint: disable=protected-access
+    }
+    for name in gen_benchmarks._FAKE_TENSOR_MODE_DATA_DEPENDENT:  # pylint: disable=protected-access
+      with self.subTest(name):
+        self.assertIn(name, model_ids)
+        self.assertTrue(gen_benchmarks.has_in_tree_config(model_ids[name]))
+
+    fake_load_fn = lambda ctx, model_id, is_training, batch_size: (
+        torch.nn.Linear(2, 2),
+        {},
+    )
+    ctx = context_lib.Context(
+        target=target_lib.make_target(target_lib.Platform.CPU),
+        run_scope=context_lib.RunScope.PRESUBMIT,
+    )
+    default_factory = gen_benchmarks._make_factory(  # pylint: disable=protected-access
+        "fake/model", False, fake_load_fn, 1
+    )
+    with mode_lib.fake_tensor_context():
+      default_factory(ctx)
+      self.assertFalse(
+          torch._guards.detect_fake_mode().allow_data_dependent_outputs  # pylint: disable=protected-access
+      )
+    opt_in_factory = gen_benchmarks._make_factory(  # pylint: disable=protected-access
+        "fake/model",
+        False,
+        fake_load_fn,
+        1,
+        allow_data_dependent_outputs=True,
+    )
+    with mode_lib.fake_tensor_context():
+      opt_in_factory(ctx)
+      self.assertTrue(
+          torch._guards.detect_fake_mode().allow_data_dependent_outputs  # pylint: disable=protected-access
+      )
 
   def test_skip_reason_of_a_model_without_an_in_tree_config(self):
     self.assertEqual(

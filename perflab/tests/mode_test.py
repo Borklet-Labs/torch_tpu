@@ -405,6 +405,65 @@ class FakeTensorContextTest(seed_test_utils.RepeatableTest):
         validate_args,
     )
 
+  def test_data_dependent_ops_fail_by_default(self):
+    with mode_lib.fake_tensor_context():
+      scores = torch.randn(2, 4096)
+      with self.assertRaises(fake_tensor.DataDependentOutputException):
+        bool(torch.any(scores > 0))
+      with self.assertRaises(fake_tensor.DataDependentOutputException):
+        scores[0, 0].item()
+      with self.assertRaises(fake_tensor.DataDependentOutputException):
+        scores.argmax().item()
+      with self.assertRaises(fake_tensor.DynamicOutputShapeException):
+        torch.nonzero(scores[0] > 0)
+      with self.assertRaises(fake_tensor.DynamicOutputShapeException):
+        _ = scores[0][scores[0] > 0]
+
+  def test_allow_data_dependent_fake_outputs_handles_scalars_nonzero_and_masks(
+      self,
+  ):
+    # Outside `fake_tensor_context`, enabling placeholders is a no-op.
+    mode_lib.allow_data_dependent_fake_outputs()
+    with mode_lib.fake_tensor_context():
+      mode_lib.allow_data_dependent_fake_outputs()
+      scores = torch.randn(2, 4096)
+      complex_scores = torch.zeros(2, dtype=torch.complex64)
+
+      # Non-constant scalar reads return dtype-appropriate placeholders:
+      # False for bool (LightGlue early stopping), 0.0 for floats/complex, and
+      # 1 for integers (ZoeDepth head index and VITS predicted length).
+      self.assertIs(bool(torch.any(scores > 0)), False)
+      self.assertEqual(scores[0, 0].item(), 0.0)
+      self.assertIsInstance(scores[0, 0].item(), float)
+      self.assertEqual(complex_scores[0].item(), 0.0)
+      self.assertEqual(scores.argmax().item(), 1)
+      self.assertIsInstance(scores.argmax().item(), int)
+      # Constant scalars still return their real values.
+      self.assertIs(bool(torch.tensor(True)), True)
+      self.assertEqual(torch.arange(4)[-1].item(), 3)
+
+      # Non-constant `nonzero` returns a 1-row coordinate tensor, while
+      # constant `nonzero` still computes the exact indices.
+      keypoints = torch.nonzero(scores > 0)
+      self.assertEqual(keypoints.shape, (1, 2))
+      self.assertEqual(keypoints.dtype, torch.int64)
+      self.assertIsNone(keypoints.constant)
+      self.assertEqual(
+          torch.nonzero(torch.tensor([1, 0, 2])).tolist(), [[0], [2]]
+      )
+
+      # Non-constant boolean masks keep all elements, while constant boolean
+      # masks and integer indices are not replaced.
+      pruned = scores[:, scores[0] > 0]
+      self.assertEqual(pruned.shape, (2, 4096))
+      const_masked = scores[torch.tensor([True, False]), scores[0] > 0]
+      self.assertEqual(const_masked.shape, (4096,))
+      self.assertIsNone(
+          torch.arange(8)
+          .view(4, 2)[scores.argmax(dim=-1), scores[:2, 0] > 0]
+          .constant
+      )
+
 
 if __name__ == "__main__":
   absltest.main()

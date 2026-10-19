@@ -259,7 +259,14 @@ class _SmokeFakeTensorMode(fake_tensor.FakeTensorMode):
       constant, FakeTensorMode clears it through a map of the constants that
       `fake_tensor_context` disables. This clears it instead. Other views of
       the same values keep their constants.
+  *   When `allow_data_dependent_outputs` is enabled on the mode (opt-in via
+      `allow_data_dependent_fake_outputs()` for the duration of the active
+      `fake_tensor_context()` so other benchmarks still fail loudly), it returns
+      deterministic placeholders for scalar reads, `nonzero`, and boolean-mask
+      indexing on non-constant fake tensors.
   """
+
+  allow_data_dependent_outputs: bool = False
 
   def __torch_dispatch__(
       self,
@@ -292,6 +299,37 @@ class _SmokeFakeTensorMode(fake_tensor.FakeTensorMode):
       )
     if not isinstance(func, torch._ops.OpOverload):  # pylint: disable=protected-access
       return super().__torch_dispatch__(func, types, args, kwargs)
+    if self.allow_data_dependent_outputs:
+      if func is _aten._local_scalar_dense.default and _is_non_constant_fake(
+          args[0]
+      ):
+        # Return False for bool so early-stopping checks (e.g. LightGlue) run
+        # every layer, 0.0 for floats/complex, and 1 for ints so head indices
+        # (e.g. ZoeDepth) and predicted lengths (e.g. VITS) are valid and
+        # non-empty.
+        if args[0].dtype is torch.bool:
+          return False
+        if args[0].is_floating_point() or args[0].is_complex():
+          return 0.0
+        return 1
+      if func is _aten.nonzero.default and _is_non_constant_fake(args[0]):
+        # Return one row so downstream keypoint gathering has a non-empty index
+        # tensor of the expected rank.
+        with self:
+          return torch.empty(
+              (1, args[0].dim()), dtype=torch.int64, device=args[0].device
+          )
+      if func is _aten.index.Tensor and any(
+          _is_non_constant_bool_mask(i) for i in args[1]
+      ):
+        # Replace non-constant boolean masks with all-True masks so masked
+        # pruning (e.g. LightGlue) keeps all elements.
+        with self:
+          indices = [
+              torch.ones_like(i) if _is_non_constant_bool_mask(i) else i
+              for i in args[1]
+          ]
+          return func(args[0], indices, *args[2:], **kwargs)
     tensors = _tensor_args(args, kwargs)
     # Keyed by id, as tensors compare by value.
     constants: dict[int, fake_tensor.FakeTensor] = {
@@ -321,6 +359,16 @@ class _SmokeFakeTensorMode(fake_tensor.FakeTensorMode):
       for key, constant in hidden.items():
         if key not in written:
           constants[key].constant = constant
+
+
+def _is_non_constant_fake(tensor: Any) -> bool:
+  """Returns whether `tensor` is a FakeTensor without a constant value."""
+  return isinstance(tensor, fake_tensor.FakeTensor) and tensor.constant is None
+
+
+def _is_non_constant_bool_mask(index: Any) -> bool:
+  """Returns whether an `aten.index.Tensor` index is a non-constant bool mask."""
+  return _is_non_constant_fake(index) and index.dtype is torch.bool
 
 
 def _bind(
@@ -611,6 +659,20 @@ def fake_tensor_context() -> Iterator[None]:
     )
     fake_tensor.CONSTANT_NUMEL_LIMIT = orig_constant_numel_limit
     torch.nn.init._no_grad_trunc_normal_ = orig_trunc_normal  # pylint: disable=protected-access
+
+
+def allow_data_dependent_fake_outputs() -> None:
+  """Enables placeholders for data-dependent ops in the active smoke mode.
+
+  When called inside `fake_tensor_context()`, the active `_SmokeFakeTensorMode`
+  returns deterministic placeholders for scalar reads
+  (`aten._local_scalar_dense.default`), `aten.nonzero.default`, and
+  boolean-mask `aten.index.Tensor` on non-constant fake tensors until the
+  context exits. Outside `fake_tensor_context()`, this is a no-op.
+  """
+  mode = torch._guards.detect_fake_mode()  # pylint: disable=protected-access
+  if isinstance(mode, _SmokeFakeTensorMode):
+    mode.allow_data_dependent_outputs = True
 
 
 def fake_tensor_smoke_enabled() -> bool:
