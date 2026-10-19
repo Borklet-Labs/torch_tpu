@@ -2550,6 +2550,17 @@ def _build_xclip_multimodal_inputs(
   )
 
 
+def _build_vilt_multimodal_inputs(
+    ctx: InputContext, input_kwargs: dict[str, Any]
+) -> None:
+  # ViLT selects its image patches with data-dependent ops on `pixel_mask`.
+  # Without one, it makes a floating-point `torch.ones` mask, whose values the
+  # FakeTensorMode CPU smoke test does not keep, so pass the integer mask that
+  # `ViltImageProcessor` returns.
+  _, _, height, width = input_kwargs["pixel_values"].shape
+  input_kwargs["pixel_mask"] = ctx.ones((ctx.batch_size, height, width))
+
+
 def _build_beingvl_multimodal_inputs(
     ctx: InputContext, input_kwargs: dict[str, Any]
 ) -> None:
@@ -2608,6 +2619,7 @@ _MULTIMODAL_EXTRA_BUILDERS: tuple[tuple[_Matcher, _Builder], ...] = (
     ),
     (_model_type_contains("kosmos"), _build_kosmos_multimodal_inputs),
     (_model_type_contains("xclip"), _build_xclip_multimodal_inputs),
+    (_model_type_contains("vilt"), _build_vilt_multimodal_inputs),
     (_model_type_contains("beingvl", "vq"), _build_beingvl_multimodal_inputs),
     (_type_contains("clvp"), _build_clvp_multimodal_inputs),
     (

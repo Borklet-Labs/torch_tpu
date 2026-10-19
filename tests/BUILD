@@ -350,6 +350,7 @@ torch_tpu_py_test(
         ":module_registry",
         ":seed_test_utils",
         "//shims/absl_py/testing:absltest",
+        "//shims/torch:pytorch",
         "//src/torch_tpu",
     ],
 )

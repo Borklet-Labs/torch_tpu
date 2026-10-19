@@ -54,23 +54,8 @@ _DATA_DEPENDENT_SHAPE = (
 # benchmark runs.
 _FAKE_TENSOR_MODE_UNSUPPORTED: Mapping[str, str] = {
     # go/keep-sorted start
-    "bart_large_mnli_forward_gen": _DATA_DEPENDENT_SHAPE,
-    "bart_large_mnli_train_gen": _DATA_DEPENDENT_SHAPE,
-    "clap_htsat_fused_forward_gen": _DATA_DEPENDENT_SHAPE,
-    "gemma_4_e4b_it_forward_gen": _DATA_DEPENDENT_SHAPE,
-    "gemma_4_e4b_it_train_gen": _DATA_DEPENDENT_SHAPE,
-    "glm_ocr_forward_gen": _DATA_DEPENDENT_SCALAR,
-    "glm_ocr_train_gen": _DATA_DEPENDENT_SCALAR,
-    "kosmos_2_patch14_224_train_gen": _DATA_DEPENDENT_SHAPE,
     "lahja_sa_ahmad_v1_forward_gen": _DATA_DEPENDENT_SCALAR,
     "lightglue_superpoint_forward_gen": _DATA_DEPENDENT_SHAPE,
-    "llava_1_5_7b_hf_forward_gen": _DATA_DEPENDENT_SCALAR,
-    "llava_1_5_7b_hf_train_gen": _DATA_DEPENDENT_SCALAR,
-    "qwen2_5_vl_7b_instruct_forward_gen": _DATA_DEPENDENT_SHAPE,
-    "qwen2_5_vl_7b_instruct_train_gen": _DATA_DEPENDENT_SHAPE,
-    "vilt_b32_finetuned_vqa_forward_gen": _DATA_DEPENDENT_SCALAR,
-    "vjepa2_vitl_fpc64_256_forward_gen": _DATA_DEPENDENT_SCALAR,
-    "wmt19_ru_en_train_gen": _DATA_DEPENDENT_SCALAR,
     "zoedepth_nyu_kitti_forward_gen": _DATA_DEPENDENT_SCALAR,
     # go/keep-sorted end
 }

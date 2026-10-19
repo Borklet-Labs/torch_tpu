@@ -14,6 +14,8 @@
 
 """Tests for harness/mode.py."""
 
+from unittest import mock
+
 from absl.testing import absltest
 import torch
 from torch._subclasses import fake_tensor
@@ -21,6 +23,8 @@ from perflab import common
 from perflab import mode as mode_lib
 from perflab import target as target_lib
 from tests import seed_test_utils
+
+_MAX_CONSTANT_NUMEL = mode_lib._MAX_CONSTANT_NUMEL  # pylint: disable=protected-access
 
 
 class ModeEnumTest(seed_test_utils.RepeatableTest):
@@ -245,6 +249,149 @@ class FakeTensorContextTest(seed_test_utils.RepeatableTest):
       x = torch.rand(4096)
       with self.assertRaises(fake_tensor.DataDependentOutputException):
         x[0].item()
+
+  def test_input_values_are_readable_inside(self):
+    with mode_lib.fake_tensor_context():
+      input_ids = torch.randint(3, 100, (2, 128))
+      input_ids[:, -1] = 2
+      hidden_states = torch.randn(2, 128, 16)
+      self.assertIsInstance(input_ids, fake_tensor.FakeTensor)
+      # As in the HuggingFace BART classification head. Without the constants,
+      # these would raise DynamicOutputShapeException.
+      eos_mask = input_ids.eq(2)
+      eos_counts = torch.unique_consecutive(eos_mask.sum(1)).tolist()
+      eos_states = hidden_states[eos_mask, :]
+    self.assertEqual(eos_counts, [1])
+    self.assertEqual(eos_states.shape, (2, 16))
+
+  def test_integer_tensor_factory_outputs_are_readable_inside(self):
+    with mode_lib.fake_tensor_context():
+      input_ids = torch.randint(0, 10, (2, 8))
+      hidden_states = torch.randn(2, 4096)
+      # As VITS's `torch.ones_like(input_ids)` padding mask. These read only
+      # the shapes and dtypes of the fake tensors they are given.
+      sums = [
+          torch.ones_like(input_ids).sum().item(),
+          torch.zeros_like(input_ids, dtype=torch.int).sum().item(),
+          torch.full_like(input_ids, 3).sum().item(),
+          hidden_states.new_ones((2,), dtype=torch.long).sum().item(),
+          hidden_states.new_full((3,), 2, dtype=torch.long).sum().item(),
+      ]
+      # Floating-point outputs, mostly parameter initializations, stay fake.
+      with self.assertRaises(fake_tensor.DataDependentOutputException):
+        torch.ones_like(hidden_states).sum().item()
+    self.assertEqual(sums, [16, 0, 48, 2, 6])
+
+  def test_large_integer_tensor_stays_fake(self):
+    with mode_lib.fake_tensor_context():
+      x = torch.zeros(_MAX_CONSTANT_NUMEL + 1, dtype=torch.long)
+      with self.assertRaises(fake_tensor.DataDependentOutputException):
+        x[0].item()
+
+  def test_floating_point_ones_stay_fake(self):
+    with mode_lib.fake_tensor_context():
+      # E.g. LayerNorm weights, whose values models do not read.
+      x = torch.ones(4)
+      with self.assertRaises(fake_tensor.DataDependentOutputException):
+        x[0].item()
+
+  def test_factory_outputs_of_floating_point_dtypes_stay_fake(self):
+    with mode_lib.fake_tensor_context():
+      ints = torch.full((4,), 3)
+      outputs = [
+          torch.zeros(4, dtype=torch.bfloat16),
+          torch.ones(4, dtype=torch.complex64),
+          torch.full((4,), 0.5),
+      ]
+      for x in outputs:
+        with self.assertRaises(fake_tensor.DataDependentOutputException):
+          x[0].item()
+      self.assertEqual(ints.sum().item(), 12)
+
+  def test_factory_outputs_off_the_cpu_stay_fake(self):
+    with mode_lib.fake_tensor_context():
+      x = torch.zeros(4, dtype=torch.long, device="meta")
+      with self.assertRaises(fake_tensor.DataDependentOutputException):
+        x[0].item()
+
+  def test_real_tensors_are_converted_inside(self):
+    # E.g. a tensor that a module makes when it is imported.
+    real = torch.ones(4)
+    with mode_lib.fake_tensor_context():
+      self.assertIsInstance(real + torch.randn(4), fake_tensor.FakeTensor)
+
+  def test_large_outputs_of_constants_are_not_computed(self):
+    numels = []
+    may_turn_const = fake_tensor.FakeTensorMode.may_turn_const
+
+    def spy_may_turn_const(fake_mode, t):
+      numels.append(t.numel())
+      return may_turn_const(fake_mode, t)
+
+    with mock.patch.object(
+        fake_tensor.FakeTensorMode, "may_turn_const", spy_may_turn_const
+    ):
+      with mode_lib.fake_tensor_context():
+        positions = torch.arange(1024)
+        # As in the expansion of an attention mask to `[batch, 1, seq_len,
+        # seq_len]`, which FakeTensorMode would compute before it checks the
+        # output size.
+        rows = _MAX_CONSTANT_NUMEL // 1024 + 1
+        repeated = positions[None, :].repeat(rows, 1)
+        last_position = positions[-1].item()
+    self.assertEqual(repeated.shape, (rows, 1024))
+    self.assertEqual(last_position, 1023)
+    self.assertNotEmpty(numels)
+    self.assertLessEqual(max(numels), _MAX_CONSTANT_NUMEL)
+
+  def test_writing_fake_values_clears_the_constant(self):
+    with mode_lib.fake_tensor_context():
+      mask = torch.zeros(4, dtype=torch.long)
+      mask.copy_(torch.randn(4096)[:4])
+      # With its stale constant, this would return 0.
+      with self.assertRaises(fake_tensor.DataDependentOutputException):
+        mask.sum().item()
+
+  def test_indexing_a_constant_with_fake_indices_stays_fake(self):
+    with mode_lib.fake_tensor_context():
+      patch_index = torch.arange(8).view(4, 2)
+      choice = torch.multinomial(torch.ones(4), 4)
+      # As in ViLT's patch selection. The meta function of `index.Tensor` makes
+      # its output with `new_empty`, whose uninitialized memory FakeTensorMode
+      # would otherwise keep as the values of the output.
+      selected = patch_index[choice]
+      with self.assertRaises(fake_tensor.DataDependentOutputException):
+        selected[0, 0].item()
+
+  def test_tensor_reads_constants_in_its_data_inside(self):
+    with mode_lib.fake_tensor_context():
+      positions = torch.arange(4)
+      # As in Qwen2.5-VL's `torch.tensor(mrope_position_deltas)` of 0-d tensors.
+      deltas = torch.tensor([positions.max() + 1, positions.min()]).tolist()
+      # Unlike tensors in a sequence, a tensor passed as the data itself
+      # dispatches, so FakeTensorMode computes its copy from its constant, and
+      # `as_tensor` returns it as is.
+      copied = torch.tensor(positions).tolist()
+      self.assertIs(torch.as_tensor(positions), positions)
+    self.assertEqual(deltas, [4, 0])
+    self.assertEqual(copied, [0, 1, 2, 3])
+
+  def test_scripts_functions_that_call_tensor_inside(self):
+    with mode_lib.fake_tensor_context():
+      # As the `@torch.jit.script` helpers of DeBERTa v2, which transformers
+      # imports, and so scripts, while it builds the model.
+      @torch.jit.script
+      def scaled_size_sqrt(x: torch.Tensor, scale: int) -> torch.Tensor:
+        return torch.sqrt(torch.tensor(x.size(-1), dtype=torch.float) * scale)
+
+    self.assertIsInstance(scaled_size_sqrt, torch.jit.ScriptFunction)
+
+  def test_restores_tensor_on_exit(self):
+    tensor, as_tensor = torch.tensor, torch.as_tensor
+    with mode_lib.fake_tensor_context():
+      self.assertIsNot(torch.tensor, tensor)
+    self.assertIs(torch.tensor, tensor)
+    self.assertIs(torch.as_tensor, as_tensor)
 
   def test_distribution_arguments_are_not_validated_inside(self):
     validate_args = torch.distributions.Distribution._validate_args  # pylint: disable=protected-access

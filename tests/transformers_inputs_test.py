@@ -17,6 +17,7 @@
 from typing import Any
 
 from absl.testing import absltest
+import torch
 from tests import seed_test_utils
 from tests import transformers_inputs
 
@@ -59,6 +60,24 @@ class AudioInputsTest(seed_test_utils.RepeatableTest):
     )
 
     self.assertEqual(inputs["input_values"].shape, (1, 128))
+
+
+class MultimodalInputsTest(seed_test_utils.RepeatableTest):
+
+  def test_vilt_pixel_mask_is_an_integer_mask_of_the_whole_image(self):
+    config = {
+        "model_type": "vilt",
+        "architectures": ["ViltForQuestionAnswering"],
+        "image_size": 384,
+    }
+    inputs = transformers_inputs.generate_transformers_inputs(
+        config, "multimodal", shape=(2, 40)
+    )
+
+    self.assertEqual(inputs["pixel_values"].shape, (2, 3, 384, 384))
+    self.assertEqual(inputs["pixel_mask"].shape, (2, 384, 384))
+    self.assertEqual(inputs["pixel_mask"].dtype, torch.long)
+    self.assertTrue(bool(inputs["pixel_mask"].all()))
 
 
 if __name__ == "__main__":
