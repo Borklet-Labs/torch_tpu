@@ -350,6 +350,59 @@ class MeasureSequenceTest(seed_test_utils.RepeatableTest):
     _run_measure(step, ops, steps=2, min_warmup=2)
     self.assertEqual(ops.awaited, ["out-1", "out-2", "out-3", "out-4"])
 
+  def test_previous_step_output_released_before_next_step_and_hook(self):
+    """Ensures warmup and timed loops do not hold 2x step outputs in memory."""
+    live_outputs = 0
+    max_live_outputs_in_step = 0
+    max_live_outputs_in_hook = 0
+
+    class _TrackedOutput:
+
+      def __init__(self) -> None:
+        nonlocal live_outputs
+        live_outputs += 1
+
+      def __del__(self) -> None:
+        nonlocal live_outputs
+        live_outputs -= 1
+
+    class _TrackingOps(RecordingOps):
+
+      def await_result(self, out) -> None:
+        del out
+        self.events.append("await")
+        self.calls += 1
+
+      def check_result(self, out) -> None:
+        del out
+        self.events.append("check")
+
+    class _OutputLifetimeStep:
+
+      def get_step_fn(self):
+        def step():
+          nonlocal max_live_outputs_in_step
+          out = _TrackedOutput()
+          max_live_outputs_in_step = max(max_live_outputs_in_step, live_outputs)
+          return out
+
+        return step
+
+      def compile(self, **kwargs):
+        pass
+
+      def pre_warmup_init(self):
+        pass
+
+      def post_warmup_hook(self):
+        nonlocal max_live_outputs_in_hook
+        max_live_outputs_in_hook = max(max_live_outputs_in_hook, live_outputs)
+
+    _run_measure(_OutputLifetimeStep(), _TrackingOps(), steps=3, min_warmup=3)
+    self.assertEqual(max_live_outputs_in_step, 1)
+    self.assertEqual(max_live_outputs_in_hook, 0)
+    self.assertEqual(live_outputs, 0)
+
 
 class MeasureCheckResultTest(seed_test_utils.RepeatableTest):
 

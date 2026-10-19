@@ -143,12 +143,19 @@ class TorchDeviceOpsTest(seed_test_utils.RepeatableTest):
   @mock.patch("torch.accelerator")
   def test_reset_peak_memory(self, mock_accelerator):
     mock_accelerator.device_count.return_value = 1
+    call_order = []
+    mock_accelerator.synchronize.side_effect = lambda: call_order.append("sync")
+    mock_accelerator.reset_peak_memory_stats.side_effect = (
+        lambda *_: call_order.append("reset")
+    )
     target = target_lib.make_target(platform=target_lib.Platform.V5E_1X1)
     ops = torch_device_ops.TorchDeviceOps(target)
 
     ops.reset_peak_memory()
 
-    mock_accelerator.reset_peak_memory_stats.assert_called_once()
+    mock_accelerator.synchronize.assert_called_once()
+    mock_accelerator.reset_peak_memory_stats.assert_called_once_with(ops.device)
+    self.assertEqual(call_order, ["sync", "reset"])
 
   @mock.patch("torch.accelerator")
   def test_peak_memory_mb(self, mock_accelerator):

@@ -389,12 +389,32 @@ class DeviceUtilsTest(seed_test_utils.RepeatableTest):
     with mock.patch('jax.local_devices', return_value=[mock_dev_tpu]):
       self.assertEqual(device_utils.get_peak_memory_hbm('jax'), 256.0)
 
+    mock_dev_with_reserved = mock.MagicMock()
+    mock_dev_with_reserved.memory_stats.return_value = {
+        'peak_bytes_in_use': 256 * 1024 * 1024,
+        'peak_bytes_reserved': 512 * 1024 * 1024,
+    }
+    with mock.patch('jax.local_devices', return_value=[mock_dev_with_reserved]):
+      self.assertEqual(device_utils.get_peak_memory_hbm('jax'), 768.0)
+
+    mock_dev_peak_allocated = mock.MagicMock()
+    mock_dev_peak_allocated.memory_stats.return_value = {
+        'peak_allocated_bytes': 1024 * 1024 * 1024,
+        'peak_bytes_in_use': 256 * 1024 * 1024,
+        'peak_bytes_reserved': 512 * 1024 * 1024,
+    }
+    with mock.patch(
+        'jax.local_devices', return_value=[mock_dev_peak_allocated]
+    ):
+      self.assertEqual(device_utils.get_peak_memory_hbm('jax'), 1024.0)
+
     mock_dev_bytes_only = mock.MagicMock()
     mock_dev_bytes_only.memory_stats.return_value = {
-        'bytes_in_use': 128 * 1024 * 1024
+        'bytes_in_use': 128 * 1024 * 1024,
+        'bytes_reserved': 64 * 1024 * 1024,
     }
     with mock.patch('jax.local_devices', return_value=[mock_dev_bytes_only]):
-      self.assertEqual(device_utils.get_peak_memory_hbm('jax'), 128.0)
+      self.assertEqual(device_utils.get_peak_memory_hbm('jax'), 192.0)
 
     mock_dev_neg = mock.MagicMock()
     mock_dev_neg.memory_stats.return_value = {'peak_bytes_in_use': -1}

@@ -89,17 +89,36 @@ class TorchaxDeviceOpsTest(seed_test_utils.RepeatableTest):
     with mock.patch("jax.local_devices", return_value=[mock_dev]):
       self.assertEqual(ops.peak_memory_mb(), 128.0)
 
+    # Includes compiled XLA executable stack reservations (peak_bytes_reserved).
+    mock_dev.memory_stats.return_value = {
+        "peak_bytes_in_use": 128 * 1024 * 1024,
+        "peak_bytes_reserved": 256 * 1024 * 1024,
+    }
+    with mock.patch("jax.local_devices", return_value=[mock_dev]):
+      self.assertEqual(ops.peak_memory_mb(), 384.0)
+
     mock_dev.memory_stats.return_value = {
         "peak_bytes_in_use": -1,
         "bytes_in_use": 64 * 1024 * 1024,
+        "peak_bytes_reserved": -1,
+        "bytes_reserved": 32 * 1024 * 1024,
     }
     with mock.patch("jax.local_devices", return_value=[mock_dev]):
-      self.assertEqual(ops.peak_memory_mb(), 64.0)
+      self.assertEqual(ops.peak_memory_mb(), 96.0)
+
+    mock_dev.memory_stats.return_value = {
+        "peak_allocated_bytes": 512 * 1024 * 1024,
+        "peak_bytes_in_use": 128 * 1024 * 1024,
+        "peak_bytes_reserved": 256 * 1024 * 1024,
+    }
+    with mock.patch("jax.local_devices", return_value=[mock_dev]):
+      self.assertEqual(ops.peak_memory_mb(), 512.0)
 
     # Verify negative sentinel values (-1) return None rather than -1.
     mock_dev.memory_stats.return_value = {
         "peak_bytes_in_use": -1,
         "bytes_in_use": -1,
+        "peak_bytes_reserved": 256 * 1024 * 1024,
     }
     with mock.patch("jax.local_devices", return_value=[mock_dev]):
       self.assertIsNone(ops.peak_memory_mb())

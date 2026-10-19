@@ -196,6 +196,7 @@ class TorchDeviceOps:
   def reset_peak_memory(self) -> None:
     """Reset the peak-memory counter."""
     if self.target.device_kind != target_lib.DeviceKind.CPU:
+      torch.accelerator.synchronize()
       torch.accelerator.reset_peak_memory_stats(self.device)
 
   def peak_memory_mb(self) -> float:
