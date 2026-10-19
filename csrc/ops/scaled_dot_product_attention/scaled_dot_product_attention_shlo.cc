@@ -29,6 +29,7 @@
 #include "absl/algorithm/container.h"
 #include "absl/cleanup/cleanup.h"
 #include "absl/log/check.h"
+#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_join.h"
 #include "absl/types/span.h"
@@ -128,13 +129,63 @@ mlir::MlirOp ConvertElementTypeIfNeeded(mlir::MlirOp op,
   }
   return op;
 }
-absl::StatusOr<AttentionPrepResults> PrepareAttentionLogits(
-    mlir::MlirBuilder& builder, mlir::MLIRContext* context, mlir::MlirOp query,
-    mlir::MlirOp key, mlir::MlirOp value, std::optional<mlir::MlirOp> mask,
-    bool is_causal, std::optional<double> scale,
+
+// Computes scaled query-key attention logits, scaling before dot for half
+// precision and after dot for full precision.
+absl::StatusOr<mlir::MlirOp> ComputeScaledAttentionLogits(
+    mlir::MLIRContext* context, mlir::MlirOp query_4d, mlir::MlirOp key_4d,
+    mlir::MlirOp scale_value, mlir::FloatType element_type, int64_t batch_size,
+    int64_t num_head_q, int64_t num_head_kv, int64_t head_count_ratio,
+    int64_t seq_len_q, int64_t seq_len_kv, int64_t head_dim,
     mlir::stablehlo::Precision precision) {
-  auto query_tensor_type = GetTensorTypeOrDie(query);
-  const int64_t query_rank = query_tensor_type.getRank();
+  // For half-precision (F16/BF16), scale Q before the dot product to prevent
+  // overflow and pre-scaling rounding loss when DotGeneral outputs half
+  // precision. For full-precision (F32/F64), scale the dot-product result to
+  // match alpha * Q @ K^T.
+  const bool scale_before_dot = element_type.isF16() || element_type.isBF16();
+  mlir::MlirOp dot_query_4d = query_4d;
+  if (scale_before_dot) {
+    TT_ASSIGN_OR_RETURN(mlir::MlirOp broadcasted_scale,
+                        BroadcastIfNeeded(scale_value, query_4d));
+    dot_query_4d = mlir::stablehlo::Mul(query_4d, broadcasted_scale);
+  }
+
+  const auto precision_config = mlir::stablehlo::PrecisionConfigAttr::get(
+      context, {precision, precision});
+  mlir::MlirOp attn_logits;
+  if (head_count_ratio > 1) {
+    mlir::MlirOp dot_query_5d = mlir::stablehlo::Reshape(
+        dot_query_4d,
+        {batch_size, num_head_kv, head_count_ratio, seq_len_q, head_dim});
+    auto attention_dot_dims = mlir::stablehlo::DotDimensionNumbersAttr::get(
+        context, /*lhs_batching_dimensions=*/{0, 1},
+        /*rhs_batching_dimensions=*/{0, 1}, /*lhs_contracting_dimensions=*/{4},
+        /*rhs_contracting_dimensions=*/{3});
+    mlir::MlirOp logits_5d = mlir::stablehlo::DotGeneral(
+        dot_query_5d, key_4d, attention_dot_dims, precision_config);
+    attn_logits = mlir::stablehlo::Reshape(
+        logits_5d, {batch_size, num_head_q, seq_len_q, seq_len_kv});
+  } else {
+    auto attention_dot_dims = mlir::stablehlo::DotDimensionNumbersAttr::get(
+        context, /*lhs_batching_dimensions=*/{0, 1},
+        /*rhs_batching_dimensions=*/{0, 1}, /*lhs_contracting_dimensions=*/{3},
+        /*rhs_contracting_dimensions=*/{3});
+    attn_logits = mlir::stablehlo::DotGeneral(
+        dot_query_4d, key_4d, attention_dot_dims, precision_config);
+  }
+  if (!scale_before_dot) {
+    TT_ASSIGN_OR_RETURN(mlir::MlirOp broadcasted_scale,
+                        BroadcastIfNeeded(scale_value, attn_logits));
+    return mlir::stablehlo::Mul(attn_logits, broadcasted_scale);
+  }
+  return attn_logits;
+}
+
+// Validates rank, static head dimensions, and dynamic batch constraints on
+// attention inputs.
+absl::Status ValidateAttentionInputs(mlir::MlirOp query, mlir::MlirOp key,
+                                     mlir::MlirOp value) {
+  const int64_t query_rank = GetTensorTypeOrDie(query).getRank();
   // The head count and head dim are used as concrete values below (e.g. the
   // GQA ratio and the default scale), so they must be static. Only batch and
   // sequence dimensions may be bounded dynamic.
@@ -172,11 +223,21 @@ absl::StatusOr<AttentionPrepResults> PrepareAttentionLogits(
              << absl::StrJoin(input_shape, ", ") << "]";
     }
   }
+  return absl::OkStatus();
+}
+
+absl::StatusOr<AttentionPrepResults> PrepareAttentionLogits(
+    mlir::MlirBuilder& builder, mlir::MLIRContext* context, mlir::MlirOp query,
+    mlir::MlirOp key, mlir::MlirOp value, std::optional<mlir::MlirOp> mask,
+    bool is_causal, std::optional<double> scale,
+    mlir::stablehlo::Precision precision) {
+  TT_RETURN_IF_ERROR(ValidateAttentionInputs(query, key, value));
+  auto query_tensor_type = GetTensorTypeOrDie(query);
   // Static sizes, or upper bounds for bounded dynamic dimensions.
   const Dimensions query_shape = GetStaticShape(query);
   const Dimensions key_shape = GetStaticShape(key);
   int rank = query_shape.size();
-  int batch_size = get_batch_size(query_shape);
+  const int64_t batch_size = get_batch_size(query_shape);
   int64_t head_dim = query_shape[rank - 1];
   int64_t seq_len_q = query_shape[rank - 2];
   int64_t seq_len_kv = key_shape[rank - 2];
@@ -219,38 +280,13 @@ absl::StatusOr<AttentionPrepResults> PrepareAttentionLogits(
     head_count_ratio = 1;
   }
 
-  // Scale Q before Dot product - matches pytorch attention implementation and
-  // improves stability https://tinyurl.com/sudb9s96
   mlir::MlirOp scale_value =
       GetScaleDefaulted(builder, scale, head_dim, element_type);
-  TT_ASSIGN_OR_RETURN(mlir::MlirOp broadcasted_scale_value,
-                      BroadcastIfNeeded(scale_value, query_4d));
-  mlir::MlirOp scaled_query_4d =
-      mlir::stablehlo::Mul(query_4d, broadcasted_scale_value);
-
-  const auto precision_config = mlir::stablehlo::PrecisionConfigAttr::get(
-      context, {precision, precision});
-  mlir::MlirOp scaled_attn_logits;
-  if (head_count_ratio > 1) {
-    mlir::MlirOp scaled_query_5d = mlir::stablehlo::Reshape(
-        scaled_query_4d,
-        {batch_size, num_head_kv, head_count_ratio, seq_len_q, head_dim});
-    auto attention_dot_dims = mlir::stablehlo::DotDimensionNumbersAttr::get(
-        context, /*lhs_batching_dimensions=*/{0, 1},
-        /*rhs_batching_dimensions=*/{0, 1}, /*lhs_contracting_dimensions=*/{4},
-        /*rhs_contracting_dimensions=*/{3});
-    mlir::MlirOp logits_5d = mlir::stablehlo::DotGeneral(
-        scaled_query_5d, key_4d, attention_dot_dims, precision_config);
-    scaled_attn_logits = mlir::stablehlo::Reshape(
-        logits_5d, {batch_size, num_head_q, seq_len_q, seq_len_kv});
-  } else {
-    auto attention_dot_dims = mlir::stablehlo::DotDimensionNumbersAttr::get(
-        context, /*lhs_batching_dimensions=*/{0, 1},
-        /*rhs_batching_dimensions=*/{0, 1}, /*lhs_contracting_dimensions=*/{3},
-        /*rhs_contracting_dimensions=*/{3});
-    scaled_attn_logits = mlir::stablehlo::DotGeneral(
-        scaled_query_4d, key_4d, attention_dot_dims, precision_config);
-  }
+  TT_ASSIGN_OR_RETURN(mlir::MlirOp scaled_attn_logits,
+                      ComputeScaledAttentionLogits(
+                          context, query_4d, key_4d, scale_value, element_type,
+                          batch_size, num_head_q, num_head_kv, head_count_ratio,
+                          seq_len_q, seq_len_kv, head_dim, precision));
 
   mlir::Attribute min_attr =
       GetMinFiniteValueAttr(element_type, builder.getOpBuilder());

@@ -19460,6 +19460,49 @@ class OpsGradUnitTest(TorchTpuVsCpuTestBase):
             preamble=f"close check failed for {name}",
         )
 
+  @parameterized.named_parameters(
+      ("flash_bfloat16", 128, 4, 4, torch.bfloat16, False),
+      ("math_float32_mha", 24, 4, 4, torch.float32, False),
+      ("math_float32_gqa", 24, 4, 2, torch.float32, True),
+  )
+  def test_scaled_dot_product_attention_scaling_precision(
+      self, head_dim, num_heads_q, num_heads_kv, dtype, enable_gqa
+  ):
+    """Tests FlashAttention LSE forward/backward consistency and F32 post-dot scaling."""
+    batch_size, seq_len = 2, 128
+    torch.manual_seed(42)
+    q_init = torch.randn(
+        batch_size, num_heads_q, seq_len, head_dim, dtype=dtype
+    )
+    k_init = torch.randn(
+        batch_size, num_heads_kv, seq_len, head_dim, dtype=dtype
+    )
+    v_init = torch.randn(
+        batch_size, num_heads_kv, seq_len, head_dim, dtype=dtype
+    )
+    grad_out = torch.randn(
+        batch_size, num_heads_q, seq_len, head_dim, dtype=dtype
+    )
+
+    def compute(device):
+      q = to(q_init.clone(), device=device).requires_grad_(True)
+      k = to(k_init.clone(), device=device).requires_grad_(True)
+      v = to(v_init.clone(), device=device).requires_grad_(True)
+      out = torch.nn.functional.scaled_dot_product_attention(
+          q, k, v, is_causal=True, enable_gqa=enable_gqa
+      )
+      out.backward(to(grad_out, device=device))
+      return out, q.grad, k.grad, v.grad
+
+    rtol = 2e-2 if dtype == torch.bfloat16 else 3e-4
+    atol = 2e-2 if dtype == torch.bfloat16 else 3e-4
+    prev_prec = torch.get_float32_matmul_precision()
+    torch.set_float32_matmul_precision("highest")
+    try:
+      self.assert_close_tpu_vs_cpu(compute, rtol=rtol, atol=atol)
+    finally:
+      torch.set_float32_matmul_precision(prev_prec)
+
   @parameterized.parameters(True, False)
   def test_flex_attention_causal(self, is_causal: bool):
     q, k, v = (

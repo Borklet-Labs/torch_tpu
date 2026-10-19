@@ -233,9 +233,10 @@ SoftmaxState UpdateSoftmaxState(ImplicitLocOpBuilder& b,
 
   Value k = LoadTileSlice(b, args.k_arg, col_offset, kc, /*col_offset=*/0,
                           config.qk_head_dim);
-  Value sij = CreateMatmul(
+  Value unscaled_sij = CreateMatmul(
       b, q, k,
       MatmulOptions{.transpose_rhs = true, .precision = config.precision});
+  Value sij = ScaleValue(b, unscaled_sij, config.scale * kLog2e);
 
   if (args.mask_arg) {
     Value user_bias =
@@ -362,7 +363,6 @@ void EmitGridStep(ImplicitLocOpBuilder& b, const FlashAttnConfig& config,
     const int64_t row_offset = band * band_rows;
     Value q = LoadTileSlice(b, args.q_arg, row_offset, band_rows,
                             /*col_offset=*/0, config.qk_head_dim);
-    q = ScaleValue(b, q, config.scale * kLog2e);
 
     std::optional<SoftmaxState> state;
     if (!is_single_kv_step) {
