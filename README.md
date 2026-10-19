@@ -216,6 +216,16 @@ We welcome contributions to the PyTorch on TPU project! Please see our
 including signing our Contributor License Agreement (CLA) and code review
 processes.
 
+## Star History
+
+<a href="https://www.star-history.com/?repos=google-pytorch%2Ftorch_tpu&type=date&legend=top-left">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=google-pytorch/torch_tpu&type=date&theme=dark&legend=top-left" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=google-pytorch/torch_tpu&type=date&legend=top-left" />
+    <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=google-pytorch/torch_tpu&type=date&legend=top-left" />
+  </picture>
+</a>
+
 ## License
 
 This project is licensed under the Apache 2.0 License. See the
