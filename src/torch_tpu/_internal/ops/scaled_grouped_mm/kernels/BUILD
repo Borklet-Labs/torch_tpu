@@ -98,6 +98,7 @@ torch_tpu_py_test(
         "//shims/absl_py/testing:absltest",
         "//shims/absl_py/testing:parameterized",
         "//src/torch_tpu",
+        "//src/torch_tpu/_internal/ops/scaled_mm/kernels:scaled_mm_test_utils",
         "//tests:seed_test_utils",
         "@pypi//jax",
         "@pypi//numpy",

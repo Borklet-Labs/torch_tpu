@@ -21,7 +21,8 @@ Runs `RowwiseScaledGroupedMmKernelTest` on TPU accelerators (v5e, v6e, v7x):
   non-dyadic scales
 - Unaligned K and N padding and output slicing (`padded_k != k`, `padded_n !=
 n`)
-- Numerics vs CPU float32 reference
+- Numerics vs CPU float32 reference, with chip-dependent tolerances for
+  fractional FP8 inputs (see `scaled_mm_test_utils.fp8_tolerance`)
 - AOT exported module bit-exact match against JIT execution
 """
 
@@ -31,6 +32,7 @@ from absl.testing import parameterized
 import jax.numpy as jnp
 import numpy as np
 from torch_tpu._internal.ops.scaled_grouped_mm.kernels import rowwise_scaled_grouped_mm_kernel as kernel
+from torch_tpu._internal.ops.scaled_mm.kernels import scaled_mm_test_utils
 from tests import seed_test_utils
 
 _FP8_E4M3 = jnp.float8_e4m3fn.dtype
@@ -124,9 +126,7 @@ class RowwiseScaledGroupedMmKernelTest(seed_test_utils.RepeatableTest):
     ).astype(np.float32)
 
     # For integer inputs, the only difference is rounding to out_dtype
-    expected_rounded = np.asarray(
-        jnp.asarray(expected).astype(out_dtype).astype(jnp.float32)
-    )
+    expected_rounded = scaled_mm_test_utils.round_to_dtype(expected, out_dtype)
     out_np = np.asarray(out.astype(jnp.float32))
     np.testing.assert_allclose(out_np, expected_rounded, rtol=1e-2, atol=1e-2)
 
@@ -169,11 +169,11 @@ class RowwiseScaledGroupedMmKernelTest(seed_test_utils.RepeatableTest):
     expected = _reference(
         a, b, scale_a, scale_b, offs, transpose_rhs=transpose_rhs
     )
-    expected_rounded = np.asarray(
-        jnp.asarray(expected).astype(out_dtype).astype(jnp.float32)
-    )
+    expected_rounded = scaled_mm_test_utils.round_to_dtype(expected, out_dtype)
     out_np = np.asarray(out.astype(jnp.float32))
-    np.testing.assert_allclose(out_np, expected_rounded, rtol=1e-2, atol=2e-2)
+    scaled_mm_test_utils.assert_fp8_close(
+        out_np, expected_rounded, **scaled_mm_test_utils.fp8_tolerance()
+    )
     np.testing.assert_array_equal(out_np[sum(sizes) :], 0.0)
 
   @parameterized.product(
@@ -217,11 +217,11 @@ class RowwiseScaledGroupedMmKernelTest(seed_test_utils.RepeatableTest):
     expected = _reference(
         a, b, scale_a, scale_b, offs, transpose_rhs=transpose_rhs
     )
-    expected_rounded = np.asarray(
-        jnp.asarray(expected).astype(out_dtype).astype(jnp.float32)
-    )
+    expected_rounded = scaled_mm_test_utils.round_to_dtype(expected, out_dtype)
     out_np = np.asarray(out.astype(jnp.float32))
-    np.testing.assert_allclose(out_np, expected_rounded, rtol=1e-2, atol=2e-2)
+    scaled_mm_test_utils.assert_fp8_close(
+        out_np, expected_rounded, **scaled_mm_test_utils.fp8_tolerance()
+    )
     np.testing.assert_array_equal(out_np[sum(sizes) :], 0.0)
 
   @parameterized.product(

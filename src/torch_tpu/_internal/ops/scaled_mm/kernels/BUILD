@@ -60,6 +60,18 @@ torch_tpu_py_library(
     deps = ["@pypi//jax"],
 )
 
+# Numerics helpers shared by the FP8 scaled_mm and scaled_grouped_mm kernel tests.
+torch_tpu_py_library(
+    name = "scaled_mm_test_utils",
+    testonly = True,
+    srcs = ["scaled_mm_test_utils.py"],
+    deps = [
+        "//shims/jax:pallas_tpu",
+        "@pypi//jax",
+        "@pypi//numpy",
+    ],
+)
+
 torch_tpu_py_library(
     name = "blockwise_scaled_mm_kernel",
     srcs = ["blockwise_scaled_mm_kernel.py"],
@@ -83,6 +95,7 @@ torch_tpu_py_test(
     ],
     deps = [
         ":blockwise_scaled_mm_kernel",
+        ":scaled_mm_test_utils",
         "//shims/absl_py/logging",
         "//shims/absl_py/testing:absltest",
         "//shims/absl_py/testing:parameterized",
@@ -139,6 +152,7 @@ torch_tpu_py_test(
     ],
     deps = [
         ":blockwise128_scaled_mm_kernel",
+        ":scaled_mm_test_utils",
         "//shims/absl_py/logging",
         "//shims/absl_py/testing:absltest",
         "//shims/absl_py/testing:parameterized",

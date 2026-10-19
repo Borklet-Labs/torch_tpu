@@ -21,20 +21,12 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from torch_tpu._internal.ops.scaled_mm.kernels import blockwise128_scaled_mm_kernel as kernels
+from torch_tpu._internal.ops.scaled_mm.kernels import scaled_mm_test_utils
 
 _FP8_E4M3 = jnp.float8_e4m3fn.dtype
 _E4M3_MAX = 448.0
 
 _BLOCK_SIZE = 128
-
-# From PyTorch's fp8 block-wise test. f32 shares bf16's bound: the MXU
-# accumulates FP8 products in a ~bf16 (E8M8) container, so output dtype does not
-# change accumulation precision.
-_ATOL_RTOL = {jnp.bfloat16: (6e-1, 7e-2), jnp.float32: (6e-1, 7e-2)}
-
-# Cosine floor: cos >= 0.999 permits ~4.5% whole-tensor L2 error;
-# a dropped block / transpose / mis-addressed scale drops it far below.
-_COSINE_FLOOR = 0.999
 
 _SHAPES = (
     ("128x128x128", 128, 128, 128),
@@ -92,18 +84,6 @@ _DERIVED_DTYPE_SHAPES = tuple(
 )
 
 
-def _cosine(expected: np.ndarray, actual: np.ndarray) -> float:
-  e = expected.astype(np.float32).reshape(-1)
-  a = actual.astype(np.float32).reshape(-1)
-  return float(np.dot(e, a) / (np.linalg.norm(e) * np.linalg.norm(a) + 1e-30))
-
-
-def _cast_ref(ref: np.ndarray, out_dtype) -> np.ndarray:
-  # PyTorch compares the kernel against the reference *after* rounding the
-  # reference to the output dtype, so both sides carry the same output rounding.
-  return np.asarray(jnp.asarray(ref).astype(out_dtype).astype(jnp.float32))
-
-
 def _run_kernel(
     a_fp8, b_fp8, sa, sb, out_dtype, bias=None, tile=None
 ) -> np.ndarray:
@@ -133,10 +113,6 @@ def _dequant_b(payload_fp8, scale) -> np.ndarray:
   s = np.asarray(scale).astype(np.float32)
   s = np.repeat(np.repeat(s, _BLOCK_SIZE, axis=0), _BLOCK_SIZE, axis=1)
   return p * s[: p.shape[0], : p.shape[1]]
-
-
-def _reference_matmul(a_real: np.ndarray, b_real: np.ndarray) -> np.ndarray:
-  return a_real.astype(np.float32) @ b_real.astype(np.float32)
 
 
 def _quantize_blocked(
@@ -230,7 +206,9 @@ class BlockWise128ScaledMmStructuralTest(_TestCase):
         jnp.float32,
         tile=_STRUCTURAL_TILE,
     )
-    np.testing.assert_array_equal(out, _reference_matmul(a, b))
+    np.testing.assert_array_equal(
+        out, scaled_mm_test_utils.reference_matmul(a, b)
+    )
 
   def test_b_payload_marker(self):
     # Capture B-payload n-tile and K-block addressing (a transposed read
@@ -247,7 +225,9 @@ class BlockWise128ScaledMmStructuralTest(_TestCase):
         jnp.float32,
         tile=_STRUCTURAL_TILE,
     )
-    np.testing.assert_array_equal(out, _reference_matmul(a, b))
+    np.testing.assert_array_equal(
+        out, scaled_mm_test_utils.reference_matmul(a, b)
+    )
 
   def test_a_scale_marker(self):
     # Capture scale_a[row, K-block] addressing.
@@ -266,7 +246,9 @@ class BlockWise128ScaledMmStructuralTest(_TestCase):
         tile=_STRUCTURAL_TILE,
     )
     a_real = _dequant_a(a_payload.astype(_FP8_E4M3), sa)
-    np.testing.assert_array_equal(out, _reference_matmul(a_real, b_payload))
+    np.testing.assert_array_equal(
+        out, scaled_mm_test_utils.reference_matmul(a_real, b_payload)
+    )
 
   def test_b_scale_marker(self):
     # Capture scale_b[K-band, N-band] addressing of the 2-D weight scale.
@@ -284,7 +266,9 @@ class BlockWise128ScaledMmStructuralTest(_TestCase):
         tile=_STRUCTURAL_TILE,
     )
     b_real = _dequant_b(b_payload.astype(_FP8_E4M3), sb)
-    np.testing.assert_array_equal(out, _reference_matmul(a_payload, b_real))
+    np.testing.assert_array_equal(
+        out, scaled_mm_test_utils.reference_matmul(a_payload, b_real)
+    )
 
   def test_b_scale_tail_corner_marker(self):
     # Capture scale_b's tail corner (last K-block x partial trailing N-band).
@@ -302,7 +286,9 @@ class BlockWise128ScaledMmStructuralTest(_TestCase):
         tile=_STRUCTURAL_TILE,
     )
     b_real = _dequant_b(b_payload.astype(_FP8_E4M3), sb)
-    np.testing.assert_array_equal(out, _reference_matmul(a_payload, b_real))
+    np.testing.assert_array_equal(
+        out, scaled_mm_test_utils.reference_matmul(a_payload, b_real)
+    )
 
 
 class BlockWise128ScaledMmRandomTest(_TestCase):
@@ -315,17 +301,19 @@ class BlockWise128ScaledMmRandomTest(_TestCase):
   def _assert_pytorch_gates(
       self, tag, m, k, n, out, fp8_ref, hp_ref, out_dtype
   ):
-    atol, rtol = _ATOL_RTOL[out_dtype]
-    fp8_ref_cast = _cast_ref(fp8_ref, out_dtype)
+    atol = scaled_mm_test_utils.FP8_MXU_ATOL
+    rtol = scaled_mm_test_utils.FP8_MXU_RTOL
+    cosine_floor = scaled_mm_test_utils.COSINE_FLOOR
+    fp8_ref_cast = scaled_mm_test_utils.round_to_dtype(fp8_ref, out_dtype)
     abs_err = np.abs(out - fp8_ref_cast)
     max_abs_err = float(np.max(abs_err))
     # max_rel_err is undefined where the reference is exactly zero; skip those.
     denom = np.abs(fp8_ref_cast)
     nz = denom > 0
     max_rel_err = float(np.max(abs_err[nz] / denom[nz])) if np.any(nz) else 0.0
-    cos_fp8 = _cosine(fp8_ref, out)
-    cos_hp = _cosine(hp_ref, out)
-    cos_fp8_hp = _cosine(hp_ref, fp8_ref)
+    cos_fp8 = scaled_mm_test_utils.cosine_similarity(fp8_ref, out)
+    cos_hp = scaled_mm_test_utils.cosine_similarity(hp_ref, out)
+    cos_fp8_hp = scaled_mm_test_utils.cosine_similarity(hp_ref, fp8_ref)
     # Per-gate report: min threshold that would pass ("need"), configured
     # threshold ("set"), and their ratio (headroom). "infx" headroom means the
     # measured error is exactly zero.
@@ -348,21 +336,21 @@ class BlockWise128ScaledMmRandomTest(_TestCase):
         rtol,
         rtol_headroom,
         min_cos,
-        _COSINE_FLOOR,
-        min_cos - _COSINE_FLOOR,
+        cosine_floor,
+        min_cos - cosine_floor,
         cos_fp8,
         cos_hp,
         cos_fp8_hp,
     )
     self.assertEqual(out.shape, (m, n))
     # Validate the emulation reference doing the right thing
-    self.assertGreaterEqual(cos_fp8_hp, _COSINE_FLOOR)
+    self.assertGreaterEqual(cos_fp8_hp, cosine_floor)
     # Validate the kernel matches the emulation reference element-wise
     np.testing.assert_allclose(out, fp8_ref_cast, atol=atol, rtol=rtol)
     # Validate the kernel agrees in direction with the emulation reference
-    self.assertGreaterEqual(cos_fp8, _COSINE_FLOOR)
+    self.assertGreaterEqual(cos_fp8, cosine_floor)
     # Validate the kernel agrees in direction with the full-precision truth
-    self.assertGreaterEqual(cos_hp, _COSINE_FLOOR)
+    self.assertGreaterEqual(cos_hp, cosine_floor)
 
   @parameterized.named_parameters(*_EXACT_DTYPE_SHAPES)
   def test_random_exact_e4m3_scales_one(self, m, k, n, out_dtype):
@@ -379,8 +367,8 @@ class BlockWise128ScaledMmRandomTest(_TestCase):
 
     out = _run_kernel(a_fp8, b_fp8, _ones_sa(m, k), _ones_sb(k, n), out_dtype)
 
-    fp8_ref = _reference_matmul(a_real, b_real)
-    hp_ref = _reference_matmul(a_hp, b_hp)
+    fp8_ref = scaled_mm_test_utils.reference_matmul(a_real, b_real)
+    hp_ref = scaled_mm_test_utils.reference_matmul(a_hp, b_hp)
     self._assert_pytorch_gates(
         "exact_e4m3", m, k, n, out, fp8_ref, hp_ref, out_dtype
     )
@@ -399,8 +387,10 @@ class BlockWise128ScaledMmRandomTest(_TestCase):
 
     out = _run_kernel(a_fp8, b_fp8, sa, sb, out_dtype)
 
-    fp8_ref = _reference_matmul(_dequant_a(a_fp8, sa), _dequant_b(b_fp8, sb))
-    hp_ref = _reference_matmul(a_real, b_real)
+    fp8_ref = scaled_mm_test_utils.reference_matmul(
+        _dequant_a(a_fp8, sa), _dequant_b(b_fp8, sb)
+    )
+    hp_ref = scaled_mm_test_utils.reference_matmul(a_real, b_real)
     self._assert_pytorch_gates(
         "data_derived", m, k, n, out, fp8_ref, hp_ref, out_dtype
     )

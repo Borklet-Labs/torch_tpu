@@ -37,6 +37,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from torch_tpu._internal.ops.scaled_mm.kernels import blockwise_scaled_mm_kernel as kernels
+from torch_tpu._internal.ops.scaled_mm.kernels import scaled_mm_test_utils
 from tests import seed_test_utils
 
 _FP8_E4M3 = jnp.float8_e4m3fn.dtype
@@ -44,12 +45,6 @@ _E4M3_MAX = 448.0
 # MX scale-recipe constants: E8M0 exponent bias and E4M3 target pow2 (2**8).
 _F8E4M3_LARGEST_POW2 = 8
 _F8E8M0_EXP_BIAS = 127
-
-# PyTorch CUDA numerical validation thresholds for blockwise scaled matmul
-# (see test_scaled_matmul_cuda.py: test_scaled_mm_block_wise_numerics).
-_COSINE_SIM_FLOOR = 0.999
-_BF16_RTOL = 7e-2
-_BF16_ATOL = 6e-1
 
 # (name, M, K, N). K is a multiple of the 32-wide block (partial K blocks are
 # handled by the C++ op layer, not the kernel).
@@ -86,23 +81,6 @@ _MARKER_SHAPES = tuple(
 _BLOCK_SIZE = 32
 
 
-def _cosine_similarity(expected: np.ndarray, actual: np.ndarray) -> float:
-  """Cosine similarity over the whole tensor in float32."""
-  e = expected.astype(np.float32).reshape(-1)
-  a = actual.astype(np.float32).reshape(-1)
-  norm_e = float(np.linalg.norm(e))
-  norm_a = float(np.linalg.norm(a))
-  if norm_e == 0.0 and norm_a == 0.0:
-    return 1.0
-  return float(np.dot(e, a) / (norm_e * norm_a + 1e-30))
-
-
-def _max_abs_error(expected: np.ndarray, actual: np.ndarray) -> float:
-  return float(
-      np.max(np.abs(expected.astype(np.float32) - actual.astype(np.float32)))
-  )
-
-
 def _run_kernel(a_fp8, b_fp8, sa, sb, out_dtype) -> np.ndarray:
   """Runs the kernel and returns the result as an FP32 numpy array."""
   out = kernels.blockwise_scaled_mm(
@@ -126,11 +104,6 @@ def _decode(payload_fp8, scale, axis: int) -> np.ndarray:
   p = np.asarray(payload_fp8).astype(np.float32)
   s = np.repeat(np.asarray(scale).astype(np.float32), _BLOCK_SIZE, axis=axis)
   return p * s
-
-
-def _reference_matmul(a_real: np.ndarray, b_real: np.ndarray) -> np.ndarray:
-  """Reference matmul in FP32, independent of the kernel."""
-  return a_real.astype(np.float32) @ b_real.astype(np.float32)
 
 
 def _random_e4m3(
@@ -222,7 +195,7 @@ class BlockwiseScaledMmStructuralTest(_BlockwiseScaledMmTestBase):
     out = _run_kernel(
         a.astype(_FP8_E4M3), b.astype(_FP8_E4M3), sa, sb, jnp.float32
     )
-    expected = _reference_matmul(a, b)
+    expected = scaled_mm_test_utils.reference_matmul(a, b)
     np.testing.assert_array_equal(out, expected)
 
   @parameterized.named_parameters(*_MARKER_SHAPES)
@@ -236,7 +209,7 @@ class BlockwiseScaledMmStructuralTest(_BlockwiseScaledMmTestBase):
     out = _run_kernel(
         a.astype(_FP8_E4M3), b.astype(_FP8_E4M3), sa, sb, jnp.float32
     )
-    expected = _reference_matmul(a, b)
+    expected = scaled_mm_test_utils.reference_matmul(a, b)
     np.testing.assert_array_equal(out, expected)
 
   @parameterized.named_parameters(*_MARKER_SHAPES)
@@ -256,7 +229,7 @@ class BlockwiseScaledMmStructuralTest(_BlockwiseScaledMmTestBase):
         jnp.float32,
     )
     a_real = _decode(a_payload.astype(_FP8_E4M3), sa, axis=1)
-    expected = _reference_matmul(a_real, b_payload)
+    expected = scaled_mm_test_utils.reference_matmul(a_real, b_payload)
     np.testing.assert_array_equal(out, expected)
 
   @parameterized.named_parameters(*_MARKER_SHAPES)
@@ -276,7 +249,7 @@ class BlockwiseScaledMmStructuralTest(_BlockwiseScaledMmTestBase):
         jnp.float32,
     )
     b_real = _decode(b_payload.astype(_FP8_E4M3), sb, axis=0)
-    expected = _reference_matmul(a_payload, b_real)
+    expected = scaled_mm_test_utils.reference_matmul(a_payload, b_real)
     np.testing.assert_array_equal(out, expected)
 
 
@@ -293,20 +266,25 @@ class BlockwiseScaledMmRandomTest(_BlockwiseScaledMmTestBase):
     sb = np.ones((k // _BLOCK_SIZE, n), np.float32)
 
     out = _run_kernel(a_fp8, b_fp8, sa, sb, jnp.bfloat16)
-    expected = _reference_matmul(a_real, b_real)
+    expected = scaled_mm_test_utils.reference_matmul(a_real, b_real)
 
-    cos_sim = _cosine_similarity(expected, out)
+    cos_sim = scaled_mm_test_utils.cosine_similarity(expected, out)
     logging.info(
         "random_exact_e4m3 shape=(%d,%d,%d) cos_sim=%.6f max_abs_err=%.3g",
         m,
         k,
         n,
         cos_sim,
-        _max_abs_error(expected, out),
+        scaled_mm_test_utils.max_abs_error(expected, out),
     )
     self.assertEqual(out.shape, (m, n))
-    self.assertGreaterEqual(cos_sim, _COSINE_SIM_FLOOR)
-    np.testing.assert_allclose(out, expected, rtol=_BF16_RTOL, atol=_BF16_ATOL)
+    self.assertGreaterEqual(cos_sim, scaled_mm_test_utils.COSINE_FLOOR)
+    np.testing.assert_allclose(
+        out,
+        expected,
+        rtol=scaled_mm_test_utils.FP8_MXU_RTOL,
+        atol=scaled_mm_test_utils.FP8_MXU_ATOL,
+    )
 
   @parameterized.named_parameters(*_SHAPES)
   def test_random_data_derived_scales(self, m, k, n):
@@ -319,12 +297,14 @@ class BlockwiseScaledMmRandomTest(_BlockwiseScaledMmTestBase):
 
     out = _run_kernel(a_fp8, b_fp8, sa, sb, jnp.bfloat16)
 
-    original_ref = _reference_matmul(a_real, b_real)
-    cos_sim_original = _cosine_similarity(original_ref, out)
-    quantized_ref = _reference_matmul(
+    original_ref = scaled_mm_test_utils.reference_matmul(a_real, b_real)
+    cos_sim_original = scaled_mm_test_utils.cosine_similarity(original_ref, out)
+    quantized_ref = scaled_mm_test_utils.reference_matmul(
         _decode(a_fp8, sa, axis=1), _decode(b_fp8, sb, axis=0)
     )
-    cos_sim_quantized = _cosine_similarity(quantized_ref, out)
+    cos_sim_quantized = scaled_mm_test_utils.cosine_similarity(
+        quantized_ref, out
+    )
     logging.info(
         "data_derived shape=(%d,%d,%d) cos_sim_original=%.6f "
         "cos_sim_quantized=%.6f max_abs_err=%.3g",
@@ -333,13 +313,18 @@ class BlockwiseScaledMmRandomTest(_BlockwiseScaledMmTestBase):
         n,
         cos_sim_original,
         cos_sim_quantized,
-        _max_abs_error(quantized_ref, out),
+        scaled_mm_test_utils.max_abs_error(quantized_ref, out),
     )
     self.assertEqual(out.shape, (m, n))
-    self.assertGreaterEqual(cos_sim_original, _COSINE_SIM_FLOOR)
-    self.assertGreaterEqual(cos_sim_quantized, _COSINE_SIM_FLOOR)
+    self.assertGreaterEqual(cos_sim_original, scaled_mm_test_utils.COSINE_FLOOR)
+    self.assertGreaterEqual(
+        cos_sim_quantized, scaled_mm_test_utils.COSINE_FLOOR
+    )
     np.testing.assert_allclose(
-        out, quantized_ref, rtol=_BF16_RTOL, atol=_BF16_ATOL
+        out,
+        quantized_ref,
+        rtol=scaled_mm_test_utils.FP8_MXU_RTOL,
+        atol=scaled_mm_test_utils.FP8_MXU_ATOL,
     )
 
 
@@ -364,7 +349,9 @@ class BlockwiseScaledMmEdgeCaseTest(_BlockwiseScaledMmTestBase):
             out_dtype=jnp.float32,
         )
     )
-    expected = _reference_matmul(_decode(a, sa, axis=1), _decode(b, sb, axis=0))
+    expected = scaled_mm_test_utils.reference_matmul(
+        _decode(a, sa, axis=1), _decode(b, sb, axis=0)
+    )
     np.testing.assert_array_equal(out, expected)
 
 
