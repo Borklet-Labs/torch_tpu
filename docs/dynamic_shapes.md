@@ -2,7 +2,7 @@
 
 <!-- Link to colab and to generated notebook -->
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google-pytorch/torch_tpu/blob/main/docs/notebooks/dynamic_shapes.ipynb)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google-pytorch/torch_tpu/blob/0.2.0-docs/docs/notebooks/dynamic_shapes.ipynb)
 
 When you compile a model with `torch.compile(model)`, TorchTPU lowers the
 computation to StableHLO and compiles it with the XLA compiler (see

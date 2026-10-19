@@ -32,7 +32,7 @@ def _(mo):
     # Introduction to TorchTPU
 
     <!-- Link to colab and to generated notebook -->
-    [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google-pytorch/torch_tpu/blob/main/docs/notebooks/intro_to_torchtpu.ipynb)
+    [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google-pytorch/torch_tpu/blob/0.2.0-docs/docs/notebooks/intro_to_torchtpu.ipynb)
 
     TorchTPU is an open-source, native PyTorch backend for [Google Cloud TPUs](https://cloud.google.com/tpu), developed in collaboration between Google and the PyTorch team at Meta. With TorchTPU, developers can run existing PyTorch workloads on TPU hardware with minimal code changes and scale training and inference workloads from a single chip to multi-slice TPU pods.
 
@@ -46,7 +46,7 @@ def _(mo):
 
     ## Quickstart: Running on TPU
 
-    In the following cell, you can see a simple example of a PyTorch program running on TPU. You can run [this example on Colab](https://colab.research.google.com/github/google-pytorch/torch_tpu/blob/main/docs/notebooks/intro_to_torchtpu.ipynb) by enabling the TPU runtime.
+    In the following cell, you can see a simple example of a PyTorch program running on TPU. You can run [this example on Colab](https://colab.research.google.com/github/google-pytorch/torch_tpu/blob/0.2.0-docs/docs/notebooks/intro_to_torchtpu.ipynb) by enabling the TPU runtime.
     """)
   return
 
@@ -93,7 +93,7 @@ def _(mo):
     * Dynamic Shapes cause recompilations
       * `torch.compile` sets `dynamic=False` by default on TorchTPU. `dynamic=None` or `dynamic=True` are not yet supported for production. [See discussion on dynamic shapes](./dynamic_shapes.md)
       * As example, running decode/generate step on Hugging Face LLMs will involve recompilations at each step unless bounded dynamism is enabled.
-    * View ops may be expensive on TPU (see [TorchTPU memory model](./torchtpu_memory_model.md))
+    * View ops may be expensive on TPU (see [TorchTPU memory model](./torchtpu_memory_model.md)).
     * MPMD with collectives is supported for functionality, but it will not reach peak performance yet. Collective overlap with compute has [some constraints](./distributed_support.md):
       * Full stream support with SparseCore offload will come in the near future.
       * Use SimpleFSDP with `torch.compile()` as opposed to FSDPv2 with eager or `torch.compile` see [FSDP best practices](./case_studies_fsdp.md)

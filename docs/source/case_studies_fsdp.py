@@ -39,7 +39,7 @@ def _(mo):
 
     This guide explains the recommended way to do FSDP on TorchTPU and points to
     runnable examples in
-    [`examples/fsdp`](https://github.com/google-pytorch/torch_tpu/tree/main/examples/fsdp).
+    [`examples/fsdp`](../examples/fsdp).
 
     In this guide, you will learn:
 
@@ -69,10 +69,10 @@ def _(mo):
 
     | Approach | When to use it | Example |
     | :------- | :------------- | :------ |
-    | **SimpleFSDP** (`simple_fsdp.data_parallel`) | **Recommended default.** You want FSDP or HSDP without changing the model definition.| [`fsdp_to_simple_fsdp/`](https://github.com/google-pytorch/torch_tpu/tree/main/examples/fsdp/fsdp_to_simple_fsdp) |
-    | **Manual FSDP** (manual collectives) | You own the model code and want the communication code next to the computation for performance tuning. | [`manual/`](https://github.com/google-pytorch/torch_tpu/tree/main/examples/fsdp/manual) |
+    | **SimpleFSDP** (`simple_fsdp.data_parallel`) | **Recommended default.** You want FSDP or HSDP without changing the model definition.| [`fsdp_to_simple_fsdp/`](../examples/fsdp/fsdp_to_simple_fsdp) |
+    | **Manual FSDP** (manual collectives) | You own the model code and want the communication code next to the computation for performance tuning. | [`manual/`](../examples/fsdp/manual) |
     | **PyTorch FSDPv2** (`fully_shard`) | Existing code that has not been migrated yet. It works, but its runtime hooks cause graph breaks and for competitive performance requires upcoming support for stream offload to the TPU’s SparseCore.
-.| [Migration guide](https://github.com/google-pytorch/torch_tpu/blob/main/examples/fsdp/fsdp_to_simple_fsdp/fsdp_to_simple_fsdp.md) |
+.| [Migration guide](../examples/fsdp/fsdp_to_simple_fsdp/fsdp_to_simple_fsdp.md) |
 
     SimpleFSDP and manual FSDP both express the collectives as part of the traced
     graph, so XLA can optimize them together with the rest of the step. PyTorch
@@ -82,7 +82,7 @@ def _(mo):
 
     For a side-by-side comparison of compiled FSDPv2 and compiled SimpleFSDP, see
     the
-    [FSDPv2 to SimpleFSDP tutorial](https://github.com/google-pytorch/torch_tpu/blob/main/examples/fsdp/fsdp_to_simple_fsdp/fsdp_to_simple_fsdp.md).
+    [FSDPv2 to SimpleFSDP tutorial](../examples/fsdp/fsdp_to_simple_fsdp/fsdp_to_simple_fsdp.md).
     """)
   return
 
@@ -92,7 +92,7 @@ def _(mo):
   mo.md(r"""
     ## 2. Recommended: SimpleFSDP
 
-    [`simple_fsdp`](https://github.com/google-pytorch/torch_tpu/blob/main/examples/fsdp/simple_fsdp.py)
+    [`simple_fsdp`](../examples/fsdp/simple_fsdp.py)
     is as FSDP implementation designed to work with `torch.compile`. It was introduced in TorchTitan, and a
     self-contained copy that depends only on PyTorch is provided in
     `examples/fsdp/simple_fsdp.py`.
@@ -107,9 +107,9 @@ def _(mo):
 
     To learn how to use SimpleFSDP, see:
 
-    *   [SimpleFSDP README](https://github.com/google-pytorch/torch_tpu/blob/main/examples/fsdp/fsdp_to_simple_fsdp/README.md):
+    *   [SimpleFSDP README](../examples/fsdp/README.md):
         quick start and available options.
-    *   [FSDPv2 to SimpleFSDP tutorial](https://github.com/google-pytorch/torch_tpu/blob/main/examples/fsdp/fsdp_to_simple_fsdp/fsdp_to_simple_fsdp.md):
+    *   [FSDPv2 to SimpleFSDP tutorial](../examples/fsdp/fsdp_to_simple_fsdp/fsdp_to_simple_fsdp.md):
         how to migrate existing `fully_shard` code.
     """)
   return
@@ -131,7 +131,7 @@ def _(mo):
     definition.
 
     To learn how to implement manual FSDP, see the
-    [manual FSDP guide](https://github.com/google-pytorch/torch_tpu/blob/main/examples/fsdp/manual/manual_fsdp.md).
+    [manual FSDP guide](../examples/fsdp/manual/manual_fsdp.md).
     """)
   return
 
@@ -189,9 +189,9 @@ def _(mo):
 
     | Example | Launch command | What it checks |
     :-------- | :------------- | :------------- |
-    | [`fsdp_to_simple_fsdp/`](https://github.com/google-pytorch/torch_tpu/tree/main/examples/fsdp/fsdp_to_simple_fsdp) | `./run_fsdp_to_simple_fsdp.sh` | Compiled FSDPv2 and compiled <br> SimpleFSDP have matching losses <br> and predictions, and their step <br> times are reported. |
-    | [`manual/`](https://github.com/google-pytorch/torch_tpu/tree/main/examples/fsdp/manual) | `./launch.sh` or `python3 launch.py` | Manual FSDP gradients and predictions <br> match a single-device CPU reference. |
-    | [`manual/`](https://github.com/google-pytorch/torch_tpu/tree/main/examples/fsdp/manual) | `python3 manual_fsdp_memory_test.py` | Unsharded weights are freed after the <br> forward pass. |
+    | [`fsdp_to_simple_fsdp/`](../examples/fsdp/fsdp_to_simple_fsdp) | `./run_fsdp_to_simple_fsdp.sh` | Compiled FSDPv2 and compiled <br> SimpleFSDP have matching losses <br> and predictions, and their step <br> times are reported. |
+    | [`manual/`](../examples/fsdp/manual) | `./launch.sh` or `python3 launch.py` | Manual FSDP gradients and predictions <br> match a single-device CPU reference. |
+    | [`manual/`](../examples/fsdp/manual) | `python3 manual_fsdp_memory_test.py` | Unsharded weights are freed after the <br> forward pass. |
     """)
   return
 

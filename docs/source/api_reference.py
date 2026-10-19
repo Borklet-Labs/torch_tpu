@@ -37,7 +37,7 @@ def _(mo):
     *   **Use TPU-specific features**: Configure execution modes, MXU numerical precision, distributed topology, custom Pallas/TPU operators, traceable optimizers, and XProf profiling via the **`torch.tpu`** module.
     *   **Configure the runtime**: Tune compilation caching, debugging checks, and multi-host launch settings through environment variables.
 
-    > **Note:** For the exhaustive, automatically generated source-of-truth list of all public Python APIs and environment variables, see [TorchTPU Public APIs (`public_apis.md`)](https://github.com/google-pytorch/torch_tpu/blob/main/docs/public_apis.md).
+    > **Note:** For the exhaustive, automatically generated source-of-truth list of all public Python APIs and environment variables, see [TorchTPU Public APIs (`public_apis.md`)](./public_apis.md).
     """)
   return
 

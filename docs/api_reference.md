@@ -15,7 +15,7 @@ environment variables. It is designed to help you:
 
 > **Note:** For the exhaustive, automatically generated source-of-truth list of
 > all public Python APIs and environment variables, see
-> [TorchTPU Public APIs (`public_apis.md`)](https://github.com/google-pytorch/torch_tpu/blob/main/docs/public_apis.md).
+> [TorchTPU Public APIs (`public_apis.md`)](./public_apis.md).
 
 ## **Core Device Queries**
 

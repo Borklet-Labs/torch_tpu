@@ -32,7 +32,7 @@ def _(mo):
     # Get started with TorchTPU on a TPU VM
     
     <!-- Link to colab and to generated notebook -->
-    [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google-pytorch/torch_tpu/blob/main/docs/notebooks/get_started_on_a_vm.ipynb)
+    [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google-pytorch/torch_tpu/blob/0.2.0-docs/docs/notebooks/get_started_on_a_vm.ipynb)
  
     The simplest way to use TorchTPU is on a TPU VM.
     In this example we will run a simple tensor parallel example. 
