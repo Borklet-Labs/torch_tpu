@@ -289,6 +289,31 @@ torch_tpu_py_test(
 
 pytype_strict_library(
     # PY_LIBRARY_OK=Decouple from torch_tpu to avoid C++ dependency in coverage tests.
+    name = "module_cache",
+    srcs = ["module_cache.py"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//shims/absl_py/logging",
+        "//shims/etils/epath",
+        "//shims/torch:pytorch",
+    ],
+)
+
+torch_tpu_py_test(
+    name = "module_cache_test",
+    srcs = ["module_cache_test.py"],
+    deps = [
+        ":module_cache",
+        ":seed_test_utils",
+        "//shims/absl_py/testing:absltest",
+        "//shims/etils/epath",
+        "//shims/torch:pytorch",
+        "//src/torch_tpu",
+    ],
+)
+
+pytype_strict_library(
+    # PY_LIBRARY_OK=Decouple from torch_tpu to avoid C++ dependency in coverage tests.
     name = "module_registry",
     srcs = [
         "module_registry.py",
@@ -301,6 +326,7 @@ pytype_strict_library(
     ],
     visibility = ["//:__subpackages__"],
     deps = [
+        ":module_cache",
         "//shims/absl_py/flags",
         "//shims/absl_py/logging",
         "//shims/etils/epath",
@@ -330,6 +356,7 @@ torch_tpu_py_test(
         "requires-net:external",
     ],
     deps = [
+        ":module_cache",
         ":module_registry",
         ":seed_test_utils",
         "//shims/absl_py/testing:absltest",

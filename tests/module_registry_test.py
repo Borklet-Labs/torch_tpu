@@ -39,6 +39,7 @@ from google.cloud import storage
 from PIL import Image
 import torch
 from torch_tpu._internal import testing as tt_testing
+from tests import module_cache
 from tests import module_registry
 from tests import seed_test_utils
 from tests import transformers_inputs
@@ -53,8 +54,8 @@ class ModuleRegistryTest(seed_test_utils.RepeatableTest):
   def setUp(self):
     super().setUp()
     tt_testing.reset_eager_state()
-    module_registry.clear_config_cache()
-    self.addCleanup(module_registry.clear_config_cache)
+    module_cache.clear_config_cache()
+    self.addCleanup(module_cache.clear_config_cache)
     self.module_registry = module_registry.ModuleRegistry()
 
   def test_non_existent_path(self):
@@ -1950,7 +1951,7 @@ class ModuleRegistryTest(seed_test_utils.RepeatableTest):
     self.assertIsInstance(model, torch.nn.Module)
 
   def test_transformers_config_caching_and_hook_isolation(self):
-    module_registry.clear_config_cache()
+    module_cache.clear_config_cache()
     model_name = "google/gemma-3-270m"
 
     # First call loads config and caches it
@@ -1975,7 +1976,7 @@ class ModuleRegistryTest(seed_test_utils.RepeatableTest):
     self.assertEqual(spec3.config.vocab_size, orig_vocab)
 
   def test_transformers_config_cache_avoids_repeated_load(self):
-    module_registry.clear_config_cache()
+    module_cache.clear_config_cache()
     model_name = "google/gemma-3-270m"
 
     spec1 = self.module_registry.get_module_spec("transformers", model_name)
@@ -1990,7 +1991,7 @@ class ModuleRegistryTest(seed_test_utils.RepeatableTest):
       self.assertEqual(spec1.config.vocab_size, spec2.config.vocab_size)
 
   def test_diffusers_config_caching_and_hook_isolation(self):
-    module_registry.clear_config_cache()
+    module_cache.clear_config_cache()
     model_name = "stabilityai/stable-diffusion-xl-base-1.0"
 
     spec1 = self.module_registry.get_module_spec(
@@ -2019,7 +2020,7 @@ class ModuleRegistryTest(seed_test_utils.RepeatableTest):
     self.assertEqual(spec3.config.get("sample_size"), orig_sample_size)
 
   def test_diffusers_config_cache_avoids_repeated_load(self):
-    module_registry.clear_config_cache()
+    module_cache.clear_config_cache()
     model_name = "stabilityai/stable-diffusion-xl-base-1.0"
 
     spec1 = self.module_registry.get_module_spec(
@@ -2039,13 +2040,13 @@ class ModuleRegistryTest(seed_test_utils.RepeatableTest):
       )
 
   def test_weights_are_not_cached(self):
-    module_registry.clear_config_cache()
+    module_cache.clear_config_cache()
     model_name = "google/gemma-3-270m"
 
     spec = self.module_registry.get_module_spec("transformers", model_name)
 
     # Verify no torch.Tensor or torch.nn.Module stored in config cache
-    for entry in module_registry._CONFIG_CACHE._values():
+    for entry in module_cache.CONFIG_CACHE.values():
       self.assertNotIsInstance(entry.config, torch.nn.Module)
       self.assertNotIsInstance(entry.config, torch.Tensor)
 
@@ -2056,13 +2057,13 @@ class ModuleRegistryTest(seed_test_utils.RepeatableTest):
 
   def test_clear_config_cache(self):
     self.module_registry.get_module_spec("transformers", "google/gemma-3-270m")
-    self.assertNotEmpty(module_registry._CONFIG_CACHE)
+    self.assertNotEmpty(module_cache.CONFIG_CACHE)
 
-    module_registry.clear_config_cache()
-    self.assertEmpty(module_registry._CONFIG_CACHE)
+    module_cache.clear_config_cache()
+    self.assertEmpty(module_cache.CONFIG_CACHE)
 
   def test_concurrent_cache_access(self):
-    module_registry.clear_config_cache()
+    module_cache.clear_config_cache()
     model_name = "google/gemma-3-270m"
     num_threads = 10
     results: list[module_registry.ModuleSpec | None] = [None] * num_threads
@@ -2116,7 +2117,7 @@ class ModuleRegistryTest(seed_test_utils.RepeatableTest):
     )
 
   def test_diffusers_concurrent_cache_access(self):
-    module_registry.clear_config_cache()
+    module_cache.clear_config_cache()
     model_name = "stabilityai/stable-diffusion-xl-base-1.0"
     num_threads = 10
     results: list[module_registry.ModuleSpec | None] = [None] * num_threads
@@ -2191,7 +2192,7 @@ class ModuleRegistryTest(seed_test_utils.RepeatableTest):
     self.assertIsNotNone(model)
 
   def test_transformers_preprocessor_cache_and_text_modality_priority(self):
-    module_registry.clear_config_cache()
+    module_cache.clear_config_cache()
     model_name = "google/gemma-3-270m"
 
     fake_tokenizer = mock.MagicMock(name="FakeTokenizer")
@@ -2270,12 +2271,12 @@ class ModuleRegistryTest(seed_test_utils.RepeatableTest):
       self.assertEqual(vision_inputs["pixel_values"].shape, (1, 3, 384, 384))
       mock_proc_load.assert_called_once()
 
-    self.assertNotEmpty(module_registry._PREPROCESSOR_CACHE)
-    module_registry.clear_preprocessor_cache()
-    self.assertEmpty(module_registry._PREPROCESSOR_CACHE)
+    self.assertNotEmpty(module_cache.PREPROCESSOR_CACHE)
+    module_cache.clear_preprocessor_cache()
+    self.assertEmpty(module_cache.PREPROCESSOR_CACHE)
 
   def test_transformers_preprocessor_deterministic_file_selection(self):
-    module_registry.clear_config_cache()
+    module_cache.clear_config_cache()
     fake_processor = mock.MagicMock(name="FakeProcessor")
     with tempfile.TemporaryDirectory() as tmp_dir:
       (pathlib.Path(tmp_dir) / "preprocessor_config.json").write_text("{}")
@@ -2298,10 +2299,10 @@ class ModuleRegistryTest(seed_test_utils.RepeatableTest):
         mock_proc_load.assert_called_once()
 
   def test_concurrent_preprocessor_cache_access(self):
-    module_registry.clear_config_cache()
+    module_cache.clear_config_cache()
     model_name = "google/gemma-3-270m"
     spec = self.module_registry.get_module_spec("transformers", model_name)
-    module_registry.clear_preprocessor_cache()
+    module_cache.clear_preprocessor_cache()
 
     num_threads = 10
     results: list[object] = [None] * num_threads

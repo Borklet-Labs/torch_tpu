@@ -48,9 +48,8 @@ import os
 import pathlib
 import sys
 import tempfile
-import threading
 import types
-from typing import Any, Iterator, NamedTuple, overload
+from typing import Any, Iterator, overload
 import uuid
 
 from absl import flags
@@ -61,6 +60,7 @@ from google.cloud import storage
 from safetensors import torch as safetensors_torch
 import torch
 
+from tests import module_cache
 from tests import transformers_inputs
 
 try:
@@ -699,166 +699,6 @@ def _download_gcs_blob(
 _PROVIDER_ALIASES: dict[str, str] = {
     "sentence-transformers": "transformers",
 }
-
-
-_CacheKey = tuple[str, str | None, str, str | None, bool]
-
-
-class _ConfigCacheEntry(NamedTuple):
-  config: Any
-  path: epath.Path | None = None
-  subfolder: str | None = None
-
-
-class _ConfigCacheManager:
-  """Thread-safe cache manager for model configurations across providers."""
-
-  def __init__(self):
-    self._global_lock = threading.Lock()
-    self._key_locks: dict[_CacheKey, threading.Lock] = {}
-    self._cache: dict[_CacheKey, _ConfigCacheEntry] = {}
-
-  def __len__(self) -> int:
-    with self._global_lock:
-      return len(self._cache)
-
-  def _values(self) -> list[_ConfigCacheEntry]:
-    with self._global_lock:
-      return list(self._cache.values())
-
-  def clear(self) -> None:
-    """Clears all cached configurations."""
-    with self._global_lock:
-      self._cache.clear()
-
-  def _make_key(
-      self,
-      provider: str,
-      base_path: epath.Path | str | None,
-      name: str,
-      subfolder: str | None = None,
-      load_weights: bool = False,
-  ) -> _CacheKey:
-    return (
-        provider,
-        str(base_path) if base_path is not None else None,
-        name,
-        subfolder,
-        load_weights,
-    )
-
-  def _get_key_lock(self, key: _CacheKey) -> threading.Lock:
-    with self._global_lock:
-      if key not in self._key_locks:
-        self._key_locks[key] = threading.Lock()
-      return self._key_locks[key]
-
-  def get(
-      self,
-      provider: str,
-      base_path: epath.Path | str | None,
-      name: str,
-      subfolder: str | None = None,
-      *,
-      load_weights: bool = False,
-      loader: Callable[[], _ConfigCacheEntry],
-  ) -> _ConfigCacheEntry:
-    """Gets cached entry or loads and stores it atomically per key."""
-    key = self._make_key(
-        provider, base_path, name, subfolder, load_weights=load_weights
-    )
-
-    # 1. Fast-path lookup
-    with self._global_lock:
-      cached = self._cache.get(key)
-    if cached is not None:
-      return copy.deepcopy(cached)
-
-    # 2. Acquire per-key lock
-    key_lock = self._get_key_lock(key)
-    with key_lock:
-      # 3. Double-check cache inside per-key lock
-      with self._global_lock:
-        cached = self._cache.get(key)
-      if cached is not None:
-        return copy.deepcopy(cached)
-
-      # 4. Load fresh entry outside global lock
-      fresh_entry = loader()
-
-      # 5. Store defensive deep-copy in cache
-      cached_entry = copy.deepcopy(fresh_entry)
-      with self._global_lock:
-        self._cache[key] = cached_entry
-
-      return fresh_entry
-
-
-_CONFIG_CACHE = _ConfigCacheManager()
-
-
-_PreprocessorCacheKey = tuple[Any, ...]
-
-
-class _PreprocessorCacheManager:
-  """Thread-safe cache manager for model preprocessors and tokenizers."""
-
-  def __init__(self):
-    self._global_lock = threading.Lock()
-    self._key_locks: dict[_PreprocessorCacheKey, threading.Lock] = {}
-    self._cache: dict[_PreprocessorCacheKey, Any] = {}
-
-  def __len__(self) -> int:
-    with self._global_lock:
-      return len(self._cache)
-
-  def clear(self) -> None:
-    """Clears all cached preprocessors and tokenizers."""
-    with self._global_lock:
-      self._cache.clear()
-
-  def _get_key_lock(self, key: _PreprocessorCacheKey) -> threading.Lock:
-    with self._global_lock:
-      if key not in self._key_locks:
-        self._key_locks[key] = threading.Lock()
-      return self._key_locks[key]
-
-  def get_or_load(
-      self,
-      key: _PreprocessorCacheKey,
-      loader: Callable[[], Any],
-  ) -> Any:
-    """Gets cached preprocessor or loads and stores it atomically per key."""
-    with self._global_lock:
-      if key in self._cache:
-        return self._cache[key]
-
-    key_lock = self._get_key_lock(key)
-    with key_lock:
-      with self._global_lock:
-        if key in self._cache:
-          return self._cache[key]
-
-      fresh_entry = loader()
-
-      with self._global_lock:
-        self._cache[key] = fresh_entry
-
-      return fresh_entry
-
-
-_PREPROCESSOR_CACHE = _PreprocessorCacheManager()
-
-
-def clear_preprocessor_cache() -> None:
-  """Clears the in-memory preprocessor and tokenizer cache."""
-  _PREPROCESSOR_CACHE.clear()
-
-
-def clear_config_cache() -> None:
-  """Clears the in-memory config and preprocessor caches for all providers."""
-  _CONFIG_CACHE.clear()
-  _PREPROCESSOR_CACHE.clear()
 
 
 class _ConfigWrapper:
@@ -1902,7 +1742,7 @@ def _load_transformers_preprocessor(
     (`tokenizer_config.json`, `tokenizer.json`, `spiece.model`, `vocab.json`,
     `vocab.txt`, `merges.txt`), then invokes `AutoTokenizer.from_pretrained` or
     `AutoProcessor.from_pretrained` according to `modality` and caches the
-    loaded instance in `_PREPROCESSOR_CACHE`.
+    loaded instance in `module_cache.PREPROCESSOR_CACHE`.
 
   Why this is needed as a separate stage:
     Preprocessor loading is exposed lazily via `ModuleSpec.preprocessor_factory`
@@ -1977,7 +1817,7 @@ def _load_transformers_preprocessor(
       )
       return None
 
-  return _PREPROCESSOR_CACHE.get_or_load(cache_key, _loader)
+  return module_cache.PREPROCESSOR_CACHE.get_or_load(cache_key, _loader)
 
 
 # go/keep-sorted
@@ -3388,19 +3228,19 @@ class TransformersProvider(BaseProvider):
   ) -> tuple[Any, epath.Path | None]:
     base_path = self._base_path if self.has_cache_dir else None
 
-    def _loader() -> _ConfigCacheEntry:
+    def _loader() -> module_cache.ConfigCacheEntry:
       with self._resolve_transformers_config_path(
           name, load_weights=load_weights
       ) as (cfg_path, model_dir_or_repo_id):
         config = _load_and_sanitize_transformers_config(
             cfg_path, load_weights=load_weights
         )
-        return _ConfigCacheEntry(
+        return module_cache.ConfigCacheEntry(
             config=config,
             path=model_dir_or_repo_id,
         )
 
-    entry = _CONFIG_CACHE.get(
+    entry = module_cache.CONFIG_CACHE.get(
         "transformers",
         base_path,
         name,
@@ -3624,7 +3464,7 @@ class DiffusersProvider(BaseProvider):
   ) -> tuple[Any, str | None, epath.Path | None]:
     base_path = self._base_path if self.has_cache_dir else None
 
-    def _loader() -> _ConfigCacheEntry:
+    def _loader() -> module_cache.ConfigCacheEntry:
       raw_config = None
       resolved_subfolder = subfolder
       model_path = None
@@ -3733,13 +3573,13 @@ class DiffusersProvider(BaseProvider):
             " and could not be loaded from cache or GCS."
         )
 
-      return _ConfigCacheEntry(
+      return module_cache.ConfigCacheEntry(
           config=raw_config,
           path=model_path,
           subfolder=resolved_subfolder,
       )
 
-    entry = _CONFIG_CACHE.get(
+    entry = module_cache.CONFIG_CACHE.get(
         "diffusers",
         base_path,
         name,
