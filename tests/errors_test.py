@@ -574,6 +574,40 @@ class TpuVsGpuErrorTest(et.ErrorTestBase):
           t, [10, 10], False, None, None, out=out
       )
 
+  def test_upsample_bilinear2d_invalid_rank(self):
+    t = torch.ones(1, 2, 4, device=et.device(), dtype=torch.float32)
+    out = torch.empty(1, 2, 10, 10, device=et.device(), dtype=torch.float32)
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""upsample_bilinear2d(): expected 4D input and out tensors, got input: 3D, out: 4D""",
+        gpu="""It is expected input_size equals to 4, but got size 3""",
+    ):
+      torch.ops.aten.upsample_bilinear2d.out(
+          t, [10, 10], False, None, None, out=out
+      )
+
+  def test_upsample_bilinear2d_backward_invalid_input_size(self):
+    grad_output = torch.ones(
+        1, 2, 10, 10, device=et.device(), dtype=torch.float32
+    )
+    grad_input = torch.empty(
+        1, 2, 4, 4, device=et.device(), dtype=torch.float32
+    )
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""upsample_bilinear2d_backward(): expected 4D grad_output tensor and 4-element input_size, got grad_output: 4D, input_size: 3 elements""",
+        gpu="""It is expected input_size equals to 4, but got size 3""",
+    ):
+      torch.ops.aten.upsample_bilinear2d_backward.grad_input(
+          grad_output,
+          [10, 10],
+          [1, 2, 4],
+          False,
+          None,
+          None,
+          grad_input=grad_input,
+      )
+
   def test_upsample_linear1d_invalid_rank(self):
     t = torch.ones(2, 3, device=et.device(), dtype=torch.float32)
     out = torch.empty(2, 10, device=et.device(), dtype=torch.float32)

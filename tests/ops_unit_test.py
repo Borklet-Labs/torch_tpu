@@ -4745,6 +4745,104 @@ class OpsUnitTest(TorchTpuVsCpuTestBase):
 
     self.assert_close(golden_result=out_cpu, torch_tpu_result=out_tpu.cpu())
 
+  @parameterized.product(
+      dtype=(torch.float32, torch.bfloat16, torch.float16, torch.float64),
+      case=(
+          # (input_shape_or_hw, size, scale_factor)
+          ((7, 5), (19, 13), None),
+          ((16, 12), (6, 5), None),
+          ((6, 10), (14, 4), None),
+          ((6, 5), None, (2.5, 2.4)),
+          ((10, 10), None, (0.4, 0.4)),
+          ((5, 6), None, (1.1, 2.5)),
+          ((1, 4), (5, 4), None),
+          ((5, 6), (1, 1), None),
+          ((6, 6), (6, 6), None),
+          ((513, 4), (520, 8), None),
+          ((0, 3, 5, 5), (10, 10), None),
+      ),
+      align_corners=(False, True),
+  )
+  def test_upsample_bilinear2d_forward_backward(
+      self, dtype, case, align_corners
+  ):
+    # Exercises the separable (matmul) bilinear lowering for static shapes:
+    # up/down sampling, non-integer and explicit scale factors, mixed
+    # directions, identity dims, empty batch, and larger spatial extents.
+    atol, rtol = {
+        torch.float32: (1e-4, 1e-4),
+        torch.bfloat16: (1e-2, 1.6e-2),
+        torch.float16: (5e-3, 5e-3),
+        torch.float64: (1e-10, 1e-10),
+    }[dtype]
+    input_shape, size, scale_factor = case
+    if len(input_shape) == 2:
+      input_shape = (2, 3, *input_shape)
+    tpu_device = torch.device("tpu")
+    torch.manual_seed(0)
+    x_cpu = torch.randn(*input_shape, dtype=dtype, requires_grad=True)
+    x_tpu = x_cpu.detach().to(tpu_device).requires_grad_(True)
+    kwargs = {
+        "size": size,
+        "scale_factor": scale_factor,
+        "mode": "bilinear",
+        "align_corners": align_corners,
+    }
+    out_cpu = torch.nn.functional.interpolate(x_cpu, **kwargs)
+    out_tpu = torch.nn.functional.interpolate(x_tpu, **kwargs)
+    self.assert_close(
+        golden_result=out_cpu,
+        torch_tpu_result=out_tpu.cpu(),
+        atol=atol,
+        rtol=rtol,
+    )
+    grad_out = torch.randn_like(out_cpu)
+    out_cpu.backward(grad_out)
+    out_tpu.backward(grad_out.to(tpu_device))
+    # Each input element accumulates up to 4 weighted gradient terms per
+    # output element it feeds, so allow more absolute error than the forward.
+    self.assert_close(
+        golden_result=x_cpu.grad,
+        torch_tpu_result=x_tpu.grad.cpu(),
+        atol=atol * 4,
+        rtol=rtol,
+    )
+
+  @parameterized.named_parameters(
+      # Both dims keep their size: returns the input unchanged.
+      ("identity", (1, 2, 5, 5), (5, 5), 1.3, 1.3),
+      # W keeps its size while H is resized: W's scale must be ignored.
+      ("partial_identity", (1, 1, 600, 5), (1200, 5), None, 1.3),
+  )
+  def test_upsample_bilinear2d_identity_with_scale_factor(
+      self, input_size, output_size, scale_h, scale_w
+  ):
+    # PyTorch's CPU kernel ignores the scale of a dim whose size is unchanged.
+    tpu_device = torch.device("tpu")
+    align_corners = False
+    torch.manual_seed(0)
+    x = torch.randn(input_size)
+    out_cpu = torch.ops.aten.upsample_bilinear2d(
+        x, output_size, align_corners, scale_h, scale_w
+    )
+    out_tpu = torch.ops.aten.upsample_bilinear2d(
+        x.to(tpu_device), output_size, align_corners, scale_h, scale_w
+    )
+    self.assert_close(golden_result=out_cpu, torch_tpu_result=out_tpu.cpu())
+    grad_out = torch.randn_like(out_cpu)
+    grad_cpu = torch.ops.aten.upsample_bilinear2d_backward(
+        grad_out, output_size, input_size, align_corners, scale_h, scale_w
+    )
+    grad_tpu = torch.ops.aten.upsample_bilinear2d_backward(
+        grad_out.to(tpu_device),
+        output_size,
+        input_size,
+        align_corners,
+        scale_h,
+        scale_w,
+    )
+    self.assert_close(golden_result=grad_cpu, torch_tpu_result=grad_tpu.cpu())
+
   def test_upsample_linear1d_align_corners(self):
     tpu_device = torch.device("tpu")
     for align_corners in (True, False):
