@@ -39,10 +39,10 @@
 #include "csrc/ops/index_select/index_select.h"
 #include "csrc/ops/linalg/vector_norm/pnorm.h"
 #include "csrc/ops/macros/kernel.h"
-#include "csrc/ops/nullary_aten_kernels.h"
 #include "csrc/ops/op_builder_utils.h"
 #include "csrc/ops/op_names.h"
 #include "csrc/ops/reductions/reductions.h"
+#include "csrc/ops/reductions/sum.h"
 #include "csrc/ops/unary.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "mlir/IR/BuiltinAttributes.h"
@@ -414,19 +414,25 @@ absl::StatusOr<mlir::MlirOp> BuildPdistBackwardShlo(mlir::MlirOp grad_op,
 }
 
 absl::StatusOr<mlir::MlirOp> BuildCdistBackwardShlo(
-    mlir::MlirOp grad_op, mlir::MlirOp x1_op, mlir::MlirOp x2_op, double p,
-    mlir::MlirOp cdist_op, const Dimensions common_batch_shape, int64_t r1,
-    int64_t r2, int64_t c) {
+    mlir::MlirOp grad_op, mlir::MlirOp x1_op, mlir::MlirOp x2_op,
+    const double p, mlir::MlirOp cdist_op, const Dimensions common_batch_shape,
+    const int64_t r1, const int64_t r2, const int64_t c) {
+  TT_ASSIGN_OR_RETURN(const mlir::ElementType out_type, GetElementType(x1_op));
+  TT_ASSIGN_OR_RETURN(const mlir::ElementType compute_dtype,
+                      InferComputationDtype(out_type));
+  TT_ASSIGN_OR_RETURN(grad_op, CastIfNeeded(grad_op, compute_dtype));
+  TT_ASSIGN_OR_RETURN(x1_op, CastIfNeeded(x1_op, compute_dtype));
+  TT_ASSIGN_OR_RETURN(x2_op, CastIfNeeded(x2_op, compute_dtype));
+  TT_ASSIGN_OR_RETURN(cdist_op, CastIfNeeded(cdist_op, compute_dtype));
+
   const mlir::RankedTensorType x1_type = GetTensorTypeOrDie(x1_op);
   const mlir::Type element_type = x1_type.getElementType();
-  TT_ASSIGN_OR_RETURN(mlir::ElementType out_type, GetElementType(x1_op));
-  mlir::MlirBuilder& builder = x1_op.getBuilder();
 
   const int64_t common_batch_rank = common_batch_shape.size();
   Dimensions target_diff_shape(common_batch_shape.begin(),
                                common_batch_shape.end());
   target_diff_shape.insert(target_diff_shape.end(), {r1, r2, c});
-  mlir::RankedTensorType bcast_type =
+  const mlir::RankedTensorType bcast_type =
       mlir::RankedTensorType::get(target_diff_shape, element_type);
 
   // Broadcast X1 to (B_common..., R1, 1, C)
@@ -455,8 +461,7 @@ absl::StatusOr<mlir::MlirOp> BuildCdistBackwardShlo(
   mlir::MlirOp unreduced_grad;
   if (p == 0.0) {
     // Case 1: p = 0.0 (Hamming distance gradient is 0.0)
-    auto zero = MakeScalarConstant(builder, 0.0, out_type);
-    unreduced_grad = mlir::stablehlo::BroadcastInDim(bcast_type, zero, {});
+    unreduced_grad = MakeConstantLike(diff, 0.0);
   } else if (p == 1.0) {
     // Case 2: p = 1.0 (Manhattan distance, gradient: grad * sign(diff))
     TT_ASSIGN_OR_RETURN(auto sign_diff, BuildSignShlo(diff));
@@ -465,10 +470,8 @@ absl::StatusOr<mlir::MlirOp> BuildCdistBackwardShlo(
     // Case 3: p = 2.0 (Euclidean distance, gradient: grad * diff / cdist)
     // Replace cdist with 1.0 where cdist is 0.0 to avoid division-by-zero,
     // then mask those positions to 0.0.
-    auto zero = MakeScalarConstant(builder, 0.0, out_type);
-    auto zero_bcast = mlir::stablehlo::BroadcastInDim(bcast_type, zero, {});
-    auto one = MakeScalarConstant(builder, 1.0, out_type);
-    auto one_bcast = mlir::stablehlo::BroadcastInDim(bcast_type, one, {});
+    auto zero_bcast = MakeConstantLike(diff, 0.0);
+    auto one_bcast = MakeConstantLike(diff, 1.0);
     auto cdist_is_zero = mlir::stablehlo::Compare(
         cdist_bcast, zero_bcast, mlir::stablehlo::ComparisonDirection::EQ);
     auto safe_cdist =
@@ -491,10 +494,8 @@ absl::StatusOr<mlir::MlirOp> BuildCdistBackwardShlo(
     // Case 5: General p (Minkowski distance)
     // Gradient: sign(diff) * |diff|^(p-1) * grad / cdist^(p-1)
     // Use safety condition to mask division-by-zero positions to 0.0.
-    auto zero = MakeScalarConstant(builder, 0.0, out_type);
-    auto zero_bcast = mlir::stablehlo::BroadcastInDim(bcast_type, zero, {});
-    auto one = MakeScalarConstant(builder, 1.0, out_type);
-    auto one_bcast = mlir::stablehlo::BroadcastInDim(bcast_type, one, {});
+    auto zero_bcast = MakeConstantLike(diff, 0.0);
+    auto one_bcast = MakeConstantLike(diff, 1.0);
 
     auto cdist_is_zero = mlir::stablehlo::Compare(
         cdist_bcast, zero_bcast, mlir::stablehlo::ComparisonDirection::EQ);
@@ -507,9 +508,7 @@ absl::StatusOr<mlir::MlirOp> BuildCdistBackwardShlo(
       cond = mlir::stablehlo::Or(cdist_is_zero, diff_is_zero);
     }
 
-    auto p_minus_1 = MakeScalarConstant(builder, p - 1.0, out_type);
-    auto p_minus_1_bcast =
-        mlir::stablehlo::BroadcastInDim(bcast_type, p_minus_1, {});
+    auto p_minus_1_bcast = MakeConstantLike(diff, p - 1.0);
 
     TT_ASSIGN_OR_RETURN(auto abs_diff, BuildAbsShlo(diff));
     auto safe_abs_diff = mlir::stablehlo::Select(cond, one_bcast, abs_diff);
@@ -529,20 +528,8 @@ absl::StatusOr<mlir::MlirOp> BuildCdistBackwardShlo(
   }
 
   // Reduce sum over R2 (dimension common_batch_rank + 1)
-  auto zero = MakeScalarConstant(builder, 0.0, out_type);
-  auto reduce_op = mlir::stablehlo::Reduce(
-      builder,
-      /*inputs=*/{unreduced_grad},
-      /*init_values=*/{zero},
-      /*body_builder=*/
-      [&](mlir::RegionBuilder& rb) {
-        mlir::stablehlo::buildReduceBody<mlir::stablehlo::AddOp>(
-            element_type, rb.getRegion(), rb.getOpBuilder());
-      },
-
-      /*dimensions=*/{common_batch_rank + 1});
-
-  return reduce_op[0];
+  return BuildSumShlo(unreduced_grad, {common_batch_rank + 1},
+                      ReductionMode::kDropDims, out_type);
 }
 
 bool IsBFloatOrHalf(const at::Tensor& tensor) {

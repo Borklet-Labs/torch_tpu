@@ -16935,6 +16935,30 @@ class OpsGradUnitTest(TorchTpuVsCpuTestBase):
 
       self.assert_close_tpu_vs_cpu(test_fn)
 
+  @parameterized.parameters(0.0, 0.5, 1.0, 2.0, 3.0, float("inf"))
+  def test_cdist_backward_with_different_p_values(self, p):
+    x1_init = torch.tensor(
+        [[-1.5, 0.25, 2.0], [0.5, -2.25, 1.0]], dtype=torch.float32
+    )
+    x2_init = torch.tensor(
+        [[0.75, -1.25, -0.5], [-0.25, 1.5, 3.25], [2.5, 0.75, -1.5]],
+        dtype=torch.float32,
+    )
+    grad_out = torch.tensor(
+        [[0.5, -1.25, 0.75], [-0.5, 0.25, 1.5]], dtype=torch.float32
+    )
+
+    def test_fn(device):
+      x1 = to(x1_init.clone(), device=device).requires_grad_(True)
+      x2 = to(x2_init.clone(), device=device).requires_grad_(True)
+      out = torch.cdist(
+          x1, x2, p=p, compute_mode="donot_use_mm_for_euclid_dist"
+      )
+      out.backward(to(grad_out, device=device))
+      return out, x1.grad, x2.grad
+
+    self.assert_close_tpu_vs_cpu(test_fn)
+
   def test_pdist_with_different_p_values(self):
     p_values = [0.0, 1.0, 2.0, float("inf")]
     x = torch.tensor([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])

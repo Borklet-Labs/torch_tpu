@@ -21,9 +21,10 @@
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "c10/util/Optional.h"
+#include "csrc/common/aten_utils.h"
+#include "csrc/common/error_utils.h"
 #include "csrc/ops/op_builder_utils.h"
 #include "csrc/ops/reductions/reductions.h"
-#include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Types.h"
 #include "stablehlo/dialect/StablehloOps.h"
 #include "stablehlo/integrations/cpp/builder/AttrTypeBuilderUtil.h"
@@ -34,26 +35,25 @@ namespace stablehlo = mlir::stablehlo;
 
 absl::StatusOr<mlir::MlirOp> BuildSumShlo(
     mlir::MlirOp input_op, absl::Span<const int64_t> reduce_dims,
-    ReductionMode reduction_mode,
-    c10::optional<mlir::ElementType> element_type_opt) {
+    const ReductionMode reduction_mode,
+    const c10::optional<mlir::ElementType> element_type_opt) {
   mlir::MlirBuilder& builder = input_op.getBuilder();
-  const mlir::RankedTensorType input_type = GetTensorTypeOrDie(input_op);
-  mlir::Type mlir_type;
-  if (element_type_opt.has_value()) {
-    mlir_type =
-        mlir::getElementType(builder.getContext(), element_type_opt.value());
-  } else {
-    mlir_type = input_type.getElementType();
-  }
+  const mlir::ElementType out_elem_type =
+      element_type_opt.value_or(GetElementTypeOrDie(input_op));
+  TT_ASSIGN_OR_RETURN(const mlir::ElementType compute_elem_type,
+                      InferComputationDtype(out_elem_type));
+  const mlir::Type mlir_type =
+      mlir::getElementType(builder.getContext(), compute_elem_type);
   mlir::MlirOp zero_val = MakeScalarConstant(builder, 0.0, mlir_type);
 
-  auto reduce_fn = [mlir_type](mlir::RegionBuilder& rb) {
+  const auto reduce_fn = [mlir_type](mlir::RegionBuilder& rb) {
     mlir::stablehlo::buildReduceBody<stablehlo::AddOp>(
         mlir_type, rb.getRegion(), rb.getOpBuilder());
   };
 
-  return BuildReductionShlo(input_op, reduce_dims, mlir_type, zero_val,
-                            reduce_fn, reduction_mode);
+  mlir::MlirOp result = BuildReductionShlo(input_op, reduce_dims, mlir_type,
+                                           zero_val, reduce_fn, reduction_mode);
+  return CastIfNeeded(result, out_elem_type);
 }
 
 }  // namespace torch_tpu

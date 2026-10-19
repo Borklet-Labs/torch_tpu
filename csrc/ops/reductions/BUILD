@@ -123,6 +123,8 @@ torch_tpu_cc_library(
     hdrs = ["sum.h"],
     deps = [
         ":reductions",
+        "//csrc/common:aten_utils",
+        "//csrc/common:error_utils",
         "//csrc/ops:op_builder_utils",
         "//shims/torch/c10/util:base_headers",
         "@com_google_absl//absl/status:statusor",
