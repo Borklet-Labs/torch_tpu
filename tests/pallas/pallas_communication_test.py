@@ -23,12 +23,10 @@ from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 import torch
 from torch import distributed as dist
-import torch.multiprocessing as mp
 from torch_tpu._internal import pallas
 from torch_tpu._internal.utils import test_utils as utils
 from torch_tpu._internal.distributed import multiprocessing
-from tests import seed_test_utils
-from tests.distributed import distributed_utils
+from tests.distributed import continuous_test_utils
 
 P = jax.sharding.PartitionSpec
 
@@ -128,7 +126,6 @@ def create_1d_mesh_roll_op(mesh, op_name="pallas::mesh_1d_roll"):
 
 def _run_1d_mesh(do_compile):
   device = torch.device("tpu")
-  dist.init_process_group(backend="tpu_dist")
   world_size = dist.get_world_size()
   assert world_size == 8, f"Test requires 8 ranks, got {world_size}"
   rank = dist.get_rank()
@@ -249,7 +246,6 @@ def create_2d_rank_dp_mesh_roll_op(
 
 def _run_2d_rank_dp_mesh(do_compile):
   device = torch.device("tpu")
-  dist.init_process_group(backend="tpu_dist")
   world_size = dist.get_world_size()
   assert world_size == 8, f"Test requires 8 ranks, got {world_size}"
   rank = dist.get_rank()
@@ -308,7 +304,6 @@ def _run_2d_rank_dp_mesh(do_compile):
 
 def _run_combined_collective_and_pallas(do_compile: bool = True):
   device = torch.device("tpu")
-  dist.init_process_group(backend="tpu_dist")
   world_size = dist.get_world_size()
   assert world_size == 8, f"Test requires 8 ranks, got {world_size}"
   rank = dist.get_rank()
@@ -361,7 +356,6 @@ def _run_combined_collective_and_pallas(do_compile: bool = True):
 
 def _test_pallas_axis_index_rank_equivalence():
   device = torch.device("tpu")
-  dist.init_process_group(backend="tpu_dist")
   rank = dist.get_rank()
 
   mesh = pallas.get_default_pallas_mesh()
@@ -411,53 +405,34 @@ def _test_pallas_axis_index_rank_equivalence():
 
 
 class TestPallasCommunicationKernels(
-    seed_test_utils.MultiProcessRepeatableTest
+    continuous_test_utils.TpuMultiProcContinuousTest
 ):
-  _world_size = 8
+
+  @property
+  def world_size(self) -> int:
+    return 8
 
   def test_1d_mesh_kernel_communication_eager(self):
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=functools.partial(_run_1d_mesh, False),
-    )
+    _run_1d_mesh(False)
 
   def test_1d_mesh_kernel_communication_compiled(self):
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=functools.partial(_run_1d_mesh, True),
-    )
+    _run_1d_mesh(True)
 
   def test_2d_rank_dp_mesh_kernel_communication_eager(self):
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=functools.partial(_run_2d_rank_dp_mesh, False),
-    )
+    _run_2d_rank_dp_mesh(False)
 
   def test_2d_rank_dp_mesh_kernel_communication_compiled(self):
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=functools.partial(_run_2d_rank_dp_mesh, True),
-    )
+    _run_2d_rank_dp_mesh(True)
 
   def test_combined_collective_and_pallas_eager(self):
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=functools.partial(_run_combined_collective_and_pallas, False),
-    )
+    _run_combined_collective_and_pallas(False)
 
   def test_combined_collective_and_pallas_compiled(self):
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=functools.partial(_run_combined_collective_and_pallas, True),
-    )
+    _run_combined_collective_and_pallas(True)
 
   def test_pallas_axis_index_rank_equivalence(self):
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=_test_pallas_axis_index_rank_equivalence,
-    )
+    _test_pallas_axis_index_rank_equivalence()
 
 
 if __name__ == "__main__":
-  mp.set_start_method("spawn")
   multiprocessing.handle_test_main(absltest.main)

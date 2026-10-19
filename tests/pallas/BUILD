@@ -99,7 +99,6 @@ torch_tpu_py_test(
     timeout = "long",
     srcs = ["pallas_communication_test.py"],
     env = {"TPU_PREMAPPED_BUFFER_SIZE": "0"},
-    shard_count = 2,
     tags = if_oss(
         ["exclusive"],
         [],
@@ -119,8 +118,7 @@ torch_tpu_py_test(
         "//src/torch_tpu/_internal/distributed:multiprocessing",
         "//src/torch_tpu/_internal/pallas",
         "//src/torch_tpu/_internal/utils:test_utils",
-        "//tests:seed_test_utils",
-        "//tests/distributed:distributed_utils",
+        "//tests/distributed:continuous_test_utils",
         "@pypi//jax",
     ],
 )
