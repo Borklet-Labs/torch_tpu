@@ -1212,7 +1212,7 @@ torch_tpu_py_test(
     srcs = ["window_tpu_test.py"],
     autoload = True,
     notest_oss = True,  # NOTEST_OSS_OK=Requires PJRT RawBuffer extension not yet exported in OSS libtpu.
-    shard_count = 6,
+    shard_count = 2,
     tags = if_oss(
         ["exclusive"],
         [],
@@ -1223,7 +1223,7 @@ torch_tpu_py_test(
         "notsan",  # TODO(b/497035517): fix the test in tsan mode.
     ],
     deps = [
-        ":distributed_utils",
+        ":continuous_test_utils",
         "//shims/absl_py/testing:absltest",
         "//shims/torch:pytorch",
         "//src/torch_tpu",

@@ -14,34 +14,13 @@
 
 """Multi-TPU and zero-copy DMA Window unit tests using standard c10d::Window."""
 
-import os
-from typing import Any, Callable
 from absl.testing import absltest
 import torch
 import torch.distributed as dist
-import torch.multiprocessing as mp
 import torch_tpu  # pylint: disable=unused-import  # ruff: ignore[unused-import]
 from torch_tpu._internal.utils.test_utils import assert_close
 from torch_tpu._internal.distributed import multiprocessing
-from tests.distributed import distributed_utils
-
-
-def _test_wrapper(
-    test_fn: Callable[..., None], *args: Any, **kwargs: Any
-) -> None:
-  """Wrapper to initialize and cleanly teardown the distributed environment.
-
-  Initializes the 'tpu_dist' process group before executing test logic, ensuring
-  a clean barrier synchronization and destruction of the process group upon
-  completion or exception.
-  """
-  dist.init_process_group(backend="tpu_dist")
-  try:
-    test_fn(*args, **kwargs)
-  finally:
-    if dist.is_initialized():
-      dist.barrier()
-      dist.destroy_process_group()
+from tests.distributed import continuous_test_utils
 
 
 def _run_window_backend_support_test() -> None:
@@ -61,7 +40,7 @@ def _run_window_local_h2d_dma_test() -> None:
   Validates that host CPU tensors can be directly transferred via zero-copy
   DMA into pre-registered TPU device memory windows using c10d::Window::put.
   """
-  rank = int(os.environ["RANK"])
+  rank = dist.get_rank()
   num_elements = 1024 * 64
   half_elements = num_elements // 2
 
@@ -106,7 +85,7 @@ def _run_window_local_d2h_dma_test() -> None:
   into
   specified offsets of registered pinned host memory.
   """
-  rank = int(os.environ["RANK"])
+  rank = dist.get_rank()
   num_elements = 1024 * 64
   half_elements = num_elements // 2
 
@@ -149,7 +128,7 @@ def _run_window_async_compute_overlap_test() -> None:
   background DMA engines while the main execution thread continues issuing TPU
   operations.
   """
-  rank = int(os.environ["RANK"])
+  rank = dist.get_rank()
   # 8 MB payload (bfloat16): provides realistic DMA transfer volume while
   # keeping memory allocation and page-locking overhead minimal.
   num_elements = 1024 * 1024 * 4
@@ -196,8 +175,8 @@ def _run_window_multi_tpu_peer_transfer_test() -> None:
   Verifies one-sided RMA put operations across distinct TPU ranks over
   Inter-Chip Interconnect (ICI) links synchronized with win.wait_signal().
   """
-  rank = int(os.environ["RANK"])
-  world_size = int(os.environ["WORLD_SIZE"])
+  rank = dist.get_rank()
+  world_size = dist.get_world_size()
   num_elements = 1024 * 32
 
   # 1. Allocate TPU tensor and register window on all ranks.
@@ -243,7 +222,7 @@ def _run_window_map_remote_tensor_test() -> None:
   a valid tensor view with identical shape, dtype, device location, and
   numerical values as the underlying registered TPU tensor.
   """
-  rank = int(os.environ["RANK"])
+  rank = dist.get_rank()
   num_elements = 1024 * 64
 
   # 1. Allocate TPU tensor with rank-specific values and register window.
@@ -275,8 +254,8 @@ def _run_window_attributes_test() -> None:
   Validates that querying window attributes for a peer rank returns a valid
   WindowAttr structure with WindowAccessType.UNIFIED memory coherence model.
   """
-  rank = int(os.environ["RANK"])
-  world_size = int(os.environ["WORLD_SIZE"])
+  rank = dist.get_rank()
+  world_size = dist.get_world_size()
 
   # 1. Allocate TPU tensor and register window.
   tpu_tensor = torch.zeros((1024,), dtype=torch.float32, device="tpu:0")
@@ -301,8 +280,8 @@ def _run_window_signal_wait_test() -> None:
   Validates pure point-to-point signaling between peer ranks in pipeline order
   without accompanying RMA data transfers.
   """
-  rank = int(os.environ["RANK"])
-  world_size = int(os.environ["WORLD_SIZE"])
+  rank = dist.get_rank()
+  world_size = dist.get_world_size()
 
   # 1. Allocate TPU tensor and register window.
   tpu_tensor = torch.zeros((1024,), dtype=torch.float32, device="tpu:0")
@@ -333,7 +312,7 @@ def _run_window_explicit_register_lifecycle_test() -> None:
   subsequently attached to a device tensor via tensor_register, used for
   RMA views, and cleanly deregistered with tensor_deregister.
   """
-  rank = int(os.environ["RANK"])
+  rank = dist.get_rank()
   num_elements = 1024 * 64
 
   # 1. Create an unattached window without providing an initial tensor.
@@ -360,7 +339,7 @@ def _run_window_sync_dma_test() -> None:
   Validates that setting async_op=False causes put operations to synchronously
   block until the hardware DMA transfer completes before returning.
   """
-  rank = int(os.environ["RANK"])
+  rank = dist.get_rank()
   num_elements = 1024 * 64
 
   # 1. Host-to-Device synchronous DMA put.
@@ -390,103 +369,79 @@ def _run_window_sync_dma_test() -> None:
   win_host.tensor_deregister()
 
 
-class WindowTpuTest(
-    absltest.TestCase,  # ABSLTEST_OK=Multiprocess distributed test
-):
+class WindowTpuTest(continuous_test_utils.TpuMultiProcContinuousTest):
   """Unit test suite for TorchTPU native c10d::Window and zero-copy DMA."""
 
-  _world_size = distributed_utils.get_tpu_device_count()
+  world_size = 8
 
   @classmethod
   def setUpClass(cls):
-    super().setUpClass()
     if not hasattr(dist, "_supports_window"):
       raise absltest.SkipTest(
           "c10d::Window RMA is not supported in this PyTorch version "
           f"({torch.__version__}); requires PyTorch >= 2.14."
       )
+    super().setUpClass()
 
   def test_window_backend_support(self):
     """Verifies dist._supports_window() and backend.supports_window flags."""
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=_test_wrapper,
-        test_fn=_run_window_backend_support_test,
-    )
+    _run_window_backend_support_test()
 
   def test_window_local_h2d_dma(self):
     """Verifies local zero-copy Host-to-Device (H2D) DMA transfers into TPU windows."""
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=_test_wrapper,
-        test_fn=_run_window_local_h2d_dma_test,
-    )
+    _run_window_local_h2d_dma_test()
 
   def test_window_local_d2h_dma(self):
     """Verifies local zero-copy Device-to-Host (D2H) DMA transfers from TPU to host windows."""
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=_test_wrapper,
-        test_fn=_run_window_local_d2h_dma_test,
-    )
+    _run_window_local_d2h_dma_test()
 
   def test_window_sync_dma(self):
     """Verifies synchronous (blocking, async_op=False) DMA transfers."""
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=_test_wrapper,
-        test_fn=_run_window_sync_dma_test,
-    )
+    _run_window_sync_dma_test()
 
   def test_window_async_compute_overlap(self):
     """Verifies non-blocking DMA execution concurrently overlapping with TPU matrix compute."""
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=_test_wrapper,
-        test_fn=_run_window_async_compute_overlap_test,
-    )
+    _run_window_async_compute_overlap_test()
 
   def test_window_multi_tpu_peer_transfer(self):
     """Verifies multi-TPU peer RMA transfers across distinct processes over ICI."""
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=_test_wrapper,
-        test_fn=_run_window_multi_tpu_peer_transfer_test,
-    )
+    _run_window_multi_tpu_peer_transfer_test()
 
   def test_window_map_remote_tensor(self):
     """Verifies win.map_remote_tensor returns correct tensor view of registered window."""
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=_test_wrapper,
-        test_fn=_run_window_map_remote_tensor_test,
-    )
+    _run_window_map_remote_tensor_test()
 
   def test_window_attributes(self):
     """Verifies win.get_attr returns WindowAttr with UNIFIED memory access type."""
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=_test_wrapper,
-        test_fn=_run_window_attributes_test,
-    )
-
-  def test_window_signal_wait(self):
-    """Verifies win.signal paired with win.wait_signal across peer ranks."""
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=_test_wrapper,
-        test_fn=_run_window_signal_wait_test,
-    )
+    _run_window_attributes_test()
 
   def test_window_explicit_register_lifecycle(self):
     """Verifies two-stage lifecycle: empty new_window, tensor_register, and tensor_deregister."""
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=_test_wrapper,
-        test_fn=_run_window_explicit_register_lifecycle_test,
-    )
+    _run_window_explicit_register_lifecycle_test()
+
+
+class WindowSignalWaitTest(continuous_test_utils.TpuMultiProcContinuousTest):
+  """Isolated test class for win.signal / win.wait_signal.
+
+  Kept in its own test class to provide a fresh c10d store and process group,
+  avoiding key collisions with RMA P2P peer transfers.
+  """
+
+  world_size = 8
+
+  @classmethod
+  def setUpClass(cls):
+    if not hasattr(dist, "_supports_window"):
+      raise absltest.SkipTest(
+          "c10d::Window RMA is not supported in this PyTorch version "
+          f"({torch.__version__}); requires PyTorch >= 2.14."
+      )
+    super().setUpClass()
+
+  def test_window_signal_wait(self):
+    """Verifies win.signal paired with win.wait_signal across peer ranks."""
+    _run_window_signal_wait_test()
 
 
 if __name__ == "__main__":
-  mp.set_start_method("spawn")
   multiprocessing.handle_test_main(absltest.main)
