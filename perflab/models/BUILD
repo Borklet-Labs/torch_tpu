@@ -48,6 +48,7 @@ torch_tpu_py_library(
     ],
     allow_multiple_srcs = True,
     deps = [
+        "//perflab:common",
         "//perflab:context",
         "//perflab:flags",
         "//perflab:mode",
@@ -59,6 +60,7 @@ torch_tpu_py_library(
         "//perflab/gen_utils",
         "//shims/absl_py/flags",
         "//shims/torch:pytorch",
+        "//tests:module_registry",
     ],
 )
 

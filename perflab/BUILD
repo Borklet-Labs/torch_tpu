@@ -144,6 +144,15 @@ torch_tpu_py_library(
 )
 
 torch_tpu_py_library(
+    name = "fake_memory",
+    srcs = ["fake_memory.py"],
+    deps = [
+        "//shims/absl_py/logging",
+        "//shims/torch:pytorch",
+    ],
+)
+
+torch_tpu_py_library(
     name = "metrics",
     srcs = ["metrics.py"],
 )
@@ -328,6 +337,7 @@ torch_tpu_py_test(
         ":compile",
         ":context",
         ":discovery",
+        ":fake_memory",
         ":flags",
         ":measure",
         ":metrics",
@@ -351,7 +361,10 @@ torch_tpu_py_test(
 # presubmit: every presubmit-scope case runs one forward, decode, or train step
 # on CPU under FakeTensorMode, so Python, import, shape, dtype, autograd, and
 # config breaks block submission without allocating storage or running CPU
-# kernels. Cases that cannot run on CPU are skipped through `known_failures.py`.
+# kernels. The cases include every generated benchmark whose model config is
+# in-tree, and building each case (not its steps) must fit in the HBM of a v7
+# TensorCore (see `fake_memory.py`). Cases that cannot run on CPU are skipped
+# through `known_failures.py`.
 torch_tpu_py_test(
     name = "torch_benchmark_cpu_smoke_test",
     timeout = "long",
@@ -373,7 +386,7 @@ torch_tpu_py_test(
     },
     main = "torch_benchmark_test.py",
     notest_oss = True,  # Not yet verified in OSS.  # NOTEST_OSS_OK=out of scope for the CPU smoke stack
-    shard_count = 4,
+    shard_count = 8,
     tags = [
         "nofastbuild",  # Runs in the .opt presubmit.
         "nosan",  # *san tests provide no benefit for benchmarks.
@@ -386,6 +399,7 @@ torch_tpu_py_test(
         ":compile",
         ":context",
         ":discovery",
+        ":fake_memory",
         ":flags",
         ":measure",
         ":metrics",
@@ -453,6 +467,7 @@ torch_tpu_py_test(
         ":compile",
         ":context",
         ":discovery",
+        ":fake_memory",
         ":flags",
         ":measure",
         ":metrics",
@@ -557,6 +572,7 @@ torch_tpu_py_test(
         ":compile",
         ":context",
         ":discovery",
+        ":fake_memory",
         ":flags",
         ":measure",
         ":metrics",
@@ -615,6 +631,7 @@ torch_tpu_py_test(
         ":compile",
         ":context",
         ":discovery",
+        ":fake_memory",
         ":flags",
         ":measure",
         ":metrics",

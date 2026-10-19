@@ -14,12 +14,15 @@
 
 """Dynamic registration of benchmarks against static model list."""
 
+from collections.abc import Mapping
 import copy
+import functools
 import itertools
 import sys
 
 from absl import flags
 import torch
+from perflab import common
 from perflab import context as context_lib
 from perflab import flags as flags_lib
 from perflab import mode as mode_lib
@@ -27,25 +30,143 @@ from perflab import registry as registry_lib
 from perflab import step_lib
 from perflab.gen_utils import gen_utils
 
-# Generated benchmarks that also run in presubmit scope in the FakeTensorMode
-# CPU smoke test (`--fake_tensor_mode`). These are hand-picked representatives,
-# one per architecture family that the hand-written (decoder-only LLM)
-# benchmarks do not cover: a small sample of the models in
-# `gen_utils/models.csv`, chosen to keep presubmit small. The list is not
-# exhaustive and not driven by past breakages. Each has a checked-in config in
-# the module registry's in-tree `model_configs` resources (all under
-# `google/examples/huggingface_transformers/model_configs`), so the smoke test
-# never falls back to GCS. Keep this list short: every entry adds a forward and
-# a training case to presubmit.
-_CPU_PRESUBMIT_MODEL_IDS = frozenset({
-    "facebook/detr-resnet-50",  # Detection with a convolutional backbone.
-    "google-bert/bert-base-uncased",  # Text encoder.
-    "google-t5/t5-small",  # Text encoder-decoder.
-    "google/vit-base-patch16-224-in21k",  # Vision transformer.
-    "microsoft/resnet-50",  # Convolutional vision model.
-    "openai/clip-vit-base-patch32",  # Text-image dual encoder.
-    "openai/whisper-large-v3-turbo",  # Speech encoder-decoder.
+# The run modes that only TPUs and GPUs run. The FakeTensorMode CPU smoke test
+# runs `eager_default`, the only run mode of CPU targets (`mode.modes_for`).
+_ACCELERATOR_ONLY_RUN_MODES = frozenset({
+    common.RunMode.COMPILED.value,
+    common.RunMode.EAGER_OPTIMIZED.value,
 })
+
+_DATA_DEPENDENT_SCALAR = (
+    "reads a Python scalar from a tensor (aten._local_scalar_dense), which"
+    " FakeTensorMode cannot evaluate"
+)
+_DATA_DEPENDENT_SHAPE = (
+    "uses an op whose output shape depends on tensor values (e.g."
+    " aten.nonzero), which FakeTensorMode cannot evaluate"
+)
+_SHORT_AUDIO = (
+    "the 128-sample presubmit-scope audio input is shorter than the receptive"
+    " field of the convolutional feature encoder"
+)
+
+# Generated benchmarks that the FakeTensorMode CPU smoke test
+# (`--fake_tensor_mode`) cannot run, with the reason. Every other generated
+# benchmark whose model config is in-tree runs in the smoke test, so that a
+# change to the shared model loading (e.g. `tests/module_registry.py`) that
+# breaks a generated benchmark fails in presubmit instead of in the nightly
+# benchmark runs.
+_FAKE_TENSOR_MODE_UNSUPPORTED: Mapping[str, str] = {
+    # go/keep-sorted start
+    "bart_large_cnn_train_gen": _DATA_DEPENDENT_SCALAR,
+    "bart_large_mnli_forward_gen": _DATA_DEPENDENT_SHAPE,
+    "bart_large_mnli_train_gen": _DATA_DEPENDENT_SCALAR,
+    "bigbird_pegasus_large_arxiv_train_gen": _DATA_DEPENDENT_SCALAR,
+    "clap_htsat_fused_forward_gen": _DATA_DEPENDENT_SCALAR,
+    "clap_htsat_unfused_forward_gen": _DATA_DEPENDENT_SCALAR,
+    "convnextv2_base_22k_384_forward_gen": _DATA_DEPENDENT_SCALAR,
+    "donut_base_finetuned_docvqa_forward_gen": _DATA_DEPENDENT_SCALAR,
+    "dpt_hybrid_midas_forward_gen": _DATA_DEPENDENT_SCALAR,
+    "gemma_4_e4b_it_forward_gen": _DATA_DEPENDENT_SHAPE,
+    "gemma_4_e4b_it_train_gen": _DATA_DEPENDENT_SHAPE,
+    "glm_ocr_forward_gen": _DATA_DEPENDENT_SCALAR,
+    "glm_ocr_train_gen": _DATA_DEPENDENT_SCALAR,
+    "glpn_kitti_forward_gen": _DATA_DEPENDENT_SCALAR,
+    "kosmos_2_patch14_224_train_gen": _DATA_DEPENDENT_SCALAR,
+    "lahja_sa_ahmad_v1_forward_gen": _DATA_DEPENDENT_SCALAR,
+    "lightglue_superpoint_forward_gen": _DATA_DEPENDENT_SHAPE,
+    "llava_1_5_7b_hf_forward_gen": _DATA_DEPENDENT_SCALAR,
+    "llava_1_5_7b_hf_train_gen": _DATA_DEPENDENT_SCALAR,
+    "mbart_large_50_many_to_many_mmt_train_gen": _DATA_DEPENDENT_SCALAR,
+    "nllb_200_distilled_600m_train_gen": _DATA_DEPENDENT_SCALAR,
+    "nsfw_image_detection_large_forward_gen": _DATA_DEPENDENT_SCALAR,
+    "opt_125m_train_gen": _DATA_DEPENDENT_SCALAR,
+    "opus_mt_nl_en_train_gen": _DATA_DEPENDENT_SCALAR,
+    "pegasus_xsum_train_gen": _DATA_DEPENDENT_SCALAR,
+    "qwen2_5_vl_7b_instruct_forward_gen": _DATA_DEPENDENT_SCALAR,
+    "qwen2_5_vl_7b_instruct_train_gen": _DATA_DEPENDENT_SCALAR,
+    "sam3_litetext_s0_forward_gen": _DATA_DEPENDENT_SCALAR,
+    "swin2sr_classical_sr_x2_64_forward_gen": _DATA_DEPENDENT_SCALAR,
+    "swin2sr_classical_sr_x4_64_forward_gen": _DATA_DEPENDENT_SCALAR,
+    "swin2sr_compressed_sr_x4_48_forward_gen": _DATA_DEPENDENT_SCALAR,
+    "swin2sr_lightweight_x2_64_forward_gen": _DATA_DEPENDENT_SCALAR,
+    "swin2sr_realworld_sr_x4_64_bsrgan_psnr_forward_gen": (
+        _DATA_DEPENDENT_SCALAR
+    ),
+    "tapas_base_finetuned_sqa_forward_gen": _DATA_DEPENDENT_SCALAR,
+    "tapas_base_finetuned_wtq_forward_gen": _DATA_DEPENDENT_SCALAR,
+    "tapas_large_finetuned_sqa_forward_gen": _DATA_DEPENDENT_SCALAR,
+    "tapex_base_finetuned_wikisql_train_gen": _DATA_DEPENDENT_SCALAR,
+    "tapex_large_finetuned_wtq_train_gen": _DATA_DEPENDENT_SCALAR,
+    "timesformer_base_finetuned_k600_forward_gen": _DATA_DEPENDENT_SCALAR,
+    "tiny_doc_qa_vision_encoder_decoder_forward_gen": _DATA_DEPENDENT_SCALAR,
+    "vilt_b32_finetuned_vqa_forward_gen": _DATA_DEPENDENT_SCALAR,
+    "vjepa2_vitl_fpc64_256_forward_gen": _DATA_DEPENDENT_SCALAR,
+    "wmt19_ru_en_train_gen": _DATA_DEPENDENT_SCALAR,
+    "zoedepth_nyu_kitti_forward_gen": _DATA_DEPENDENT_SCALAR,
+    # go/keep-sorted end
+}
+
+# Generated benchmarks whose presubmit-scope inputs (batch size 1, sequence
+# length 128) do not fit the model, with the reason.
+_PRESUBMIT_SCOPE_UNSUPPORTED: Mapping[str, str] = {
+    # go/keep-sorted start
+    "granite_timeseries_patchtsmixer_forward_gen": (
+        "the 128-step presubmit-scope context does not match the patch"
+        " configuration of the model"
+    ),
+    "hubert_large_speech_emotion_recognition_russian_dusha_finetuned_forward_gen": (
+        _SHORT_AUDIO
+    ),
+    "wav2vec2_large_robust_12_ft_emotion_msp_dim_forward_gen": _SHORT_AUDIO,
+    "wav2vec2_large_xlsr_53_portuguese_forward_gen": _SHORT_AUDIO,
+    "wavlm_base_plus_forward_gen": _SHORT_AUDIO,
+    "wavlm_emotion_russian_resd_forward_gen": _SHORT_AUDIO,
+    # go/keep-sorted end
+}
+
+
+@functools.cache
+def has_in_tree_config(model_id: str) -> bool:
+  """Returns whether `module_registry` reads the config of `model_id` in-tree.
+
+  The FakeTensorMode CPU smoke test has no network access, so it builds only
+  the models whose configs `module_registry` reads from the in-tree resources
+  instead of GCS.
+
+  Args:
+    model_id: The HuggingFace model ID of a `gen_utils/models.csv` entry.
+  """
+  # Imported here rather than at module scope: importing module_registry is
+  # likely to probe the CUDA driver, which poisons fork() for CUDA, and only
+  # the FakeTensorMode CPU smoke test needs it here.
+  from tests import module_registry  # pylint: disable=g-import-not-at-top
+
+  return (
+      module_registry.TransformersProvider.in_tree_config(model_id) is not None
+  )
+
+
+def fake_tensor_smoke_skip_reason(
+    model_id: str, name: str, run_scope: context_lib.RunScope
+) -> str | None:
+  """Returns why the FakeTensorMode smoke test skips a generated benchmark.
+
+  Args:
+    model_id: The HuggingFace model ID of the benchmark's model.
+    name: The name of the generated benchmark.
+    run_scope: The run scope of the smoke test.
+
+  Returns:
+    The reason, or None if the smoke test runs the benchmark.
+  """
+  if not has_in_tree_config(model_id):
+    return f"the config of {model_id} is not in-tree"
+  if name in _FAKE_TENSOR_MODE_UNSUPPORTED:
+    return _FAKE_TENSOR_MODE_UNSUPPORTED[name]
+  if run_scope is context_lib.RunScope.PRESUBMIT:
+    return _PRESUBMIT_SCOPE_UNSUPPORTED.get(name)
+  return None
 
 
 def _make_factory(
@@ -113,18 +234,25 @@ def _register_gen_benchmarks():
   """Registers generated benchmarks in the global registry."""
   run_scope, fake_tensor_mode = _registration_flags()
 
-  model_ids = None
-  if run_scope is context_lib.RunScope.PRESUBMIT:
-    if not fake_tensor_mode:
-      # We will need to split the target up to prevent timeouts.
-      return
-    model_ids = _CPU_PRESUBMIT_MODEL_IDS
+  if run_scope is context_lib.RunScope.PRESUBMIT and not fake_tensor_mode:
+    # We will need to split the target up to prevent timeouts.
+    return
 
   for model_gen_spec, is_training, step in _iter_gen_benchmark_specs():
-    if model_ids is not None and model_gen_spec.model_id not in model_ids:
+    name = model_gen_spec.benchmark_name(is_training=is_training, suffix="gen")
+    if fake_tensor_mode and fake_tensor_smoke_skip_reason(
+        model_gen_spec.model_id, name, run_scope
+    ):
       continue
     extra_config = model_gen_spec.get_extra_config(is_training, suffix="gen")
     skipped_run_modes = extra_config.skipped_run_modes
+    if fake_tensor_mode and _ACCELERATOR_ONLY_RUN_MODES - skipped_run_modes:
+      # The smoke test only builds the benchmark and takes a step, so it also
+      # checks the benchmarks that skip `eager_default` but run on accelerators
+      # in another mode.
+      skipped_run_modes = skipped_run_modes - {
+          common.RunMode.EAGER_DEFAULT.value
+      }
     step_kwargs = extra_config.step_kwargs
     model_load_fn = extra_config.model_load_fn
 
@@ -137,9 +265,7 @@ def _register_gen_benchmarks():
         ),
         stepper=step,
         stepper_kwargs=step_kwargs,
-        name=model_gen_spec.benchmark_name(
-            is_training=is_training, suffix="gen"
-        ),
+        name=name,
         skipped_run_modes=skipped_run_modes,
     )
 

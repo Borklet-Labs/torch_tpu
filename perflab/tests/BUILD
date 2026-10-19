@@ -72,6 +72,26 @@ torch_tpu_py_test(
 )
 
 torch_tpu_py_test(
+    name = "benchmark_contract_test",
+    srcs = ["benchmark_contract_test.py"],
+    data = [
+        "//perflab/huggingface_transformers:model_configs_data",
+        "//shims/model_configs:google_model_configs_data",
+    ],
+    notest_oss = True,  # NOTEST_OSS_OK=checks the internal in-tree model configs, which OSS does not export
+    deps = [
+        "//perflab:common",
+        "//perflab:mode",
+        "//perflab:target",
+        "//perflab/gen_utils",
+        "//perflab/models",
+        "//shims/absl_py/testing:absltest",
+        "//src/torch_tpu",
+        "//tests:seed_test_utils",
+    ],
+)
+
+torch_tpu_py_test(
     name = "common_test",
     srcs = ["common_test.py"],
     deps = [
@@ -110,6 +130,22 @@ torch_tpu_py_test(
         "//shims/absl_py/testing:absltest",
         "//shims/absl_py/testing:flagsaver",
         "//shims/absl_py/testing:parameterized",
+        "//src/torch_tpu",
+        "//tests:seed_test_utils",
+    ],
+)
+
+torch_tpu_py_test(
+    name = "fake_memory_test",
+    srcs = ["fake_memory_test.py"],
+    tags = [
+        "nomsan",  # 3p 'py/torch' error: use-of-uninitialized-value in reduced_float_type_copy
+    ],
+    deps = [
+        "//perflab:fake_memory",
+        "//perflab:mode",
+        "//shims/absl_py/testing:absltest",
+        "//shims/torch:pytorch",
         "//src/torch_tpu",
         "//tests:seed_test_utils",
     ],
@@ -192,6 +228,11 @@ torch_tpu_py_test(
 torch_tpu_py_test(
     name = "gen_benchmarks_presubmit_scope_test",
     srcs = ["gen_benchmarks_presubmit_scope_test.py"],
+    data = [
+        "//perflab/huggingface_transformers:model_configs_data",
+        "//shims/model_configs:google_model_configs_data",
+    ],
+    notest_oss = True,  # NOTEST_OSS_OK=checks the internal in-tree model configs, which OSS does not export
     deps = [
         "//perflab:context",
         "//perflab:flags",

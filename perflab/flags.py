@@ -68,7 +68,9 @@ FAKE_TENSOR_MODE = flags.DEFINE_bool(  # PYTHON_FLAG_OK=benchmark
     " measurements; flag parsing fails otherwise. FakeTensorMode validates"
     " PyTorch op dispatch, tensor shapes, dtypes, and autograd graphs without"
     " allocating storage or executing CPU compute kernels. Model configs are"
-    " then read without the local weights cache directory.",
+    " then read without the local weights cache directory. Building each case"
+    " (not its steps) must also fit in the HBM of a v7 TensorCore; see"
+    " perflab/fake_memory.py.",
 )
 
 

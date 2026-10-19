@@ -3221,6 +3221,24 @@ class TransformersProvider(BaseProvider):
   ):
     super().__init__(base_path=base_path, subdir=subdir)
 
+  @classmethod
+  def in_tree_config(cls, name: str) -> resources_abc.Traversable | None:
+    """Returns the in-tree `config.json` of a model, or None if there is none.
+
+    These configs are the bundled package resources (`_FILES`) that the provider
+    reads when the model is not in the shared weights cache, before it falls
+    back to GCS.
+
+    Args:
+      name: Model identifier formatted as `{owner}/{model}`.
+    """
+    rel_cfg = str(pathlib.Path(name) / "config.json")
+    for files_root in cls._FILES:
+      traversable = files_root.joinpath(rel_cfg)
+      if traversable.is_file():
+        return traversable
+    return None
+
   def list_modules(self) -> list[str]:
     """Lists the names of all models available from this provider.
 
@@ -3294,20 +3312,19 @@ class TransformersProvider(BaseProvider):
           " to local configuration resources or GCS."
       )
 
-    rel_cfg = str(pathlib.Path(name) / "config.json")
-    for files_root in self._FILES:
-      traversable = files_root.joinpath(rel_cfg)
-      if traversable.is_file():
-        with resources.as_file(traversable) as local_file:
-          if local_file.exists():
-            yield epath.Path(local_file), default_model_dir
-            return
+    traversable = self.in_tree_config(name)
+    if traversable is not None:
+      with resources.as_file(traversable) as local_file:
+        if local_file.exists():
+          yield epath.Path(local_file), default_model_dir
+          return
 
     dest_config = self.fetch_gcs_file(f"{name}/config.json")
     if dest_config is not None and dest_config.exists():
       yield epath.Path(dest_config), epath.Path(dest_config.parent)
       return
 
+    rel_cfg = str(pathlib.Path(name) / "config.json")
     files_str = ", ".join(str(r.joinpath(rel_cfg)) for r in self._FILES)
     raise ValueError(
         f"Model config for '{name}' is missing in local resources"

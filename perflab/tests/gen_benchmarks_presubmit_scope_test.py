@@ -15,7 +15,8 @@
 """Tests that presubmit scope registers generated benchmarks only in the smoke.
 
 Generated benchmarks are registered in presubmit scope only under the
-FakeTensorMode CPU smoke (`--fake_tensor_mode`), and then only a small subset.
+FakeTensorMode CPU smoke (`--fake_tensor_mode`), and then every one whose model
+config is in-tree, so that the smoke test needs no network access.
 """
 
 import copy
@@ -34,16 +35,36 @@ from perflab import target as target_lib
 from perflab.models import gen_benchmarks
 from tests import seed_test_utils
 
-_CPU_PRESUBMIT_MODEL_IDS = gen_benchmarks._CPU_PRESUBMIT_MODEL_IDS  # pylint: disable=protected-access
+# Generated benchmarks that broke in the nightly runs after cl/999488021
+# changed the shared model loading, while presubmit stayed green.
+_MODERNBERT_BENCHMARKS = (
+    "colmodernvbert_merged_st_forward_gen",
+    "granite_embedding_small_english_r2_forward_gen",
+    "modernbert_base_forward_gen",
+    "modernbert_base_train_gen",
+    "time_anchor_modernbert_32m_forward_gen",
+)
 
 
-def _cpu_presubmit_names() -> set[str]:
-  """Returns the generated benchmark names of the CPU presubmit models."""
+def _unsupported() -> dict[str, str]:
+  """Returns the generated benchmarks that the smoke test skips by name."""
   return {
-      spec.benchmark_name(is_training=is_training, suffix="gen")
-      for spec, is_training, _ in gen_benchmarks._iter_gen_benchmark_specs()  # pylint: disable=protected-access
-      if spec.model_id in _CPU_PRESUBMIT_MODEL_IDS
+      **gen_benchmarks._FAKE_TENSOR_MODE_UNSUPPORTED,  # pylint: disable=protected-access
+      **gen_benchmarks._PRESUBMIT_SCOPE_UNSUPPORTED,  # pylint: disable=protected-access
   }
+
+
+def _fake_tensor_smoke_names() -> set[str]:
+  """Returns the generated benchmarks expected in the presubmit-scope smoke."""
+  unsupported = _unsupported()
+  names = set()
+  for spec, is_training, _ in gen_benchmarks._iter_gen_benchmark_specs():  # pylint: disable=protected-access
+    name = spec.benchmark_name(is_training=is_training, suffix="gen")
+    if name not in unsupported and gen_benchmarks.has_in_tree_config(
+        spec.model_id
+    ):
+      names.add(name)
+  return names
 
 
 class GenBenchmarksPresubmitScopeTest(seed_test_utils.RepeatableTest):
@@ -76,14 +97,98 @@ class GenBenchmarksPresubmitScopeTest(seed_test_utils.RepeatableTest):
       gen_benchmarks._register_gen_benchmarks()  # pylint: disable=protected-access
       return set(registry_lib.REGISTRY)
 
-  def test_cpu_presubmit_models_have_forward_and_training_benchmarks(self):
-    self.assertLen(_cpu_presubmit_names(), 2 * len(_CPU_PRESUBMIT_MODEL_IDS))
+  def test_fake_tensor_smoke_covers_every_in_tree_model(self):
+    names = _fake_tensor_smoke_names()
+    # Most generated benchmarks have in-tree configs. A much smaller set means
+    # that the smoke test lost its configs (e.g. a missing data dependency).
+    self.assertGreater(len(names), 300)
+    self.assertContainsSubset(_MODERNBERT_BENCHMARKS, names)
 
-  def test_cpu_presubmit_with_fake_tensor_mode_registers_subset(self):
+  def test_cpu_presubmit_with_fake_tensor_mode_registers_in_tree_models(self):
     self.assertEqual(
         self._registered_names(platform="cpu", fake_tensor_mode=True),
-        _cpu_presubmit_names(),
+        _fake_tensor_smoke_names(),
     )
+
+  def test_fake_tensor_smoke_steps_benchmarks_that_run_on_accelerators(self):
+    with (
+        mock.patch.dict(os.environ, {target_lib.PLATFORM_ENV_VAR: "cpu"}),
+        flagsaver.flagsaver(
+            run_scope=context_lib.RunScope.PRESUBMIT, fake_tensor_mode=True
+        ),
+        mock.patch.dict(registry_lib.REGISTRY, clear=True),
+    ):
+      gen_benchmarks._register_gen_benchmarks()  # pylint: disable=protected-access
+      skipped_run_modes = {
+          name: spec.skipped_run_modes
+          for name, spec in registry_lib.REGISTRY.items()
+      }
+    # Skips eager_default, the only run mode of CPU targets, but runs compiled
+    # on TPUs and GPUs.
+    self.assertNotIn("eager_default", skipped_run_modes["t5_small_train_gen"])
+    # Runs in no run mode.
+    self.assertIn(
+        "eager_default", skipped_run_modes["all_minilm_l6_v2_train_gen"]
+    )
+
+  @parameterized.parameters(
+      ("answerdotai/ModernBERT-base", True),
+      ("ibm-granite/granite-embedding-small-english-r2", True),
+      ("Qwen/Qwen3.5-397B-A17B", True),
+      ("Alibaba-NLP/gte-modernbert-base", False),
+      ("not-an-org/not-a-model", False),
+  )
+  def test_has_in_tree_config(self, model_id: str, expected: bool):
+    self.assertEqual(gen_benchmarks.has_in_tree_config(model_id), expected)
+
+  def test_skipped_benchmarks_have_in_tree_configs_and_reasons(self):
+    self.assertEmpty(
+        gen_benchmarks._FAKE_TENSOR_MODE_UNSUPPORTED.keys()  # pylint: disable=protected-access
+        & gen_benchmarks._PRESUBMIT_SCOPE_UNSUPPORTED.keys()  # pylint: disable=protected-access
+    )
+    model_ids = {
+        spec.benchmark_name(
+            is_training=is_training, suffix="gen"
+        ): spec.model_id
+        for spec, is_training, _ in gen_benchmarks._iter_gen_benchmark_specs()  # pylint: disable=protected-access
+    }
+    for name, reason in _unsupported().items():
+      with self.subTest(name):
+        # Entries for benchmarks that are no longer generated, or whose model
+        # config is not in-tree, skip nothing, so they must be removed.
+        self.assertIn(name, model_ids)
+        self.assertTrue(gen_benchmarks.has_in_tree_config(model_ids[name]))
+        self.assertNotEmpty(reason)
+
+  def test_skip_reason_of_a_model_without_an_in_tree_config(self):
+    self.assertEqual(
+        gen_benchmarks.fake_tensor_smoke_skip_reason(
+            "Alibaba-NLP/gte-modernbert-base",
+            "gte_modernbert_base_forward_gen",
+            context_lib.RunScope.PRESUBMIT,
+        ),
+        "the config of Alibaba-NLP/gte-modernbert-base is not in-tree",
+    )
+
+  def test_presubmit_scope_skips_run_at_full_scope(self):
+    for name in gen_benchmarks._PRESUBMIT_SCOPE_UNSUPPORTED:  # pylint: disable=protected-access
+      with self.subTest(name):
+        model_id = next(
+            spec.model_id
+            for spec, is_training, _ in gen_benchmarks._iter_gen_benchmark_specs()  # pylint: disable=protected-access
+            if spec.benchmark_name(is_training=is_training, suffix="gen")
+            == name
+        )
+        self.assertIsNotNone(
+            gen_benchmarks.fake_tensor_smoke_skip_reason(
+                model_id, name, context_lib.RunScope.PRESUBMIT
+            )
+        )
+        self.assertIsNone(
+            gen_benchmarks.fake_tensor_smoke_skip_reason(
+                model_id, name, context_lib.RunScope.FULL
+            )
+        )
 
   @parameterized.parameters(
       "cpu",
@@ -98,14 +203,14 @@ class GenBenchmarksPresubmitScopeTest(seed_test_utils.RepeatableTest):
         self._registered_names(platform=platform, fake_tensor_mode=False)
     )
 
-  def test_import_time_cpu_presubmit_with_fake_tensor_mode_registers_subset(
+  def test_import_time_cpu_presubmit_with_fake_tensor_mode_registers_models(
       self,
   ):
     self.assertEqual(
         self._registered_names_at_import_time(
             ["prog", "--run_scope=presubmit", "--fake_tensor_mode"]
         ),
-        _cpu_presubmit_names(),
+        _fake_tensor_smoke_names(),
     )
 
   @parameterized.named_parameters(

@@ -23,8 +23,9 @@ Environment & Flags:
   BENCHMARK_PLATFORM   cpu | b200_1 | b200_8 | v6e_1x1 | ...   (default: cpu)
   --run_scope          full | presubmit                        (default: full)
   --run_in_subprocess  isolate each case in a child process    (default: true)
-  --fake_tensor_mode   build and run each case under FakeTensorMode; only
-                       valid with BENCHMARK_PLATFORM=cpu and
+  --fake_tensor_mode   build and run each case under FakeTensorMode, and check
+                       that building it fits in the HBM of a v7 TensorCore;
+                       only valid with BENCHMARK_PLATFORM=cpu and
                        --run_scope=presubmit; also skips the
                        weights cache dir                       (default: false)
 """
@@ -43,6 +44,7 @@ from perflab import common
 from perflab import compile as compile_lib
 from perflab import context as context_lib
 from perflab import discovery as discovery_lib
+from perflab import fake_memory
 from perflab import flags as flags_lib
 from perflab import measure as measure_lib
 from perflab import metrics as metrics_lib
@@ -81,7 +83,14 @@ def _make_run_step(
   """
   common.seed_rngs()
   runner = step_lib.resolve_stepper(spec.stepper, **spec.stepper_kwargs)
-  benchmark_args = spec.factory(ctx)
+  if mode_lib.fake_tensor_smoke_enabled():
+    # FakeTensorMode allocates nothing, so check here that building the
+    # benchmark would fit in the memory of the device.
+    with fake_memory.TensorMemoryTracker() as tracker:
+      benchmark_args = spec.factory(ctx)
+    fake_memory.check_construction_peak(tracker, name=spec.name)
+  else:
+    benchmark_args = spec.factory(ctx)
   common.prepare_inputs(benchmark_args[0], benchmark_args[1:])
   runner.init_with_benchmark_args(*benchmark_args)
 
