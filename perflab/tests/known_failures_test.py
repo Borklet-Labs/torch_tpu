@@ -150,28 +150,6 @@ class InductorCpuCodegenKnownFailuresTest(seed_test_utils.RepeatableTest):
           )
 
 
-class FakeTensorModeKnownFailuresTest(seed_test_utils.RepeatableTest):
-
-  @parameterized.named_parameters(
-      ("conformer_forward", "conformer_forward"),
-      ("conformer_training", "conformer_training"),
-  )
-  def test_only_cpu_is_skipped(self, benchmark):
-    for device_kind in target_lib.DeviceKind:
-      for run_mode in common.RunMode:
-        with self.subTest(device_kind=device_kind, run_mode=run_mode):
-          reason = known_failures.get_known_failure_reason(
-              benchmark,
-              framework=mode_lib.Framework.TORCH,
-              device_kind=device_kind,
-              run_mode=run_mode,
-          )
-          self.assertEqual(
-              reason is not None and "FakeTensorMode" in reason,
-              device_kind == target_lib.DeviceKind.CPU,
-          )
-
-
 class Synthetic4096KnownFailuresTest(seed_test_utils.RepeatableTest):
 
   def test_tpu_and_cuda_skipped_modes(self):

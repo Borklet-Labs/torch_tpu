@@ -104,6 +104,24 @@ torch_tpu_py_test(
 )
 
 torch_tpu_py_test(
+    name = "conformer_test",
+    srcs = ["conformer_test.py"],
+    tags = [
+        "nomsan",  # 3p 'py/torch' error: use-of-uninitialized-value in reduced_float_type_copy
+    ],
+    deps = [
+        "//perflab:context",
+        "//perflab:mode",
+        "//perflab:target",
+        "//perflab/models",
+        "//shims/absl_py/testing:absltest",
+        "//shims/torch:pytorch",
+        "//src/torch_tpu",
+        "//tests:seed_test_utils",
+    ],
+)
+
+torch_tpu_py_test(
     name = "export_test",
     srcs = ["export_test.py"],
     deps = [

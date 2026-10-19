@@ -129,27 +129,6 @@ KNOWN_FAILURES: tuple[KnownFailure, ...] = (
             " between ragged-dot fusions"
         ),
     ),
-    # The CPU smoke test (`--fake_tensor_mode`) builds these models under
-    # FakeTensorMode, which cannot evaluate a Python scalar read from a fake
-    # tensor (`DataDependentOutputException`).
-    KnownFailure(
-        benchmark="conformer_forward",
-        framework=mode_lib.Framework.TORCH,
-        device_kind=target_lib.DeviceKind.CPU,
-        reason=(
-            "int(lengths.max()) in _load_conformer reads a scalar from a fake"
-            " tensor, which FakeTensorMode cannot evaluate"
-        ),
-    ),
-    KnownFailure(
-        benchmark="conformer_training",
-        framework=mode_lib.Framework.TORCH,
-        device_kind=target_lib.DeviceKind.CPU,
-        reason=(
-            "int(lengths.max()) in _load_conformer reads a scalar from a fake"
-            " tensor, which FakeTensorMode cannot evaluate"
-        ),
-    ),
     # TODO(b/568037427): Remove the TorchAX entries as their failures are fixed.
     #
     # `torch._grouped_mm`, used by the transformers MoE experts, has no

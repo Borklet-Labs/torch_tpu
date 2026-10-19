@@ -186,12 +186,26 @@ class Conformer(torch.nn.Module):
 
   @staticmethod
   def lengths_to_padding_mask(
-      lengths: torch.Tensor, device: torch.device | str
+      lengths: torch.Tensor,
+      device: torch.device | str,
+      max_length: int | None = None,
   ) -> torch.Tensor:
-    """Computes static boolean key padding mask on CPU before moving to device."""
+    """Computes static boolean key padding mask on CPU before moving to device.
+
+    Args:
+      lengths: 1D tensor of sequence lengths with shape `(batch_size,)`.
+      device: Target device for the returned boolean mask.
+      max_length: Static time dimension of the returned mask. If `None`, infers
+        the maximum length from `lengths`.
+
+    Returns:
+      Boolean padding mask of shape `(batch_size, max_length)` on `device`,
+      where `True` indicates padded positions (`index >= length`).
+    """
     lengths_cpu = lengths.to("cpu")
     batch_size = lengths_cpu.shape[0]
-    max_length = int(torch.max(lengths_cpu).item())
+    if max_length is None:
+      max_length = int(torch.max(lengths_cpu).item())
     padding_mask = torch.arange(max_length, dtype=lengths_cpu.dtype).expand(
         batch_size, max_length
     ) >= lengths_cpu.unsqueeze(1)
@@ -269,9 +283,11 @@ def _load_conformer(
   else:
     model.eval()
 
-  lengths = torch.randint(1, max_seq_len, (batch_size,))
-  inputs = torch.rand(batch_size, int(lengths.max()), input_dim)
-  padding_mask = Conformer.lengths_to_padding_mask(lengths, device_str)
+  lengths = torch.randint(1, max_seq_len + 1, (batch_size,))
+  inputs = torch.rand(batch_size, max_seq_len, input_dim)
+  padding_mask = Conformer.lengths_to_padding_mask(
+      lengths, device_str, max_length=max_seq_len
+  )
   example_inputs = (
       inputs.to(dtype=dtype, device=device_str),
       padding_mask,
