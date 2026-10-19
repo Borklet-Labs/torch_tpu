@@ -6,8 +6,8 @@ on 4x Ironwood TPUs.
 
 For information on how to run this example on TPUs in your GKE (Google
 Kubernetes Engine) cluster, please refer to example
-[README](../examples/muse_glimmer_30b/pure_pytorch_fsdp_trainloop). Here we
-instead explain some of the implementation choices.
+[README](https://github.com/google-pytorch/torch_tpu/blob/0.2.0-docs/examples/muse_glimmer_30b/pure_pytorch_fsdp_trainloop).
+Here we instead explain some of the implementation choices.
 
 The focus of this example is simplicity and readability. It runs on just a
 single host with 4 Ironwood TPUs. Clearly, this isn't a realistic pre-training
@@ -27,12 +27,13 @@ Every 4-th layer of the model uses full attention, and all the other layers use
 sliding-window attention (SWA).
 
 The model code is fully self-contained in
-[model_fsdp.py](../examples/muse_glimmer_30b/pure_pytorch_fsdp_trainloop/model_fsdp.py)
+[model_fsdp.py](https://github.com/google-pytorch/torch_tpu/blob/0.2.0-docs/examples/muse_glimmer_30b/pure_pytorch_fsdp_trainloop/model_fsdp.py)
 (and
-[rope.py](../examples/muse_glimmer_30b/pure_pytorch_fsdp_trainloop/rope.py).
+[rope.py](https://github.com/google-pytorch/torch_tpu/blob/0.2.0-docs/examples/muse_glimmer_30b/pure_pytorch_fsdp_trainloop/rope.py)
+for rotary positional encoding).
 
 Configuration is specified in
-[model_fsdp.py](../examples/muse_glimmer_30b/pure_pytorch_fsdp_trainloop/model_fsdp.py):
+[model_fsdp.py](https://github.com/google-pytorch/torch_tpu/blob/0.2.0-docs/examples/muse_glimmer_30b/pure_pytorch_fsdp_trainloop/model_fsdp.py):
 
 ```python
 class Config:
@@ -169,7 +170,7 @@ FSDP (fully-sharded data-parallel) training, using native PyTorch collective ops
 directly.
 
 > **Tip:** For an even simpler description of this approach, take a look at our
-> [manual FSDP example](../examples/fsdp/manual).
+> [manual FSDP example](https://github.com/google-pytorch/torch_tpu/blob/0.2.0-docs/examples/fsdp/manual).
 
 We do FSDP by manually sharding all attention and FFN projection weights, e.g.:
 

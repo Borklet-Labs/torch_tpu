@@ -12,7 +12,7 @@ compiled with dynamic shapes (`dynamic=None`).
 
 For a standalone script version of this example, with separate runners for the
 static and dynamic caches, see
-[`examples/muse_glimmer_30b/llm_inference`](../examples/muse_glimmer_30b/llm_inference).
+[`examples/muse_glimmer_30b/llm_inference`](https://github.com/google-pytorch/torch_tpu/blob/0.2.0-docs/examples/muse_glimmer_30b/llm_inference).
 
 > **Memory requirements:** By default (`USE_FULL_MODEL = False`), the notebook
 > loads only the first 4 of the 52 decoder layers (\~9.3 GB of weights), so it
@@ -62,8 +62,9 @@ decoder architecture, which interleaves three sliding window attention (SWA)
 layers with RoPE and one full NoPE causal attention layer every four blocks.
 
 The same model and caches are also available as reusable modules in
-[`model.py`](../examples/muse_glimmer_30b/llm_inference/model.py) and
-[`kv_cache.py`](../examples/muse_glimmer_30b/llm_inference/kv_cache.py).
+[`model.py`](https://github.com/google-pytorch/torch_tpu/blob/0.2.0-docs/examples/muse_glimmer_30b/llm_inference/model.py)
+and
+[`kv_cache.py`](https://github.com/google-pytorch/torch_tpu/blob/0.2.0-docs/examples/muse_glimmer_30b/llm_inference/kv_cache.py).
 
 <section class="zippy" markdown="1">
 

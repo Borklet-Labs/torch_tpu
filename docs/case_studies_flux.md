@@ -13,10 +13,10 @@ This page is a condensed companion to the full tutorial. It highlights the key
 concept behind each optimization with short, self-contained snippets. For the
 complete model code, benchmarks, XProf traces, and tests, see:
 
-*   [FLUX Optimization Tutorial](../examples/FLUX_optimization/README.md): full
-    walkthrough of every milestone, including XProf traces and instructions for
-    reproducing every benchmark.
-*   [Authoring Custom Pallas Kernels for PyTorch](../examples/FLUX_optimization/pallas_kernels.md):
+*   [FLUX Optimization Tutorial](https://github.com/google-pytorch/torch_tpu/blob/0.2.0-docs/examples/FLUX_optimization/README.md):
+    full walkthrough of every milestone, including XProf traces and instructions
+    for reproducing every benchmark.
+*   [Authoring Custom Pallas Kernels for PyTorch](https://github.com/google-pytorch/torch_tpu/blob/0.2.0-docs/examples/FLUX_optimization/pallas_kernels.md):
     step-by-step walkthrough of the Pallas SplashAttention kernel used in
     Milestone 4.
 
@@ -152,7 +152,7 @@ of the step, but it is removed at no cost.
 > strided views, so their outputs look identical. The extra HBM copy from
 > `einops.rearrange` only occurs in the backward pass, and is visible in an
 > XProf trace of a full training step rather than in the cell output. See
-> [Milestone 1 of the FLUX Optimization Tutorial](../examples/FLUX_optimization/README.md#milestone-1)
+> [Milestone 1 of the FLUX Optimization Tutorial](https://github.com/google-pytorch/torch_tpu/blob/0.2.0-docs/examples/FLUX_optimization/README.md#milestone-1)
 > for the traces.
 
 ```python
@@ -241,7 +241,7 @@ version on the same inputs and compares it against the reference:
 > produce identical results. The speedup only appears when RoPE runs inside the
 > compiled `DoubleStreamBlock`, where the elementwise rotation fuses with the
 > surrounding ops. See
-> [Milestone 2 of the FLUX Optimization Tutorial](../examples/FLUX_optimization/README.md#milestone-2)
+> [Milestone 2 of the FLUX Optimization Tutorial](https://github.com/google-pytorch/torch_tpu/blob/0.2.0-docs/examples/FLUX_optimization/README.md#milestone-2)
 > for the XProf traces.
 
 ```python
@@ -338,7 +338,7 @@ and checks that it matches eager execution:
 > **Note:** These cells only check that compiling doesn't change the result. The
 > fusion and the speedup show up in XProf and step-time measurements of the full
 > `DoubleStreamBlock`, not in the cell output. See
-> [Milestone 3 of the FLUX Optimization Tutorial](../examples/FLUX_optimization/README.md#milestone-3)
+> [Milestone 3 of the FLUX Optimization Tutorial](https://github.com/google-pytorch/torch_tpu/blob/0.2.0-docs/examples/FLUX_optimization/README.md#milestone-3)
 > for eager vs. compiled traces.
 
 ```python
@@ -359,7 +359,8 @@ print("Compiled fused RoPE matches eager execution.")
 
 At long sequence lengths (for example, `S = 2048` or `S = 4096`), full joint
 attention becomes memory-bound. This milestone is shown as snippets only; see
-the [Pallas kernel walkthrough](../examples/FLUX_optimization/pallas_kernels.md)
+the
+[Pallas kernel walkthrough](https://github.com/google-pytorch/torch_tpu/blob/0.2.0-docs/examples/FLUX_optimization/pallas_kernels.md)
 for the full, runnable implementation.
 
 ### Before (reference): standard PyTorch SDPA
@@ -428,11 +429,11 @@ kernel in bfloat16, and profile before reaching for a custom kernel.
 **Learn more:**
 
 *   **Pallas SplashAttention example (used in this case study)**:
-    [`splash_attention.py`](../examples/FLUX_optimization/splash_attention.py)
+    [`splash_attention.py`](https://github.com/google-pytorch/torch_tpu/blob/0.2.0-docs/examples/FLUX_optimization/splash_attention.py)
     contains the full kernel integration, and
-    [`splash_attention_test.py`](../examples/FLUX_optimization/splash_attention_test.py)
+    [`splash_attention_test.py`](https://github.com/google-pytorch/torch_tpu/blob/0.2.0-docs/examples/FLUX_optimization/splash_attention_test.py)
     verifies forward and gradient parity against PyTorch SDPA. The
-    [kernel walkthrough](../examples/FLUX_optimization/pallas_kernels.md)
+    [kernel walkthrough](https://github.com/google-pytorch/torch_tpu/blob/0.2.0-docs/examples/FLUX_optimization/pallas_kernels.md)
     explains block sizes, masks, autograd registration, and testing step by
     step.
 *   **Pallas basics**: [Custom Kernels with Pallas](./custom_kernels.md)
