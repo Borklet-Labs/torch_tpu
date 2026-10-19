@@ -929,14 +929,13 @@ torch_tpu_py_test(
         "notsan",  # TODO(b/497035517): fix the test in tsan mode.
     ],
     deps = [
-        ":distributed_utils",
+        ":continuous_test_utils",
         "//shims/absl_py/logging",
         "//shims/absl_py/testing:absltest",
         "//shims/torch:pytorch",
         "//src/torch_tpu",
         "//src/torch_tpu/_internal/distributed:multiprocessing",
         "//src/torch_tpu/_internal/utils:test_utils",
-        "//tests:seed_test_utils",
         "@pypi//fairscale",
     ],
 )

@@ -17,24 +17,27 @@
 Uses torch_tpu/examples/distributed/tensor_parallel/model.py as a guide.
 """
 
-import os
+import importlib
+
 from absl import logging
 from absl.testing import absltest
 from fairscale.nn.model_parallel import initialize
 from fairscale.nn.model_parallel import layers
 import torch
-from torch import distributed as dist
 from torch import nn
-import torch.multiprocessing as mp
 from torch_tpu._internal.utils import test_utils as utils
 from torch_tpu._internal.distributed import multiprocessing
-from tests import seed_test_utils
-from tests.distributed import distributed_utils
+from tests.distributed import continuous_test_utils
+
+try:
+  _cpp_flags = importlib.import_module("absl.flags._cpp_flags")
+except (ImportError, ModuleNotFoundError):
+  _cpp_flags = None
 
 RowParallelLinear = layers.RowParallelLinear
 ColumnParallelLinear = layers.ColumnParallelLinear
 RANDOM_SEED = 42
-WORLD_SIZE = distributed_utils.get_tpu_device_count()
+WORLD_SIZE = 8
 BATCH_SIZE = 64
 MODEL_DIM = 128
 
@@ -118,67 +121,62 @@ def _copy_weights_to_tp_model(
   logging.info("Successfully copied weights to TP model on rank %d.", rank)
 
 
-def run_forward_tp(device="tpu") -> None:
-  """Runs a non-distributed and an equivalent tensor-parallel versions.
+class FairscaleTest(continuous_test_utils.TpuMultiProcContinuousTest):
 
-  A fixed random seed ensures an identical dataset. However, model weights must
-  be copied manually because the Tensor Parallel (TP) version using FairScale.
+  world_size = WORLD_SIZE
 
-  Args:
-    device: The device to run the tensor parallel model on (e.g., "tpu",
-      "cuda").
-  """
-  dist.init_process_group(backend="tpu_dist")
+  @classmethod
+  def _init_pg(cls, rank: int, world_size: int, rdvz_file: str | None) -> None:
+    # Sync absl C++ flags in worker subprocesses since mp.spawn bypasses
+    # absl.app.run().
+    if _cpp_flags is not None:
+      _cpp_flags.synchronize_cpp_flags(_cpp_flags.load())
+    super()._init_pg(rank, world_size, rdvz_file)
 
-  rank = int(os.environ["RANK"])
-  world_size = int(os.environ["WORLD_SIZE"])
+  def test_forward_fairscale_tp_against_non_tp(self) -> None:
+    """Runs a non-distributed and an equivalent tensor-parallel versions.
 
-  # Initialize non-TP model on CPU for reference.
-  torch.manual_seed(RANDOM_SEED)
-  model = MyModel(dmodel=MODEL_DIM, use_tp=False)
-  model.eval()
+    A fixed random seed ensures an identical dataset. However, model weights
+    must be copied manually because the Tensor Parallel (TP) version uses
+    FairScale.
+    """
+    device = "tpu"
 
-  # Run the non-distributed variant on a single CPU, for reference output.
-  reference_output = None
-  if rank == 0:
+    # Initialize non-TP model on CPU for reference.
+    torch.manual_seed(RANDOM_SEED)
+    model = MyModel(dmodel=MODEL_DIM, use_tp=False)
+    model.eval()
+
+    # Run the non-distributed variant on a single CPU, for reference output.
+    reference_output = None
+    if self.rank == 0:
+      with torch.no_grad():
+        torch.manual_seed(RANDOM_SEED)
+        data = fake_dataloader_read()
+        reference_output = model(data.clone())
+
+    # Run on multiple devices using Tensor Parallelism.
+    if not initialize.model_parallel_is_initialized():
+      initialize.initialize_model_parallel(self.world_size)
+
+    torch.manual_seed(RANDOM_SEED)
+    mymodel_tp = MyModel(dmodel=MODEL_DIM, use_tp=True)
+    mymodel_tp.to(device=device)
+
+    # Copy weights from reference_model to mymodel_tp, handling sharding.
+    _copy_weights_to_tp_model(model, mymodel_tp, self.world_size, self.rank)
+
+    mymodel_tp.eval()
     with torch.no_grad():
       torch.manual_seed(RANDOM_SEED)
-      data = fake_dataloader_read()
-      reference_output = model(data.clone())
+      data_tp = fake_dataloader_read().to(device=device)
+      tp_output = mymodel_tp(data_tp)
+      tp_output = tp_output.cpu()
 
-  # Run on multiple devices using Tensor Parallelism.
-  if not initialize.model_parallel_is_initialized():
-    initialize.initialize_model_parallel(world_size)
-
-  torch.manual_seed(RANDOM_SEED)
-  mymodel_tp = MyModel(dmodel=MODEL_DIM, use_tp=True)
-  mymodel_tp.to(device=device)
-
-  # Copy weights from reference_model to mymodel_tp, handling sharding.
-  _copy_weights_to_tp_model(model, mymodel_tp, world_size, rank)
-
-  mymodel_tp.eval()
-  with torch.no_grad():
-    torch.manual_seed(RANDOM_SEED)
-    data_tp = fake_dataloader_read().to(device=device)
-    tp_output = mymodel_tp(data_tp)
-    tp_output = tp_output.cpu()
-
-  # Assert TPU outputs on rank=0 match the reference outputs.
-  if rank == 0:
-    utils.assert_close(tp_output, reference_output, atol=1e-4, rtol=1e-4)
-
-
-class FairscaleTest(seed_test_utils.MultiProcessRepeatableTest):
-
-  def test_forward_fairscale_tp_against_non_tp(self):
-    logging.info("Running test on %d TPUs.", WORLD_SIZE)
-    distributed_utils.dist_run(
-        nproc_per_node=WORLD_SIZE,
-        fn=run_forward_tp,
-    )
+    # Assert TPU outputs on rank=0 match the reference outputs.
+    if self.rank == 0:
+      utils.assert_close(tp_output, reference_output, atol=1e-4, rtol=1e-4)
 
 
 if __name__ == "__main__":
-  mp.set_start_method("spawn")
   multiprocessing.handle_test_main(absltest.main)
