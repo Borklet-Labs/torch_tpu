@@ -59,20 +59,28 @@ outputs:
     description: >-
       True if diffing is bypassed and all tests must run (calculate mode only).
     value: ${{ steps.bazel_diff_exec.outputs.is_full_run }}
+  exit_code:
+    description: >-
+      Exit code of run_bazel_diff.py (Bazel's own exit code when the build or
+      test invocation fails).
+    value: ${{ steps.bazel_diff_exec.outputs.exit_code }}
 
 runs:
   using: 'composite'
   steps:
     - name: Execute bazel-diff script
       id: bazel_diff_exec
-      run: >-
-        uv run "$GITHUB_WORKSPACE/ci/tools/run_bazel_diff.py"
-        --workspace-dir="$GITHUB_WORKSPACE"
-        --base-sha="${{ inputs.base_sha }}"
-        --current-sha="${{ inputs.current_sha }}"
-        --bazel-config="${{ inputs.bazel_config }}"
-        --extra-bazel-flags="${{ inputs.extra_bazel_flags }}"
-        --test-all="${{ inputs.test_all }}"
-        --mode="${{ inputs.mode }}"
-        --impacted-targets-file="${{ inputs.impacted_targets_file }}"
+      run: |
+        rc=0
+        uv run "$GITHUB_WORKSPACE/ci/tools/run_bazel_diff.py" \
+          --workspace-dir="$GITHUB_WORKSPACE" \
+          --base-sha="${{ inputs.base_sha }}" \
+          --current-sha="${{ inputs.current_sha }}" \
+          --bazel-config="${{ inputs.bazel_config }}" \
+          --extra-bazel-flags="${{ inputs.extra_bazel_flags }}" \
+          --test-all="${{ inputs.test_all }}" \
+          --mode="${{ inputs.mode }}" \
+          --impacted-targets-file="${{ inputs.impacted_targets_file }}" || rc=$?
+        echo "exit_code=${rc}" >> "$GITHUB_OUTPUT"
+        exit "${rc}"
       shell: bash

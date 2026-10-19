@@ -431,7 +431,8 @@ def _get_configs(mapping: Mapping[str, Any]) -> list[str]:
   sources and the wheel built from them.
 
   Args:
-    mapping: A matrix entry, or the `with` inputs of a step.
+    mapping: A matrix entry, or the `with` inputs of a step or of a reusable
+      workflow call.
 
   Returns:
     The configs, in declaration order.
@@ -449,7 +450,8 @@ def _get_job_runner(job: Mapping[str, Any]) -> str:
 
   `runs-on` is usually a template referencing the matrix (e.g.
   `${{ matrix.job_info.runner }}`), in which case the first runner pinned by a
-  matrix entry stands in for the job as a whole.
+  matrix entry stands in for the job as a whole. A job that calls a reusable
+  workflow has no `runs-on`; its runner is the `runner` input it passes.
 
   Args:
     job: A single job definition taken from a workflow's `jobs` mapping.
@@ -460,6 +462,11 @@ def _get_job_runner(job: Mapping[str, Any]) -> str:
   runner = _get_literal(job, "runs-on")
   if runner:
     return runner
+  job_with = job.get("with")
+  if isinstance(job_with, Mapping):
+    runner = _get_literal(job_with, "runner")
+    if runner:
+      return runner
   for entry in _get_matrix_entries(job):
     runner = _get_literal(entry, "runner")
     if runner:
@@ -467,21 +474,24 @@ def _get_job_runner(job: Mapping[str, Any]) -> str:
   return ""
 
 
-def _get_step_configs(job: Mapping[str, Any]) -> list[str]:
-  """Returns the Bazel configs selected by the job's steps."""
+def _get_job_configs(job: Mapping[str, Any]) -> Sequence[str]:
+  """Returns the Bazel configs selected by the job's steps or call inputs."""
+  configs: list[str] = []
+  job_with = job.get("with")
+  if isinstance(job_with, Mapping):
+    configs.extend(_get_configs(job_with))
   steps = job.get("steps")
   if not isinstance(steps, list):
-    return []
-  configs = []
+    return configs
   for step in steps:
-    if not isinstance(step, dict):
+    if not isinstance(step, Mapping):
       continue
     command = step.get("run")
     if isinstance(command, str):
       configs.extend(_BAZEL_TEST_CONFIG_RE.findall(command))
-    with_args = step.get("with")
-    if isinstance(with_args, dict):
-      configs.extend(_get_configs(with_args))
+    step_with = step.get("with")
+    if isinstance(step_with, Mapping):
+      configs.extend(_get_configs(step_with))
   return configs
 
 
@@ -517,15 +527,15 @@ def parse_workflow_machine_types(
         for config in _get_configs(entry):
           job_machines[config] = JobMachineInfo(machine_type, runner)
 
-    # A config hardcoded in a step command or action input only tells us which
-    # job runs it, so it falls back to the job's runner and never overrides a
-    # matrix entry.
+    # A config hardcoded in a step command, action input, or reusable workflow
+    # call only tells us which job runs it, so it falls back to the job's
+    # runner and never overrides a matrix entry.
     for job in jobs:
       runner = _get_job_runner(job)
       if not runner:
         continue
       machine_type = decode_runner_machine_type(runner)
-      for config in _get_step_configs(job):
+      for config in _get_job_configs(job):
         job_machines.setdefault(config, JobMachineInfo(machine_type, runner))
 
   return job_machines

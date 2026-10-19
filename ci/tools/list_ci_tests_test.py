@@ -714,6 +714,27 @@ jobs:
       self.assertEqual(parsed["ci_rbe_presubmit"].machine_type, "CPU")
       self.assertEqual(parsed["ci_rbe_presubmit"].runner, "linux-x86-n4-16")
 
+  def test_parse_workflow_machine_types_reusable_workflow_call(self):
+    """Verifies a reusable workflow call maps its config to its runner input."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+      temp_path = pathlib.Path(temp_dir)
+      (temp_path / "presubmit.yml").write_text(
+          textwrap.dedent("""\
+              jobs:
+                rbe_fallback:
+                  uses: ./.github/workflows/presubmit_runner.yml
+                  with:
+                    runner: linux-x86-ct5lp-224-8tpu
+                    bazel_config: ci_tpu_v5_rbe_fallback
+              """),
+          encoding="utf-8",
+      )
+      parsed = list_ci_tests.parse_workflow_machine_types(temp_path)
+      self.assertEqual(parsed["ci_tpu_v5_rbe_fallback"].machine_type, "TPU v5e")
+      self.assertEqual(
+          parsed["ci_tpu_v5_rbe_fallback"].runner, "linux-x86-ct5lp-224-8tpu"
+      )
+
   def test_parse_workflow_machine_types_ignores_misleading_names(self):
     """Verifies a TPU runner wins over a job name that decodes to another type."""
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -769,6 +790,7 @@ jobs:
     expected_machines = {
         "ci_cpu_presubmit": ("CPU", "linux-x86-n4-16"),
         "ci_tpu_v5_presubmit": ("TPU v5e", "linux-x86-ct5lp-224-8tpu"),
+        "ci_tpu_v5_rbe_fallback": ("TPU v5e", "linux-x86-ct5lp-224-8tpu"),
         "ci_rbe_presubmit": ("CPU", "linux-x86-n4-16"),
         "ci_tpu_v7_presubmit": ("TPU v7x", "linux-x86-tpu7x-224-4tpu"),
         "ci_cpu_nightly": ("CPU", "linux-x86-n4-16"),
@@ -806,13 +828,35 @@ jobs:
     self.assertEqual(rbe_configs & ci_configs.keys(), {"ci_rbe_presubmit"})
 
   def test_real_bazelrc_v5_presubmit_partition(self):
-    """Verifies ci_rbe_presubmit and ci_tpu_v5_presubmit partition v5 tests."""
+    """Verifies ci_rbe_presubmit and ci_tpu_v5_presubmit partition v5 tests.
+
+    Also verifies ci_tpu_v5_rbe_fallback selects the exact TPU half of
+    ci_rbe_presubmit's filter, leaving CPU tests to ci_cpu_presubmit.
+    """
     bazelrc_path = list_ci_tests.get_bazelrc_path(self.repo_root)
     ci_configs = list_ci_tests.parse_bazelrc_tag_filters(bazelrc_path)
     rbe_filters = ci_configs["ci_rbe_presubmit"]
+    fallback_filters = ci_configs["ci_tpu_v5_rbe_fallback"]
+    cpu_filters = ci_configs["ci_cpu_presubmit"]
     v5_filters = ci_configs["ci_tpu_v5_presubmit"]
 
+    self.assertEqual(
+        set(fallback_filters),
+        (
+            set(rbe_filters)
+            - {
+                "-requires-gpu",
+                "-cuda-build-test",
+                "-presubmit-v6",
+                "-presubmit-v7",
+            }
+        )
+        | {"presubmit-v5"},
+    )
+
+    # (name, tags, runs on RBE, runs on the 8-chip runner always)
     cases = [
+        ("cpu", set(), True, False),
         (
             "single_chip_v5",
             {"requires-tpu", "requires-tpu-v5lite", "presubmit-v5"},
@@ -862,12 +906,21 @@ jobs:
     ]
     for name, tags, expected_rbe, expected_v5 in cases:
       with self.subTest(case=name):
-        self.assertEqual(
-            list_ci_tests.matches_tag_filters(tags, rbe_filters), expected_rbe
+        matches_rbe = list_ci_tests.matches_tag_filters(tags, rbe_filters)
+        matches_fallback = list_ci_tests.matches_tag_filters(
+            tags, fallback_filters
         )
+        matches_cpu = list_ci_tests.matches_tag_filters(tags, cpu_filters)
+        self.assertEqual(matches_rbe, expected_rbe)
         self.assertEqual(
             list_ci_tests.matches_tag_filters(tags, v5_filters), expected_v5
         )
+        self.assertEqual(
+            matches_fallback,
+            expected_rbe and "requires-tpu" in tags,
+        )
+        self.assertEqual(matches_rbe, matches_cpu or matches_fallback)
+        self.assertFalse(matches_cpu and matches_fallback)
 
   def test_format_output_with_machine_info(self):
     """Verifies output formatters incorporate machine type details."""

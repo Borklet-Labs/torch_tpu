@@ -108,9 +108,13 @@ jobs:
   # aggregate result fails presubmit on any error without claiming a runner.
   # The newest-dependencies job must pass too; otherwise a failure there (e.g.
   # in //tests/api:tt_apis_test) doesn't block submission.
+  # The RBE job and its self-hosted fallback are gated here rather than as
+  # separate Copybara check runs so that a red RBE run does not block a merge
+  # once the fallback has passed. A skipped RBE job on a fork PR or an
+  # opted-out dispatch is still a pass.
   presubmit_tests_passed:
     name: "Presubmit"
-    needs: [run_tests, tpu_v5_newest_deps]
+    needs: [run_tests, tpu_v5_newest_deps, rbe_presubmit, rbe_tpu_v5_fallback]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
@@ -118,9 +122,15 @@ jobs:
         env:
           RUN_TESTS_RESULT: ${{ needs.run_tests.result }}
           NEWEST_DEPS_RESULT: ${{ needs.tpu_v5_newest_deps.result }}
+          RBE_EXPECTED: ${{ inputs.run_rbe_presubmit || github.event.pull_request.head.repo.full_name == github.repository }}
+          RBE_RESULT: ${{ needs.rbe_presubmit.result }}
+          RBE_FALLBACK_RESULT: ${{ needs.rbe_tpu_v5_fallback.result }}
         run: |
           echo "run_tests: ${RUN_TESTS_RESULT}"
           echo "tpu_v5_newest_deps: ${NEWEST_DEPS_RESULT}"
+          echo "rbe_expected: ${RBE_EXPECTED}"
+          echo "rbe_presubmit: ${RBE_RESULT}"
+          echo "rbe_tpu_v5_fallback: ${RBE_FALLBACK_RESULT}"
           if [[ "${RUN_TESTS_RESULT}" != "success" ]]; then
             echo "::error::Presubmit did not succeed (result: ${RUN_TESTS_RESULT})"
             exit 1
@@ -129,15 +139,28 @@ jobs:
             echo "::error::Presubmit on TPU v5 (newest deps) did not succeed (result: ${NEWEST_DEPS_RESULT})"
             exit 1
           fi
+          if [[ "${RBE_FALLBACK_RESULT}" == "failure" || "${RBE_FALLBACK_RESULT}" == "cancelled" ]]; then
+            echo "::error::Presubmit on RBE fallback did not succeed (result: ${RBE_FALLBACK_RESULT})"
+            exit 1
+          fi
+          if [[ "${RBE_EXPECTED}" == "true" && "${RBE_RESULT}" != "success" && "${RBE_FALLBACK_RESULT}" != "success" ]]; then
+            echo "::error::Presubmit on RBE did not succeed (rbe_presubmit: ${RBE_RESULT}, fallback: ${RBE_FALLBACK_RESULT})"
+            exit 1
+          fi
 
   # Runs CPU and single-chip TPU v5e presubmit tests on RBE. Runs on every
   # same-repo PR, never on fork PRs, and on workflow_dispatch when
-  # `run_rbe_presubmit` is set.
+  # `run_rbe_presubmit` is set. Set the RBE_PRESUBMIT_ENABLED repo variable to
+  # `false` during an RBE outage to skip RBE and run the fallback job instead.
   rbe_presubmit:
     name: "Presubmit on RBE"
     timeout-minutes: 120
-    if: inputs.run_rbe_presubmit || github.event.pull_request.head.repo.full_name == github.repository
+    if: >-
+      vars.RBE_PRESUBMIT_ENABLED != 'false' &&
+      (inputs.run_rbe_presubmit || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: linux-x86-n4-16
+    outputs:
+      bazel_exit_code: ${{ steps.bazel_diff.outputs.exit_code }}
     container:
       image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build@sha256:dddf008479144c57182b56a6d00bfc1f38f8f2ef206e2bc26ff6c0a401ded47e"  # Tag infrastructure-public-image-083516c6af6a (built 2026-10-13)
       options: --ipc=host
@@ -194,6 +217,7 @@ jobs:
           echo "extra_bazel_flags=$flags" >> "$GITHUB_OUTPUT"
 
       - name: Run Impacted Tests via bazel-diff
+        id: bazel_diff
         uses: ./.github/actions/bazel-diff
         with:
           base_sha: ${{ inputs.override_base_sha }}
@@ -201,6 +225,46 @@ jobs:
           bazel_config: "ci_rbe_presubmit"
           extra_bazel_flags: ${{ steps.rbe_region.outputs.extra_bazel_flags }}
           test_all: ${{ contains(github.event.pull_request.labels.*.name, 'ci:disable-bazel-diff') }}
+
+  # Runs the single-chip TPU v5e presubmit tests on the self-hosted 8-chip
+  # runner only when RBE itself is unavailable: RBE was skipped by the
+  # RBE_PRESUBMIT_ENABLED kill switch, timed out (which GitHub reports as
+  # `cancelled`), or exited with one of these Bazel infrastructure codes
+  # (https://bazel.build/run/scripts#exit-codes):
+  #   34 REMOTE_ERROR: the remote executor or cache failed or was unreachable.
+  #   36 LOCAL_ENVIRONMENTAL_ERROR: a local host or credential/environment error
+  #      prevented Bazel from completing the RBE invocation.
+  #   38 TRANSIENT_BUILD_EVENT_SERVICE_UPLOAD_ERROR: the ResultStore upload
+  #      timed out.
+  #   39 REMOTE_CACHE_EVICTED: remote cache errors that survived Bazel's own
+  #      retries.
+  #   45 PERSISTENT_BUILD_EVENT_SERVICE_UPLOAD_ERROR: the ResultStore backend
+  #      rejected or dropped the upload.
+  # A genuine build (1) or test (3) failure on RBE does not claim an 8-chip
+  # runner. The exit code comes from Bazel only for the build and test commands
+  # run_bazel_diff.py executes directly; a failure inside bazel-diff's own hash
+  # generation exits with 1, so for an outage that breaks even `cquery` use the
+  # RBE_PRESUBMIT_ENABLED kill switch.
+  rbe_tpu_v5_fallback:
+    name: "Presubmit on linux-x86-ct5lp-224-8tpu (RBE fallback)"
+    needs: rbe_presubmit
+    if: >-
+      !cancelled() &&
+      (inputs.run_rbe_presubmit || github.event.pull_request.head.repo.full_name == github.repository) && (
+        needs.rbe_presubmit.result == 'skipped' ||
+        needs.rbe_presubmit.result == 'cancelled' ||
+        (needs.rbe_presubmit.result == 'failure' &&
+         contains(fromJSON('["34", "36", "38", "39", "45"]'), needs.rbe_presubmit.outputs.bazel_exit_code))
+      )
+    uses: ./.github/workflows/presubmit_runner.yml
+    with:
+      runner: linux-x86-ct5lp-224-8tpu
+      bazel_config: ci_tpu_v5_rbe_fallback
+      extra_bazel_flags: '--run_under="$(pwd)/ci/tools/parallel_accelerator_execute.sh"'
+      test_all: ${{ contains(github.event.pull_request.labels.*.name, 'ci:disable-bazel-diff') }}
+      halt_for_connection: ${{ inputs.halt-for-connection }}
+      base_sha: ${{ inputs.override_base_sha }}
+      current_sha: ${{ inputs.override_current_sha || github.sha }}
 
   # Runs the tests tagged `requires-newest-deps` (e.g. //tests/api:tt_apis_test,
   # since tests/api/tt_apis.yaml tracks the public APIs with the newest
