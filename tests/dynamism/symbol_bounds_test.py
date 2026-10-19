@@ -142,6 +142,35 @@ class SymbolBoundsTest(seed_test_utils.RepeatableTest):
     self.assertEqual(violated, sympy.Eq(sympy.Mod(s0, 3), 0))
     self.assertIsNone(symbol_bounds.find_violated_guard(shape_env, {"s0": 15}))
 
+  @parameterized.named_parameters(
+      ("le", lambda s: sympy.Le(s + 1, 2054)),
+      ("lt", lambda s: sympy.Lt(s, 2054)),
+      ("ge", lambda s: sympy.Ge(s, 4096)),
+      ("gt", lambda s: sympy.Gt(s, 2175)),
+  )
+  def test_find_violated_guard_single_symbol_relational_skipped(
+      self, make_guard
+  ):
+    s0 = sympy.Symbol("s0", integer=True)
+    # Relational guards refine the range of the runtime size, e.g. the slice
+    # clamp `s0 + 1 <= 2054` of a static buffer sliced by `s0 + 1`. A padded
+    # capacity above that range (the aligned bucket capacity 2175) is valid.
+    shape_env = FakeShapeEnv(
+        guards=[
+            FakeGuard(make_guard(s0)),
+            FakeGuard(sympy.Eq(sympy.Mod(s0, 3), 0)),
+        ]
+    )
+    self.assertIsNone(
+        symbol_bounds.find_violated_guard(shape_env, {"s0": 2175})
+    )
+
+    # Modular equality guards must still hold for the padded shape.
+    self.assertEqual(
+        symbol_bounds.find_violated_guard(shape_env, {"s0": 2176}),
+        sympy.Eq(sympy.Mod(s0, 3), 0),
+    )
+
   def test_get_fallback_symbol_bounds_inequality_guard_at_upper_bound(self):
     # `table[:, :s0]` on a static `(4, 16)` table: the slice clamp refines the
     # range to s0 <= 16 and the contiguity check guards Ne(s0, 16).
