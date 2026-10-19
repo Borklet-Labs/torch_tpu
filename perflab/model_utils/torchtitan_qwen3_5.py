@@ -203,7 +203,7 @@ def _pure_torch_gated_delta_kernel_forward(
     xk_THK = xk_THK.repeat_interleave(repeats, dim=1)
   num_tokens = xq_THK.shape[0]
   seq_len = getattr(self, "_seq_len", None)
-  if seq_len is None or num_tokens <= seq_len:
+  if seq_len is None or num_tokens < seq_len:
     return chunked_gated_delta(
         xq_THK.unsqueeze(0),
         xk_THK.unsqueeze(0),
@@ -246,7 +246,7 @@ def _pure_torch_inner_gated_delta_net_forward(
   """Drop-in `InnerGatedDeltaNet.forward` supporting packed `(B * S, C)` inputs."""
   num_tokens = query_TC.shape[0]
   seq_len = getattr(self, "_seq_len", None)
-  if seq_len is None or num_tokens <= seq_len:
+  if seq_len is None or num_tokens < seq_len:
     orig_forward = getattr(self, "_orig_forward", None)
     if orig_forward is None:
       orig_forward = types.MethodType(

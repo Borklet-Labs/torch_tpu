@@ -88,8 +88,8 @@ KNOWN_FAILURES: tuple[KnownFailure, ...] = (
             " parameters (~20.5k) than supported (~16.3k)"
         ),
     ),
-    # TODO(b/574632209): Remove once the XLA:TPU HLO shape mismatch in
-    # `qwen3_8_L147_split1_bwd` is fixed.
+    # TODO(b/574632209): Remove once XLA:TPU cl/1001433059 lands. It fixes
+    # `TpuConvolutionRewriter` for non-`f0b_i0o->0bf` dimension orders.
     # Repro: //perflab:distributed_dev_benchmarks_ws8
     #   --test_filter=qwen3_8_27b_4_layers_simple_fsdp_training_compiled
     KnownFailure(

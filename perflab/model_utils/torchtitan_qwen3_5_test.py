@@ -12,8 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from unittest import mock
+
 from absl.testing import absltest
 import torch
+import torch.nn.functional as F
 from torch_tpu._internal.utils import test_utils
 from perflab.model_utils import torchtitan_qwen3_5
 from tests import seed_test_utils
@@ -133,13 +136,32 @@ class TorchtitanQwen35Test(seed_test_utils.RepeatableTest):
     )
 
     tokens = torch.randint(0, config.vocab_size, (seq_len,))
-    with torch.no_grad():
-      expected = upstream_model(tokens)
+    labels = torch.randint(0, config.vocab_size, (seq_len,))
+    expected = upstream_model(tokens)
+    F.cross_entropy(expected.float(), labels).backward()
+
+    # B=1 (num_tokens == seq_len) runs _pure_torch_inner_gated_delta_net_forward
+    # rather than falling back to _orig_forward.
+    with mock.patch.object(
+        swapped_gdn,
+        "_orig_forward",
+        side_effect=AssertionError(
+            "_orig_forward must not be called for B=1 (num_tokens == seq_len)"
+        ),
+    ):
       actual_b1 = swapped_model(tokens)
-      # B=1 path delegates directly to upstream InnerGatedDeltaNet.forward.
-      self.assertTrue(torch.equal(actual_b1, expected))
-      # Also verify the batched (B > 1) conv + kernel code path on duplicated
-      # [tokens, tokens] matches the B=1 upstream output for both slices.
+      F.cross_entropy(actual_b1.float(), labels).backward()
+
+    test_utils.assert_close(actual_b1, expected, atol=1e-6, rtol=1e-6)
+    for (name, param), (_, ref_param) in zip(
+        swapped_model.named_parameters(), upstream_model.named_parameters()
+    ):
+      self.assertIsNotNone(param.grad, name)
+      test_utils.assert_close(param.grad, ref_param.grad, atol=1e-5, rtol=1e-5)
+
+    with torch.no_grad():
+      # Also verify the batched (B >= 2) conv + kernel code path matches the
+      # B=1 output for both slices.
       actual_b2 = swapped_model(torch.cat([tokens, tokens], dim=0))
       test_utils.assert_close(
           actual_b2[:seq_len], expected, atol=1e-6, rtol=1e-6
@@ -280,7 +302,7 @@ class TorchtitanQwen35Test(seed_test_utils.RepeatableTest):
     torchtitan_qwen3_5.use_batched_sdpa(model, seq_len=seq_len)
 
     with torch.no_grad():
-      model(torch.randint(0, config.vocab_size, (seq_len,)))
+      model(torch.randint(0, config.vocab_size, (seq_len // 2,)))
       self.assertEqual(gdn_calls, 1)
       self.assertEqual(sdpa_calls, 1)
       model(
