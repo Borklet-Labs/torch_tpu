@@ -208,6 +208,7 @@ _AUDIO_MODEL_TYPES = (
     "fastspeech",
     "fastspeech2",
     "gemma3naudio",
+    "gemma4_audio",
     "gemma4audio",
     "granite-speech",
     "granite_speech",
@@ -232,7 +233,9 @@ _AUDIO_MODEL_TYPES = (
     "pe_audio_encoder",
     "pop2piano",
     "qwen2-audio",
+    "qwen2_5_omni_audio_encoder",
     "qwen2_audio",
+    "qwen3_omni_moe_audio_encoder",
     "scail",
     "sew",
     "sew-d",
@@ -276,10 +279,12 @@ _VISION_MODEL_TYPES = (
     "dinov3",
     "dinov3_vit",
     "dpt",
+    "edgetam_video",
     "efficientloftr",
     "efficientnet",
     "eomt",
     "focalnet",
+    "gemma4_vision",
     "glpn",
     "hgnet_v2",
     "hiera",
@@ -387,6 +392,7 @@ _TEXT_MODEL_TYPES = (
     "xlm-prophetnet",
     "xlm-roberta",
     "xlnet",
+    "xlstm",
     "xmod",
     "yoso",
     # go/keep-sorted end
@@ -595,9 +601,11 @@ _VISION_LANGUAGE_MODEL_TYPES = (
     "pp_formulanet",
     "qformer",
     "qwen2-audio",
+    "qwen2_5_omni",
     "qwen2_5_vl",
     "qwen2_audio",
     "qwen2_vl",
+    "qwen3_omni_moe",
     "qwen3_vl",
     "qwen3_vl_moe",
     "sam3",
@@ -1464,7 +1472,11 @@ def _is_multimodal(
       and "shieldgemma" not in arch_name
   ):
     return False
-  if "audio_encoder" in model_type or "audioencoder" in model_type:
+  if (
+      "audio_encoder" in model_type
+      or "audioencoder" in model_type
+      or model_type == "sam3_video"
+  ):
     return False
   return (
       any(k in model_type for k in _MULTIMODAL_MODEL_TYPES)
@@ -1642,17 +1654,32 @@ def _parse_image_size(config: Any, default_size: int = 224) -> int:
   if "rf_detr" in str(cfg.get("model_type", "")).lower():
     return 560
 
+  detector_cfg = cfg.get("detector_config")
   vlm_cfg = cfg.get("vlm_config")
   vision_config = (
       cfg.get("vision_config")
       or (vlm_cfg.get("vision_config") if vlm_cfg else None)
+      or (detector_cfg.get("vision_config") if detector_cfg else None)
       or cfg.get("encoder")
       or cfg.get("backbone_config")
   )
   if vision_config and vision_config.get("model_type") == "pixtral":
     return 128
+  backbone_cfg = vision_config.get("backbone_config") if vision_config else None
   raw_val = (
-      (vision_config.get("image_size") or vision_config.get("resolution"))
+      (
+          vision_config.get("image_size")
+          or vision_config.get("resolution")
+          or (
+              backbone_cfg.get("image_size") or backbone_cfg.get("resolution")
+              if backbone_cfg is not None
+              and (
+                  isinstance(backbone_cfg, Mapping)
+                  or hasattr(backbone_cfg, "get")
+              )
+              else None
+          )
+      )
       if vision_config
       else None
   )
@@ -1722,6 +1749,15 @@ def _extract_target_dtype(config: Any) -> torch.dtype:
     vision_config = cfg.get("vision_config")
     if vision_config is not None:
       dtype = vision_config.get("torch_dtype") or vision_config.get("dtype")
+
+  if dtype is None:
+    thinker_config = cfg.get("thinker_config")
+    if thinker_config is not None:
+      dtype = thinker_config.get("torch_dtype") or thinker_config.get("dtype")
+      if dtype is None:
+        thinker_text = thinker_config.get("text_config")
+        if thinker_text is not None:
+          dtype = thinker_text.get("torch_dtype") or thinker_text.get("dtype")
 
   if isinstance(dtype, str):
     return getattr(torch, dtype, torch.float32)
@@ -1844,6 +1880,9 @@ _ARCHITECTURE_ALIASES: dict[str, dict[str, str]] = {
         "Gemma4ForConditionalGeneration": (
             "Gemma4UnifiedForConditionalGeneration"
         ),
+    },
+    "qwen2_5_omni": {
+        "Qwen2_5OmniModel": "Qwen2_5OmniForConditionalGeneration",
     },
     "qwen2_5_vl_text": {
         "Qwen2_5_VLForConditionalGeneration": "Qwen2_5_VLTextModel",
@@ -2284,6 +2323,10 @@ def _sanitize_model_specific_config_dict(
 ) -> None:
   """Applies model-type-specific normalizations to a raw config dictionary."""
   model_type = config_dict.get("model_type")
+  if model_type == "xlstm":
+    config_dict["chunkwise_kernel"] = "chunkwise--native_autograd"
+    config_dict["sequence_kernel"] = "native_sequence__native"
+    config_dict["step_kernel"] = "native"
   if not load_weights:
     if model_type == "vits":
       config_dict["use_stochastic_duration_prediction"] = False
@@ -2292,6 +2335,8 @@ def _sanitize_model_specific_config_dict(
       # instead of `hybrid_idx % num_mem_blocks`, leaving odd-parity hybrid
       # layers with nn.Identity() adapters when num_mem_blocks > 1.
       config_dict["num_mem_blocks"] = 1
+    elif model_type in ("qwen2_5_omni", "qwen3_omni_moe"):
+      config_dict["enable_audio_output"] = False
 
     bb_cfg = config_dict.get("backbone_config")
     if isinstance(bb_cfg, dict) and bb_cfg.get("model_type") == "timm_backbone":
@@ -2491,7 +2536,11 @@ def _instantiate_transformers_config_class(
         if isinstance(default_sub_kwargs, dict):
           sub_dict = {**default_sub_kwargs, **sub_dict}
         concrete_sub_cls = _resolve_sub_config_class(sub_cls, sub_dict)
-        if sub_key in known_fields and concrete_sub_cls is not None:
+        if (
+            sub_key in known_fields
+            and concrete_sub_cls is not None
+            and getattr(cfg_cls, "__name__", "") != "Qwen3OmniMoeTalkerConfig"
+        ):
           sub_inst = _instantiate_transformers_config_class(
               concrete_sub_cls, sub_dict, load_weights=load_weights
           )
@@ -2974,14 +3023,49 @@ def _apply_model_patches(
 
   if (
       "Qwen2_5Omni" in model.__class__.__name__
+      or "Qwen3Omni" in model.__class__.__name__
       or "qwen2_5_omni" in cfg.get("model_type", "").lower()
+      or "qwen3_omni" in cfg.get("model_type", "").lower()
   ):
     if hasattr(model, "thinker"):
 
-      def _qwen2_5_omni_forward(self, *args, **kwargs):
+      def _qwen_omni_forward(self, *args, **kwargs):
         return self.thinker(*args, **kwargs)
 
-      model.forward = types.MethodType(_qwen2_5_omni_forward, model)
+      model.forward = types.MethodType(_qwen_omni_forward, model)
+
+  if (
+      "Sam2Video" in model.__class__.__name__
+      or "EdgeTamVideo" in model.__class__.__name__
+      or cfg.get("model_type", "").lower() in ("sam2_video", "edgetam_video")
+  ):
+    if hasattr(model, "get_image_features"):
+
+      def _sam2_video_forward(self, pixel_values=None, *args, **kwargs):
+        return self.get_image_features(
+            pixel_values=pixel_values, *args, **kwargs
+        )
+
+      model.forward = types.MethodType(_sam2_video_forward, model)
+
+  if (
+      "Sam3Video" in model.__class__.__name__
+      or cfg.get("model_type", "").lower() == "sam3_video"
+  ):
+    detector = getattr(model, "detector_model", None)
+    if detector is not None and hasattr(detector, "get_vision_features"):
+
+      def _sam3_video_forward(self, pixel_values=None, *args, **kwargs):
+        if pixel_values is not None:
+          vision_embeds = self.detector_model.get_vision_features(
+              pixel_values=pixel_values
+          )
+          if hasattr(self, "get_vision_features_for_tracker"):
+            self.get_vision_features_for_tracker(vision_embeds)
+          return vision_embeds
+        return self.detector_model(*args, **kwargs)
+
+      model.forward = types.MethodType(_sam3_video_forward, model)
 
   if (
       "DeformableDetr" in model.__class__.__name__

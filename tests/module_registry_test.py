@@ -2676,6 +2676,82 @@ class ModuleRegistryTest(seed_test_utils.RepeatableTest):
     module_registry._sanitize_config(neox_cfg)
     self.assertEqual(neox_cfg.rope_parameters["rope_theta"], 25000)
 
+  def test_gemma4_vision_inputs_and_qwen_omni_audio_inputs(self):
+    gemma4_vis_cfg = {
+        "model_type": "gemma4_vision",
+        "architectures": ["Gemma4VisionModel"],
+        "patch_size": 16,
+        "pooling_kernel_size": 3,
+        "num_channels": 3,
+    }
+    vis_inputs = transformers_inputs.generate_transformers_inputs(
+        gemma4_vis_cfg,
+        module_registry.Modality.VISION,
+        shape=(2, 3, 224, 224),
+    )
+    self.assertEqual(vis_inputs["pixel_values"].shape, (2, 225, 3 * 16 * 16))
+    self.assertEqual(vis_inputs["pixel_position_ids"].shape, (2, 225, 2))
+
+    qwen_audio_cfg = {
+        "model_type": "qwen3_omni_moe_audio_encoder",
+        "architectures": ["Qwen3OmniMoeAudioEncoder"],
+        "num_mel_bins": 128,
+    }
+    audio_inputs = transformers_inputs.generate_transformers_inputs(
+        qwen_audio_cfg,
+        module_registry.Modality.AUDIO,
+        shape=(2, 128),
+    )
+    self.assertEqual(audio_inputs["input_features"].shape, (128, 256))
+    self.assertEqual(audio_inputs["feature_lens"].tolist(), [128, 128])
+
+  def test_xlstm_and_musicgen_melody_decoder_inputs(self):
+    xlstm_cfg = {
+        "model_type": "xlstm",
+        "architectures": ["xLSTMForCausalLM"],
+        "vocab_size": 1000,
+        "chunk_size": 64,
+    }
+    xlstm_inputs = transformers_inputs.generate_transformers_inputs(
+        xlstm_cfg,
+        module_registry.Modality.TEXT,
+        shape=(1, 16),
+    )
+    self.assertEqual(xlstm_inputs["input_ids"].shape, (1, 64))
+    self.assertNotIn("attention_mask", xlstm_inputs)
+
+    melody_dec_cfg = {
+        "model_type": "musicgen_melody_decoder",
+        "architectures": ["MusicgenMelodyForCausalLM"],
+        "vocab_size": 2048,
+        "num_codebooks": 4,
+    }
+    melody_inputs = transformers_inputs.generate_transformers_inputs(
+        melody_dec_cfg,
+        module_registry.Modality.AUDIO,
+        shape=(2, 16),
+    )
+    self.assertEqual(melody_inputs["input_ids"].shape, (8, 16))
+    self.assertNotIn("attention_mask", melody_inputs)
+    self.assertNotIn("decoder_input_ids", melody_inputs)
+
+  def test_sanitize_xlstm_and_qwen_omni_configs(self):
+    xlstm_dict = {"model_type": "xlstm"}
+    module_registry._sanitize_model_specific_config_dict(
+        xlstm_dict, load_weights=False
+    )
+    self.assertEqual(
+        xlstm_dict["chunkwise_kernel"], "chunkwise--native_autograd"
+    )
+    self.assertEqual(xlstm_dict["sequence_kernel"], "native_sequence__native")
+    self.assertEqual(xlstm_dict["step_kernel"], "native")
+
+    qwen_omni_dict = {"model_type": "qwen3_omni_moe"}
+    module_registry._sanitize_model_specific_config_dict(
+        qwen_omni_dict, load_weights=False
+    )
+    self.assertIs(qwen_omni_dict["enable_audio_output"], False)
+
 
 if __name__ == "__main__":
   absltest.main()
