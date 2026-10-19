@@ -1408,6 +1408,7 @@ class ModuleRegistryTest(seed_test_utils.RepeatableTest):
     ts_models = [
         "autoformer",
         "informer",
+        "time_series_transformer",
         "patchtst",
         "patchtsmixer",
         "timesfm",
@@ -1429,6 +1430,15 @@ class ModuleRegistryTest(seed_test_utils.RepeatableTest):
       if ts == "timesfm":
         self.assertIn("freq", inputs)
         self.assertEqual(inputs["past_values"].shape, (2, 32))
+      elif ts in ("autoformer", "informer", "time_series_transformer"):
+        self.assertIn("past_time_features", inputs, f"Failed for {ts}")
+        self.assertIn("past_observed_mask", inputs, f"Failed for {ts}")
+        self.assertEqual(
+            inputs["past_values"].shape, (2, 35), f"Failed for {ts}"
+        )
+        self.assertEqual(
+            inputs["past_time_features"].shape, (2, 35, 4), f"Failed for {ts}"
+        )
       else:
         self.assertIn("past_time_features", inputs, f"Failed for {ts}")
         self.assertIn("past_observed_mask", inputs, f"Failed for {ts}")
@@ -1800,10 +1810,12 @@ class ModuleRegistryTest(seed_test_utils.RepeatableTest):
         "classifier_dropout": 0,
         "use_pretrained_backbone": True,
         "backbone": "resnet50",
+        "rope_scaling": False,
     }
     sanitized = module_registry._sanitize_transformers_config_dict(
         raw_config, load_weights=False
     )
+    self.assertNotIn("rope_scaling", sanitized)
     # id2label values must be str
     self.assertEqual(sanitized["id2label"], {"0": "1", "1": "2", "2": "3"})
     # dropout probs must be float

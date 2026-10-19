@@ -437,23 +437,35 @@ def _parse_image_size(config: Any, default_size: int = 224) -> int:
       k in str(cfg.get("model_type", "")).lower() for k in ["d_fine", "dfine"]
   ):
     return 640
+  if "rf_detr" in str(cfg.get("model_type", "")).lower():
+    return 560
 
+  vlm_cfg = cfg.get("vlm_config")
   vision_config = (
       cfg.get("vision_config")
+      or (vlm_cfg.get("vision_config") if vlm_cfg else None)
       or cfg.get("encoder")
       or cfg.get("backbone_config")
   )
-  raw_val = vision_config.get("image_size") if vision_config else None
+  if vision_config and vision_config.get("model_type") == "pixtral":
+    return 128
+  raw_val = (
+      (vision_config.get("image_size") or vision_config.get("resolution"))
+      if vision_config
+      else None
+  )
   if isinstance(raw_val, (list, tuple)) and raw_val:
     raw_val = raw_val[0]
   val = _safe_int(raw_val, default=None, min_val=1)
   if val is None:
-    raw_val = cfg.get("image_size")
+    raw_val = cfg.get("image_size") or cfg.get("resolution")
     if isinstance(raw_val, (list, tuple)) and raw_val:
       raw_val = raw_val[0]
     val = _safe_int(raw_val, default=None, min_val=1)
   if val is None:
-    pretrained_cfg = cfg.get("pretrained_cfg")
+    pretrained_cfg = cfg.get("pretrained_cfg") or (
+        vision_config.get("pretrained_cfg") if vision_config else None
+    )
     raw_val = cfg.get("input_size") or (
         pretrained_cfg.get("input_size") if pretrained_cfg else None
     )
@@ -470,8 +482,10 @@ def _parse_image_size(config: Any, default_size: int = 224) -> int:
 def _get_num_channels(config: Any, default_channels: int = 3) -> int:
   """Extracts num_channels from config or vision_config or encoder."""
   cfg = _wrap_config(config)
+  vlm_cfg = cfg.get("vlm_config")
   vision_config = (
       cfg.get("vision_config")
+      or (vlm_cfg.get("vision_config") if vlm_cfg else None)
       or cfg.get("encoder")
       or cfg.get("backbone_config")
   )
@@ -822,9 +836,13 @@ def _resolve_seq_len(
   max_pos = _get_max_seq_len(ctx.config)
   if "videoprism" in ctx.type_str:
     cap = min(cap, 8)
+  if "prophetnet" in ctx.type_str:
+    cap = min(cap, 16)
   if "encoder-decoder" in ctx.type_str or "gpt2-bert" in ctx.type_str:
     cap = min(cap, 32)
   if use_shape and ctx.shape is not None and len(ctx.shape) > 1:
+    if "prophetnet" in ctx.type_str:
+      return min(ctx.shape[1], max_pos, cap)
     return min(ctx.shape[1], max_pos)
   return min(max_pos, cap)
 
@@ -882,6 +900,8 @@ def _inject_token_span(
   cur_len = input_ids.shape[1]
   valid_count = min(count, max(0, cur_len - start))
   if valid_count > 0:
+    replacement_id = 1 if token_id == 0 else 0
+    input_ids.masked_fill_(input_ids == token_id, replacement_id)
     input_ids[:, start : start + valid_count] = token_id
   return valid_count
 
@@ -1037,6 +1057,8 @@ def _add_encoder_decoder_inputs(
       max_len = min(max_len, max_target_pos)
     seq_limit = ctx.shape[1] if ctx.shape and len(ctx.shape) > 1 else 512
     safe_seq_len = min(max_len, seq_limit)
+    if "prophetnet" in ctx.type_str:
+      safe_seq_len = min(safe_seq_len, 16)
     if "encoder-decoder" in ctx.type_str or "gpt2-bert" in ctx.type_str:
       safe_seq_len = min(safe_seq_len, 32)
     # Use first dimension of shape or 1 for batch size
@@ -1139,6 +1161,49 @@ def _build_time_series_text_inputs(
   input_kwargs.pop("attention_mask", None)
   lags_sequence = ctx.config.get("lags_sequence", [1, 2, 3, 4, 5, 6, 7])
   max_lag = max(lags_sequence) if lags_sequence else 0
+  if any(
+      k in ctx.type_str
+      for k in (
+          "autoformer",
+          "informer",
+          "time_series_transformer",
+          "time-series-transformer",
+      )
+  ):
+    past_length = context_length + max_lag
+    num_feat = num_time_features + _cfg_int(
+        ctx.config, "num_dynamic_real_features", default=0, min_val=0
+    )
+    val_shape = (
+        (ctx.batch_size, past_length)
+        if input_size == 1
+        else (ctx.batch_size, past_length, input_size)
+    )
+    input_kwargs["past_values"] = ctx.randn(*val_shape)
+    input_kwargs["past_time_features"] = ctx.randn(
+        ctx.batch_size, past_length, num_feat
+    )
+    input_kwargs["past_observed_mask"] = torch.ones(
+        val_shape,
+        device=ctx.device,
+        dtype=torch.bool,
+    )
+    num_static_cat = _cfg_int(
+        ctx.config, "num_static_categorical_features", default=0, min_val=0
+    )
+    if num_static_cat > 0:
+      input_kwargs["static_categorical_features"] = ctx.zeros(
+          (ctx.batch_size, num_static_cat), dtype=torch.long
+      )
+    num_static_real = _cfg_int(
+        ctx.config, "num_static_real_features", default=0, min_val=0
+    )
+    if num_static_real > 0:
+      input_kwargs["static_real_features"] = ctx.zeros(
+          (ctx.batch_size, num_static_real), dtype=torch.float32
+      )
+    return
+
   context_length = max(context_length, max_lag + 1, 64)
   input_kwargs["past_values"] = ctx.randn(
       ctx.batch_size, context_length, input_size
@@ -1172,9 +1237,14 @@ def _build_decision_transformer_text_inputs(
 def _build_luke_text_inputs(
     ctx: InputContext, input_kwargs: dict[str, Any]
 ) -> None:
-  input_kwargs["entity_ids"] = ctx.zeros((ctx.batch_size, 1))
-  input_kwargs["entity_attention_mask"] = ctx.ones((ctx.batch_size, 1))
-  input_kwargs["entity_position_ids"] = ctx.zeros((ctx.batch_size, 1, 14))
+  num_entities = 2 if "entitypair" in ctx.arch_name else 1
+  input_kwargs["entity_ids"] = ctx.zeros((ctx.batch_size, num_entities))
+  input_kwargs["entity_attention_mask"] = ctx.ones(
+      (ctx.batch_size, num_entities)
+  )
+  input_kwargs["entity_position_ids"] = ctx.zeros(
+      (ctx.batch_size, num_entities, 14)
+  )
 
 
 def _build_bros_text_inputs(
@@ -1428,17 +1498,42 @@ def _build_qwen3_vision_inputs(
   image_size = _parse_image_size(ctx.config)
   num_channels = _get_num_channels(ctx.config)
   patch_size = _cfg_int(ctx.config, "patch_size", default=14)
+  temporal_patch_size = _cfg_int(ctx.config, "temporal_patch_size", default=2)
   grid_h = image_size // patch_size
   grid_w = image_size // patch_size
   num_patches = grid_h * grid_w
   in_channels = _cfg_int(ctx.config, "in_channels", default=num_channels)
   input_kwargs["hidden_states"] = ctx.randn(
-      ctx.batch_size, num_patches, in_channels * patch_size * patch_size
+      ctx.batch_size * num_patches,
+      in_channels * temporal_patch_size * patch_size * patch_size,
   )
   input_kwargs["grid_thw"] = torch.tensor(
-      [[1, grid_h, grid_w]], device=ctx.device, dtype=torch.long
+      [[1, grid_h, grid_w]] * ctx.batch_size,
+      device=ctx.device,
+      dtype=torch.long,
   )
   input_kwargs.pop("pixel_values", None)
+
+
+def _build_mllama_vision_inputs(
+    ctx: InputContext, input_kwargs: dict[str, Any]
+) -> None:
+  image_size = _parse_image_size(ctx.config)
+  num_channels = _get_num_channels(ctx.config)
+  num_images = 1
+  num_tiles = _cfg_int(ctx.config, "max_num_tiles", default=4)
+  input_kwargs["pixel_values"] = ctx.randn(
+      ctx.batch_size,
+      num_images,
+      num_tiles,
+      num_channels,
+      image_size,
+      image_size,
+  )
+  input_kwargs["aspect_ratio_ids"] = ctx.ones((ctx.batch_size, num_images))
+  input_kwargs["aspect_ratio_mask"] = ctx.ones(
+      (ctx.batch_size, num_images, num_tiles)
+  )
 
 
 def _build_videomae_vision_inputs(
@@ -1505,6 +1600,7 @@ def _build_vision_encoder_decoder_inputs(
 
 _VISION_EXTRA_BUILDERS: tuple[tuple[_Matcher, _Builder], ...] = (
     (_type_contains("seggpt"), _build_seggpt_vision_inputs),
+    (_type_contains("mllama"), _build_mllama_vision_inputs),
     (
         lambda ctx: "qwen3" in ctx.type_str and "vision" in ctx.type_str,
         _build_qwen3_vision_inputs,
@@ -1589,7 +1685,9 @@ def _build_vision_inputs(
 
   input_kwargs: dict[str, Any] = {}
   if any(k in ctx.type_str for k in _VIDEO_MODEL_TYPES):
-    num_frames = _cfg_int(ctx.config, "num_frames", default=8)
+    num_frames = _cfg_int(
+        ctx.config, "vision_config.num_frames", "num_frames", default=8
+    )
     dummy_video = ctx.randn(ctx.batch_size, num_frames, num_channels, h, w)
     input_kwargs["pixel_values"] = dummy_video
     if "vjepa2" in ctx.type_str:
@@ -2197,6 +2295,9 @@ _AUDIO_EXTRA_BUILDERS: tuple[tuple[_Matcher, _Builder], ...] = (
             "qwen3_asr",
             "qwen3-asr",
             "qwen3asr",
+            "vibevoice_asr",
+            "vibevoice-asr",
+            "vibevoiceasr",
         ),
         _build_glmasr_audio_inputs,
     ),
@@ -2340,8 +2441,29 @@ def _build_llava_next_multimodal_inputs(
     ctx: InputContext, input_kwargs: dict[str, Any]
 ) -> None:
   image_size = _parse_image_size(ctx.config)
+  size_device = "cpu" if str(ctx.device) == "meta" else ctx.device
   input_kwargs["image_sizes"] = torch.tensor(
-      [[image_size, image_size]], device=ctx.device, dtype=torch.long
+      [[image_size, image_size]] * ctx.batch_size,
+      device=size_device,
+      dtype=torch.long,
+  )
+
+
+def _build_minicpmv_multimodal_inputs(
+    ctx: InputContext, input_kwargs: dict[str, Any]
+) -> None:
+  num_channels = _get_num_channels(ctx.config)
+  vision_cfg = ctx.config.get("vision_config")
+  patch_size = _cfg_int(vision_cfg, "patch_size", default=14)
+  grid_side = 4
+  img_size = grid_side * patch_size
+  input_kwargs["pixel_values"] = ctx.randn(
+      ctx.batch_size, num_channels, img_size, img_size
+  )
+  input_kwargs["target_sizes"] = torch.tensor(
+      [[grid_side, grid_side]] * ctx.batch_size,
+      device=ctx.device,
+      dtype=torch.int32,
   )
 
 
@@ -2544,7 +2666,9 @@ def _build_xclip_multimodal_inputs(
 ) -> None:
   image_size = _parse_image_size(ctx.config)
   num_channels = _get_num_channels(ctx.config)
-  num_frames = _cfg_int(ctx.config, "num_frames", default=8)
+  num_frames = _cfg_int(
+      ctx.config, "vision_config.num_frames", "num_frames", default=8
+  )
   input_kwargs["pixel_values"] = ctx.randn(
       ctx.batch_size, num_frames, num_channels, image_size, image_size
   )
@@ -2620,6 +2744,15 @@ _MULTIMODAL_EXTRA_BUILDERS: tuple[tuple[_Matcher, _Builder], ...] = (
     (_model_type_contains("kosmos"), _build_kosmos_multimodal_inputs),
     (_model_type_contains("xclip"), _build_xclip_multimodal_inputs),
     (_model_type_contains("vilt"), _build_vilt_multimodal_inputs),
+    (_model_type_contains("minicpmv"), _build_minicpmv_multimodal_inputs),
+    (
+        _model_type_contains("flava"),
+        lambda ctx, kw: kw.__setitem__("return_loss", False),
+    ),
+    (
+        _model_type_contains("emu3", "chameleon"),
+        lambda ctx, kw: kw.pop("pixel_values", None),
+    ),
     (_model_type_contains("beingvl", "vq"), _build_beingvl_multimodal_inputs),
     (_type_contains("clvp"), _build_clvp_multimodal_inputs),
     (
@@ -2637,7 +2770,17 @@ def _compute_num_image_tokens(
   """Computes the expected visual token count injected into input_ids."""
   if "ovis" in ctx.model_type:
     return 256
-  if "llava_onevision" in ctx.model_type:
+  if "minicpmv" in ctx.model_type:
+    return 1
+  if "blip-2" in ctx.model_type or "blip_2" in ctx.model_type:
+    return _cfg_int(ctx.config, "num_query_tokens", default=32)
+  if "idefics2" in ctx.model_type:
+    return _cfg_int(
+        ctx.config, "perceiver_config.resampler_n_latents", default=64
+    )
+  if "fast_vlm" in ctx.model_type:
+    return (image_size // 64) ** 2
+  if any(k in ctx.model_type for k in ("llava_onevision", "llava_next")):
     patch_size = _cfg_int(vision_config, "patch_size", default=14)
     h = image_size // patch_size
     return 2 * (h * h) + h
@@ -2657,8 +2800,19 @@ def _compute_num_image_tokens(
         min_val=1,
     )
     return ((image_size // patch_size) // 4) ** 2
-  raw_tokens = _cfg_int(ctx.config, "image_seq_length", default=None)
-  if raw_tokens is not None:
+  vlm_cfg = ctx.config.get("vlm_config")
+  raw_tokens = _cfg_int(
+      ctx.config,
+      "image_seq_length",
+      "vlm_config.image_seq_length",
+      "vlm_config.num_image_tokens",
+      default=None,
+  ) or (
+      _cfg_int(vlm_cfg, "num_image_tokens", default=None) if vlm_cfg else None
+  )
+  if raw_tokens is not None and not (
+      "llava" in ctx.model_type and raw_tokens == 1
+  ):
     return raw_tokens
   if "florence2" in ctx.model_type:
     return (image_size // 32) ** 2 + 1
@@ -2684,7 +2838,10 @@ def _build_multimodal_inputs(ctx: InputContext) -> dict[str, Any]:
   # embedding table (`FSMTEncoder.embed_tokens`) has size `src_vocab_size`
   # (31232). Sampling `input_ids` up to `vocab_size` would otherwise produce
   # out-of-bounds token IDs in `[31232, 31640)` for the encoder on CUDA.
-  text_cfg = ctx.config.get("text_config")
+  vlm_cfg = ctx.config.get("vlm_config")
+  text_cfg = ctx.config.get("text_config") or (
+      vlm_cfg.get("text_config") if vlm_cfg else None
+  )
   semantic_cfg = ctx.config.get("semantic_config")
   qformer_cfg = ctx.config.get("qformer_config")
   if ("retrieval" in ctx.arch_name or "itm" in ctx.type_str) and qformer_cfg:
@@ -2694,8 +2851,8 @@ def _build_multimodal_inputs(ctx: InputContext) -> dict[str, Any]:
   else:
     vocab_size = _safe_int(
         ctx.config.get("src_vocab_size")
-        or ctx.config.get("vocab_size")
         or (text_cfg.get("vocab_size") if text_cfg else None)
+        or ctx.config.get("vocab_size")
         or (semantic_cfg.get("input_vocab_size") if semantic_cfg else None),
         default=32000,
         min_val=1,
@@ -2722,7 +2879,9 @@ def _build_multimodal_inputs(ctx: InputContext) -> dict[str, Any]:
       image_size = 512
     num_channels = _get_num_channels(ctx.config)
     batch_size = ctx.batch_size
-    vision_config = ctx.config.get("vision_config")
+    vision_config = ctx.config.get("vision_config") or (
+        vlm_cfg.get("vision_config") if vlm_cfg else None
+    )
 
     if "mllama" in ctx.model_type:
       num_images = 1
@@ -2744,6 +2903,10 @@ def _build_multimodal_inputs(ctx: InputContext) -> dict[str, Any]:
       if "llava_onevision" in ctx.model_type:
         input_kwargs["pixel_values"] = ctx.randn(
             batch_size, 2, num_channels, image_size, image_size
+        )
+      elif "llava_next" in ctx.model_type:
+        input_kwargs["pixel_values"] = ctx.randn(
+            batch_size, 3, num_channels, image_size, image_size
         )
       elif "tvp" in ctx.type_str:
         input_kwargs["pixel_values"] = ctx.randn(
@@ -2782,8 +2945,15 @@ def _build_multimodal_inputs(ctx: InputContext) -> dict[str, Any]:
             ctx, image_size, vision_config
         )
 
-        image_token_id = ctx.config.get("image_token_id") or ctx.config.get(
-            "image_token_index"
+        image_token_id = (
+            ctx.config.get("image_token_id")
+            or ctx.config.get("image_token_index")
+            or (
+                vlm_cfg.get("image_token_id")
+                or vlm_cfg.get("image_token_index")
+                if vlm_cfg
+                else None
+            )
         )
         if image_token_id is not None:
           image_token_id = _safe_int(image_token_id, default=None)

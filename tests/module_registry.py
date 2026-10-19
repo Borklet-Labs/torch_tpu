@@ -304,6 +304,7 @@ _VISION_MODEL_TYPES = (
     "qianfan_ocr",
     "regnet",
     "resnet",
+    "rf_detr",
     "sam",
     "sam2",
     "sam2_video",
@@ -1798,23 +1799,35 @@ def _parse_image_size(config: Any, default_size: int = 224) -> int:
       k in str(cfg.get("model_type", "")).lower() for k in ["d_fine", "dfine"]
   ):
     return 640
+  if "rf_detr" in str(cfg.get("model_type", "")).lower():
+    return 560
 
+  vlm_cfg = cfg.get("vlm_config")
   vision_config = (
       cfg.get("vision_config")
+      or (vlm_cfg.get("vision_config") if vlm_cfg else None)
       or cfg.get("encoder")
       or cfg.get("backbone_config")
   )
-  raw_val = vision_config.get("image_size") if vision_config else None
+  if vision_config and vision_config.get("model_type") == "pixtral":
+    return 128
+  raw_val = (
+      (vision_config.get("image_size") or vision_config.get("resolution"))
+      if vision_config
+      else None
+  )
   if isinstance(raw_val, (list, tuple)) and raw_val:
     raw_val = raw_val[0]
   val = _safe_int(raw_val, default=None, min_val=1)
   if val is None:
-    raw_val = cfg.get("image_size")
+    raw_val = cfg.get("image_size") or cfg.get("resolution")
     if isinstance(raw_val, (list, tuple)) and raw_val:
       raw_val = raw_val[0]
     val = _safe_int(raw_val, default=None, min_val=1)
   if val is None:
-    pretrained_cfg = cfg.get("pretrained_cfg")
+    pretrained_cfg = cfg.get("pretrained_cfg") or (
+        vision_config.get("pretrained_cfg") if vision_config else None
+    )
     raw_val = cfg.get("input_size") or (
         pretrained_cfg.get("input_size") if pretrained_cfg else None
     )
@@ -1831,8 +1844,10 @@ def _parse_image_size(config: Any, default_size: int = 224) -> int:
 def _get_num_channels(config: Any, default_channels: int = 3) -> int:
   """Extracts num_channels from config or vision_config or encoder."""
   cfg = _wrap_config(config)
+  vlm_cfg = cfg.get("vlm_config")
   vision_config = (
       cfg.get("vision_config")
+      or (vlm_cfg.get("vision_config") if vlm_cfg else None)
       or cfg.get("encoder")
       or cfg.get("backbone_config")
   )
@@ -2013,6 +2028,12 @@ _CONFIG_KEY_ALIASES: dict[str, str] = {
 # go/keep-sorted
 # Default values for attributes that are explicitly null in upstream configs.
 _CONFIG_DEFAULTS_WHEN_NONE: dict[str, dict[str, Any]] = {
+    "blip-2": {
+        "image_token_index": 50265,
+    },
+    "blip_2": {
+        "image_token_index": 50265,
+    },
     "speech_to_text": {
         "scale_embedding": (
             True
@@ -2298,6 +2319,13 @@ def _sanitize_common_config_dict_fields(
     if isinstance(sub_dict, dict) and sub_dict.get("return_dict") is False:
       sub_dict["return_dict"] = True
 
+  if (
+      isinstance(config_dict.get("pad_token_id"), int)
+      and not isinstance(config_dict.get("pad_token_id"), bool)
+      and config_dict["pad_token_id"] < 0
+  ):
+    config_dict["pad_token_id"] = None
+
   # Convert id2label keys to integer strings and values to strings
   if "id2label" in config_dict:
     id2label = config_dict["id2label"]
@@ -2359,6 +2387,14 @@ def _sanitize_common_config_dict_fields(
       config_dict["conv_dim"], (list, tuple)
   ):
     config_dict["num_feat_extract_layers"] = len(config_dict["conv_dim"])
+
+  # Strip non-mapping rope_scaling values (e.g. `"rope_scaling": false` in
+  # Zyphra/ZAYA1-base) so PreTrainedConfig's `rope_scaling` property setter does
+  # not overwrite `self.rope_parameters` with `False` during `__post_init__`.
+  if "rope_scaling" in config_dict and not isinstance(
+      config_dict["rope_scaling"], Mapping
+  ):
+    config_dict.pop("rope_scaling", None)
 
   # Normalize legacy rope_scaling dicts in place without pre-populating flat
   # rope_parameters, so multi-attention-type configs (e.g. Gemma3TextConfig,
@@ -2750,6 +2786,21 @@ def _sanitize_config(config: Any) -> Any:
     cfg.default_language = langs[0]
 
   _sanitize_rope_parameters(cfg)
+
+  pad_id = cfg.get("pad_token_id")
+  if isinstance(pad_id, int) and not isinstance(pad_id, bool) and pad_id < 0:
+    cfg.pad_token_id = None
+
+  text_cfg = cfg.get("text_config")
+  if text_cfg is not None:
+    text_vocab_size = _safe_int(
+        text_cfg.get("vocab_size"), default=None, min_val=2
+    )
+    if text_vocab_size is not None:
+      for tok_key in ("image_token_id", "image_token_index"):
+        tok_val = _safe_int(cfg.get(tok_key), default=None, min_val=0)
+        if tok_val is not None and tok_val >= text_vocab_size:
+          setattr(cfg, tok_key, text_vocab_size - 1)
 
   # Recursively sanitize sub-configs
   sub_configs = cfg.get("sub_configs")
