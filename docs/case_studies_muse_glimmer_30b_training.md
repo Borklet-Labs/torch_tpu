@@ -1,8 +1,8 @@
 # Muse Glimmer 30B: training
 
 In this case study, we will go through our standalone Muse Glimmer 30B example,
-which demonstrates a simple training loop for the full model, using FSDP on 4x
-Ironwood TPUs.
+which demonstrates a simple training loop for the full model, using FSDP
+on 4x Ironwood TPUs.
 
 For information on how to run this example on TPUs in your GKE (Google
 Kubernetes Engine) cluster, please refer to example
@@ -14,25 +14,22 @@ single host with 4 Ironwood TPUs. Clearly, this isn't a realistic pre-training
 scale, but our goal is to have a working example you can run, iterate on, and
 study at low cost.
 
-This pure PyTorch (no custom kernels) code achieves training speed of about 2400
-to 2800 TPS per rank (so 19k to 22k TPS total), at sequence length 5120. In
-future updates, we plan to describe more optimizations and performance best
-practices when running on TPUs.
+This pure PyTorch (no custom kernels) code achieves training speed of about
+2400 to 2800 TPS per rank (so 19k to 22k TPS total), at sequence length 5120.
+In future updates, we plan to describe more optimizations and performance
+best practices when running on TPUs.
 
 ## Model definition
-
 [Muse Glimmer 30B](https://huggingface.co/meta-models/Muse-Glimmer-30B) follows
-a fairly standard transformer architecture. It consists of 52 layers of causal
-self-attention and feed-forward (FFN) blocks. Every 4-th layer of the model uses
-full attention, and all the other layers use sliding-window attention (SWA).
+a fairly standard transformer architecture.
+It consists of 52 layers of causal self-attention and feed-forward (FFN) blocks.
+Every 4-th layer of the model uses full attention, and all the other layers use
+sliding-window attention (SWA).
 
-The model code is fully self-contained in
-[model_fsdp.py](https://github.com/google-pytorch/torch_tpu/blob/main/examples/muse_glimmer_30b/pure_pytorch_fsdp_trainloop/model_fsdp.py)
-(and
-[rope.py](https://github.com/google-pytorch/torch_tpu/blob/main/examples/muse_glimmer_30b/pure_pytorch_fsdp_trainloop/rope.py).
+The model code is fully self-contained in [model_fsdp.py](https://github.com/google-pytorch/torch_tpu/blob/main/examples/muse_glimmer_30b/pure_pytorch_fsdp_trainloop/model_fsdp.py)
+(and [rope.py](https://github.com/google-pytorch/torch_tpu/blob/main/examples/muse_glimmer_30b/pure_pytorch_fsdp_trainloop/rope.py) for rotary positional encoding).
 
-Configuration is specified in
-[model_fsdp.py](https://github.com/google-pytorch/torch_tpu/blob/main/examples/muse_glimmer_30b/pure_pytorch_fsdp_trainloop/model_fsdp.py):
+Configuration is specified in [model_fsdp.py](https://github.com/google-pytorch/torch_tpu/blob/main/examples/muse_glimmer_30b/pure_pytorch_fsdp_trainloop/model_fsdp.py):
 
 ```python
 class Config:
@@ -68,8 +65,8 @@ self.norm = nn.RMSNorm((config.dmodel,), eps=config.rmsnorm_eps)
 ```
 
 Notice that model head (aka “LM head”) is not present here – in case of
-training, it is usually better placed with the loss function, see the section on
-chunkwise fused loss below.
+training, it is usually better placed with the loss function, see the section
+on chunkwise fused loss below.
 
 ## Per-layer torch.compile
 
@@ -117,8 +114,8 @@ a single Ironwood TPU TensorCore (which has 96 GiB).
 However, during training we also need memory for gradients, optimizer states
 (e.g. AdamW momentum and variance), but even more importantly – memory usage can
 be easily dominated by intermediate activations needed for the autograd
-functionality. Activation checkpointing (aka rematerialization) is a very common
-technique for addressing the latter.
+functionality. Activation checkpointing (aka rematerialization) is a very
+common technique for addressing the latter.
 
 Because we compile the model per-layer, it is very natural to apply activation
 checkpointing at the same granularity. We do this using standard
@@ -149,11 +146,12 @@ class DecoderBlock(nn.Module):
 
 > **Note:** Activation checkpointing (AC) is applied inside the model layer
 > (`DecoderBlock` module) `forward` method, and `torch.compile` is applied
-> outside / on the layer itself – this ordering is important. You could keep AC
-> inside the layer, and apply `torch.compile` on the whole model – this would
-> work fine. But you cannot swap them, e.g. if you were to apply AC the same
-> way, but apply `torch.compile` inside on attention and FFN sub-layers
-> separately, it would not work as expected.
+> outside / on the layer itself – this ordering is important.
+> You could keep AC inside the layer, and apply `torch.compile` on the whole model
+> – this would work fine.
+> But you cannot swap them, e.g. if you were to apply AC the same way,
+> but apply `torch.compile` inside on attention and FFN sub-layers separately,
+> it would not work as expected.
 
 `torch.compile` works particularly well with AC in TorchTPU: during the (global)
 backward pass, each layer performs a small joint forward+backward pass (due to
@@ -182,8 +180,8 @@ self.q_proj = nn.Linear(dm, num_q_heads * dh // world_size, bias=False)
 > be `[num_q_heads * dh / world_size, dm]`. This is important because PyTorch
 > all-gather / reduce-scatter collectives work on the 1st dimension.
 
-Then, during the forward pass, we use PyTorch's functional collectives to gather
-the weights before using them:
+Then, during the forward pass, we use PyTorch's functional collectives to
+gather the weights before using them:
 
 ```python
 # Functional collectives
@@ -196,8 +194,8 @@ q_proj_w = func_col.all_gather_single(self.q_proj.weight, gather_dim=0, group=se
 q = F.linear(h, q_proj_w).view(local_bsz, seq_len, num_q_heads, dh)
 ```
 
-The same idea is applied on all other projections (attention Q/K/V/out/gate, and
-FFN up/gate/down).
+The same idea is applied on all other projections (attention Q/K/V/out/gate,
+and FFN up/gate/down).
 
 Critically, functional collectives like `func_col.all_gather_single`, are
 registered with PyTorch autograd engine, so during `.backward()` pass we
@@ -274,10 +272,10 @@ more optimizations and fusions.
 This example illustrates only the basic training loop, and, for clarity, omits
 various details important to any practical training setup:
 
--   data loading, tokenization,
--   model checkpoint loading/saving,
--   job health monitoring, convergence diagnostics,
--   fault-tolerance.
+ - data loading, tokenization,
+ - model checkpoint loading/saving,
+ - job health monitoring, convergence diagnostics,
+ - fault-tolerance.
 
 For a realistic production-grade training setup with TorchTPU, we recommend
 taking a look at [TorchTitan](https://github.com/google-pytorch/torchtitan/).

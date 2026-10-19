@@ -64,7 +64,7 @@ Every 4-th layer of the model uses full attention, and all the other layers use
 sliding-window attention (SWA).
 
 The model code is fully self-contained in [model_fsdp.py](https://github.com/google-pytorch/torch_tpu/blob/main/examples/muse_glimmer_30b/pure_pytorch_fsdp_trainloop/model_fsdp.py)
-(and [rope.py](https://github.com/google-pytorch/torch_tpu/blob/main/examples/muse_glimmer_30b/pure_pytorch_fsdp_trainloop/rope.py).
+(and [rope.py](https://github.com/google-pytorch/torch_tpu/blob/main/examples/muse_glimmer_30b/pure_pytorch_fsdp_trainloop/rope.py) for rotary positional encoding).
 
 Configuration is specified in [model_fsdp.py](https://github.com/google-pytorch/torch_tpu/blob/main/examples/muse_glimmer_30b/pure_pytorch_fsdp_trainloop/model_fsdp.py):
 """)
@@ -121,6 +121,7 @@ on chunkwise fused loss below.
 """)
   return
 
+
 @app.cell(hide_code=True)
 def _(mo):
   mo.md(r"""
@@ -147,7 +148,7 @@ def _():
       # ... omitted ...
       self.layers = nn.ModuleList(
           DecoderBlock(config, layer_idx=i) for i in range(config.num_layers)
-      ) 
+      )
 
     def apply_torch_compile(self, backend):
       self.embed_norm = torch.compile(self.embed_norm, dynamic=False, backend=backend)
@@ -170,6 +171,7 @@ kinds of layers (full and SWA) in this model, this greatly speeds up the
 compilation process.
 """)
   return
+
 
 @app.cell(hide_code=True)
 def _(mo):
@@ -235,6 +237,7 @@ joint forward+backward computation graph, it can do additional optimizations and
 even reduce memory usage for intermediate tensors.
 """)
   return
+
 
 @app.cell(hide_code=True)
 def _(mo):
@@ -334,7 +337,7 @@ approach is to chunk along the sequence dimension – we do the latter here:
 @app.cell
 def _():
   class MuseGlimmerChunkwiseFusedLMHeadLoss(nn.Module):
-    # ... omitted ... 
+    # ... omitted ...
 
     for i in range(0, h.shape[0], chunk_size):
       h_chunk.data.copy_(h[i : (i + chunk_size)])
@@ -402,6 +405,7 @@ For a realistic production-grade training setup with TorchTPU, we recommend
 taking a look at [TorchTitan](https://github.com/google-pytorch/torchtitan/).
 """)
   return
+
 
 if __name__ == "__main__":
   app.run()
