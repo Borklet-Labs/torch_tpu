@@ -19,49 +19,43 @@ import os
 from absl.testing import absltest
 import torch
 from torch import distributed as dist
-import torch.multiprocessing as mp
 from torch_tpu._internal.distributed import tpu_distributed
 from torch_tpu._internal.distributed import multiprocessing
-from tests import seed_test_utils
-from tests.distributed import distributed_utils
+from tests.distributed import continuous_test_utils
 
 
-def run_global_device_count(expected_world_size: int) -> None:
-  # Verify that rank-related environment variables are set by torchrun or
-  # launcher.
-  assert "RANK" in os.environ
-  assert "LOCAL_RANK" in os.environ
-  assert "GROUP_RANK" in os.environ
-  assert "WORLD_SIZE" in os.environ
+class MultiTpuTest(continuous_test_utils.TpuMultiProcContinuousTest):
 
-  world_size = int(os.environ["WORLD_SIZE"])
-  assert world_size == expected_world_size
+  world_size = 8
 
-  dist.init_process_group(backend="tpu_dist")
+  def test_global_device_count(self) -> None:
+    # Verify that rank-related environment variables are set by launcher.
+    self.assertIn("RANK", os.environ)
+    self.assertIn("LOCAL_RANK", os.environ)
+    self.assertIn("GROUP_RANK", os.environ)
+    self.assertIn("WORLD_SIZE", os.environ)
+    self.assertEqual(int(os.environ["WORLD_SIZE"]), 8)
+    self.assertEqual(int(os.environ["RANK"]), self.rank)
 
-  global_device_ids = tpu_distributed.all_global_device_ids()
+    self.assertEqual(dist.get_world_size(), self.world_size)
+    self.assertEqual(dist.get_rank(), self.rank)
 
-  assert len(global_device_ids) == world_size
-  this_device = torch.accelerator.current_device_index()
-  # torch.accelerator.current_device_index() returns the id among all addressable devices,
-  # not the global device id.
-  assert 0 <= this_device < torch.accelerator.device_count(), (
-      "Expected device id to be in range [0,"
-      f" {torch.accelerator.device_count()}), got {this_device}"
-  )
+    global_device_ids = tpu_distributed.all_global_device_ids()
+    self.assertLen(global_device_ids, self.world_size)
 
-
-class MultiTpuTest(seed_test_utils.MultiProcessRepeatableTest):
-
-  def test_global_device_count(self):
-    world_size = distributed_utils.get_tpu_device_count()
-    distributed_utils.dist_run(
-        world_size,
-        run_global_device_count,
-        world_size,
+    this_device = torch.accelerator.current_device_index()
+    # torch.accelerator.current_device_index() returns the id among all
+    # addressable devices, not the global device id.
+    self.assertGreaterEqual(this_device, 0)
+    self.assertLess(
+        this_device,
+        torch.accelerator.device_count(),
+        msg=(
+            "Expected device id to be in range [0,"
+            f" {torch.accelerator.device_count()}), got {this_device}"
+        ),
     )
 
 
 if __name__ == "__main__":
-  mp.set_start_method("spawn")
   multiprocessing.handle_test_main(absltest.main)
