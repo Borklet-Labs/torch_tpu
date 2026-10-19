@@ -237,15 +237,6 @@ KNOWN_FAILURES: tuple[KnownFailure, ...] = (
         ),
     ),
     KnownFailure(
-        benchmark="vjepa2_vitg_forward",
-        framework=mode_lib.Framework.TORCHAX,
-        reason=(
-            "the skip_predictor=True input becomes a traced bool under jax.jit,"
-            " and `if not skip_predictor:` in modeling_vjepa2.py needs a"
-            " concrete value"
-        ),
-    ),
-    KnownFailure(
         benchmark="vjepa2_vitl_fpc64_256_forward_gen",
         framework=mode_lib.Framework.TORCHAX,
         reason=(

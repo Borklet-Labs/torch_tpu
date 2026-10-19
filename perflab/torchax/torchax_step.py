@@ -15,7 +15,6 @@
 """TorchAx stepper wrapper and conversion utilities for benchmarking."""
 
 from collections.abc import Callable
-import functools
 import inspect
 from typing import Any, Tuple
 
@@ -48,6 +47,28 @@ def _prepare_inputs_for_torchax(inputs: Any) -> Any:
 
     inputs_jax = jax.tree_util.tree_map(_move_tensor, inputs)
   return inputs_jax
+
+
+def _split_tensor_inputs(
+    inputs: Any,
+) -> tuple[tuple[torch.Tensor, ...], Callable[[tuple[torch.Tensor, ...]], Any]]:
+  """Splits a PyTree into its tensor leaves and a reconstruction function.
+
+  `jax.jit` traces every numeric or boolean leaf passed as a dynamic argument,
+  converting Python scalars such as `skip_predictor=True` into `bool[]` tracers
+  that fail on Python control flow (`if not skip_predictor:`). Passing only
+  `torch.Tensor` leaves across the `jax_jit` boundary keeps non-tensor Python
+  arguments static during tracing.
+  """
+  leaves, treedef = jax.tree_util.tree_flatten(inputs)
+  tensor_leaves = tuple(x for x in leaves if isinstance(x, torch.Tensor))
+
+  def reconstruct(traced_tensors: tuple[torch.Tensor, ...]) -> Any:
+    it = iter(traced_tensors)
+    merged = [next(it) if isinstance(x, torch.Tensor) else x for x in leaves]
+    return jax.tree_util.tree_unflatten(treedef, merged)
+
+  return tensor_leaves, reconstruct
 
 
 # TODO(b/568763915): Remove once `JittableModule` stops collecting property
@@ -245,6 +266,10 @@ class _BaseTorchaxStepper:
     self._buffers = None
     self._input_args = ()
     self._input_kwargs = {}
+    self._input_tensors: tuple[torch.Tensor, ...] = ()
+    self._reconstruct_inputs: Callable[
+        [tuple[torch.Tensor, ...]], tuple[Any, Any]
+    ] = lambda _: ((), {})
     self._runnable_step: Any = None
 
   def _call_factory(
@@ -290,6 +315,9 @@ class _BaseTorchaxStepper:
     self._input_args, self._input_kwargs = _prepare_inputs_for_torchax(
         (input_args, input_kwargs)
     )
+    self._input_tensors, self._reconstruct_inputs = _split_tensor_inputs(
+        (self._input_args, self._input_kwargs)
+    )
 
     model.to("jax")
     model_jittable = torchax.interop.JittableModule(model)
@@ -331,9 +359,14 @@ class TorchaxForwardStepper(_BaseTorchaxStepper):
     model_jittable = self._init_model_and_inputs(
         model, input_args, input_kwargs
     )
-    self._runnable_step = functools.partial(
-        _call_functional_model, model_jittable
-    )
+
+    def step_fn(weights, buffers, input_tensors):
+      step_args, step_kwargs = self._reconstruct_inputs(input_tensors)
+      return _call_functional_model(
+          model_jittable, weights, buffers, step_args, step_kwargs
+      )
+
+    self._runnable_step = step_fn
 
   def compile(
       self,
@@ -352,7 +385,7 @@ class TorchaxForwardStepper(_BaseTorchaxStepper):
 
     def step_call():
       out = self._runnable_step(
-          self._weights, self._buffers, self._input_args, self._input_kwargs
+          self._weights, self._buffers, self._input_tensors
       )
       return out
 
@@ -387,12 +420,21 @@ class TorchaxBackwardStepper(_BaseTorchaxStepper):
     self._opt_state = torchax.interop.call_jax(
         self._optax_optimizer.init, self._weights
     )
-    self._runnable_step = functools.partial(
-        _train_step_fn,
-        model_jittable,
-        self._optax_optimizer,
-        compute_loss=self._compute_loss,
-    )
+
+    def step_fn(weights, buffers, opt_state, input_tensors):
+      step_args, step_kwargs = self._reconstruct_inputs(input_tensors)
+      return _train_step_fn(
+          model_jittable,
+          self._optax_optimizer,
+          weights,
+          buffers,
+          opt_state,
+          step_args,
+          step_kwargs,
+          compute_loss=self._compute_loss,
+      )
+
+    self._runnable_step = step_fn
 
   def compile(
       self,
@@ -418,8 +460,7 @@ class TorchaxBackwardStepper(_BaseTorchaxStepper):
           self._weights,
           self._buffers,
           self._opt_state,
-          self._input_args,
-          self._input_kwargs,
+          self._input_tensors,
       )
       return (loss, self._weights, self._opt_state)
 

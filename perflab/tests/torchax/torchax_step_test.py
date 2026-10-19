@@ -591,6 +591,62 @@ class TorchaxStepTest(seed_test_utils.RepeatableTest):
           custom_update, -default_update, rtol=1e-4, atol=1e-6, err_msg=name
       )
 
+  @parameterized.named_parameters(
+      ("forward", step_lib.StepperType.FORWARD),
+      ("training", step_lib.StepperType.TRAINING),
+  )
+  def test_non_tensor_python_inputs_remain_static_under_compile(
+      self, stepper_type
+  ):
+    target = target_lib.make_target(platform=target_lib.Platform.CPU)
+    ctx = context_lib.Context(
+        target=target, run_scope=context_lib.RUN_SCOPE.value
+    )
+
+    class ConditionalPredictorModule(nn.Module):
+
+      def __init__(self):
+        super().__init__()
+        self.encoder = nn.Linear(4, 2)
+        self.predictor = nn.Linear(2, 2)
+
+      def forward(self, pixel_values_videos, skip_predictor=False):
+        hidden = self.encoder(pixel_values_videos)
+        if not skip_predictor:
+          hidden = self.predictor(hidden)
+        return hidden
+
+    expected = []
+
+    def factory(factory_ctx):
+      del factory_ctx  # unused
+      model = ConditionalPredictorModule()
+      x = torch.randn(2, 4)
+      inputs = {"pixel_values_videos": x, "skip_predictor": True}
+      with torch.no_grad():
+        expected.append(model(**inputs).tolist())
+      if stepper_type == step_lib.StepperType.TRAINING:
+        optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+        return model, inputs, {}, optimizer
+      return model, inputs, {}
+
+    spec = registry_lib.BenchmarkSpec(
+        name="test_non_tensor_python_inputs",
+        factory=factory,
+        stepper=stepper_type,
+    )
+
+    wrapper = torchax_step.resolve_torchax_stepper(stepper_type)
+    wrapper.init_with_benchmark_args(spec, ctx)
+    wrapper.compile(compile_lib.CompileConfig(scope=compile_lib.Scope.STEP))
+    out = wrapper.get_step_fn()()
+
+    if stepper_type == step_lib.StepperType.TRAINING:
+      loss, _, _ = out
+      self.assertEqual(loss.shape, ())
+    else:
+      np.testing.assert_allclose(out.numpy(), expected[0], rtol=1e-5, atol=1e-6)
+
 
 if __name__ == "__main__":
   absltest.main()
