@@ -231,6 +231,33 @@ class FakeTensorContextTest(seed_test_utils.RepeatableTest):
       pass
     self.assertEqual(fake_tensor.CONSTANT_NUMEL_LIMIT, limit)
 
+  def test_layer_drop_draw_is_readable_inside(self):
+    with mode_lib.fake_tensor_context():
+      draw = torch.rand([])
+      self.assertIsInstance(draw, fake_tensor.FakeTensor)
+      # As in the LayerDrop of HuggingFace BART in training. Without the
+      # constants, the comparison would raise DataDependentOutputException.
+      self.assertTrue(bool(draw < 1.0))
+      self.assertFalse(bool(draw < 0.0))
+
+  def test_large_rand_stays_fake(self):
+    with mode_lib.fake_tensor_context():
+      x = torch.rand(4096)
+      with self.assertRaises(fake_tensor.DataDependentOutputException):
+        x[0].item()
+
+  def test_distribution_arguments_are_not_validated_inside(self):
+    validate_args = torch.distributions.Distribution._validate_args  # pylint: disable=protected-access
+    with mode_lib.fake_tensor_context():
+      # Too large for a constant, as the logits of the TAPAS cell selection.
+      logits = torch.randn(2, 2048)
+      distribution = torch.distributions.Categorical(logits=logits)
+      self.assertIsInstance(distribution.logits, fake_tensor.FakeTensor)
+    self.assertEqual(
+        torch.distributions.Distribution._validate_args,  # pylint: disable=protected-access
+        validate_args,
+    )
+
 
 if __name__ == "__main__":
   absltest.main()

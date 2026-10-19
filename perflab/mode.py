@@ -16,6 +16,7 @@
 
 import contextlib
 import enum
+import math
 from typing import Any, Iterator
 
 import torch
@@ -29,11 +30,18 @@ from perflab import target as target_lib
 # FakeTensorMode CPU smoke test, e.g. the per-layer drop-path rates of a model.
 _MAX_CONSTANT_NUMEL = 1024
 
-# Factory ops whose values depend only on their Python number arguments.
-_CONSTANT_FACTORIES = frozenset({
-    torch.ops.aten.linspace.default,
-    torch.ops.aten.logspace.default,
-})
+# Factory ops that the smoke test computes on the CPU, with the index of the
+# argument that gives their number of elements (the steps of `linspace` and
+# `logspace`, the size of `rand` and `randn`). The random ones are e.g. the
+# LayerDrop draws, `torch.rand([])`, of BART-like models in training.
+_CONSTANT_FACTORIES = {
+    torch.ops.aten.linspace.default: 2,
+    torch.ops.aten.logspace.default: 2,
+    torch.ops.aten.rand.default: 0,
+    torch.ops.aten.rand.generator: 0,
+    torch.ops.aten.randn.default: 0,
+    torch.ops.aten.randn.generator: 0,
+}
 
 
 class Framework(enum.Enum):
@@ -152,12 +160,14 @@ def run_mode_context(
 
 
 class _ConstantFactoryMode(_python_dispatch.TorchDispatchMode):
-  """Makes small `linspace` and `logspace` tensors FakeTensorMode constants.
+  """Makes the small outputs of `_CONSTANT_FACTORIES` FakeTensorMode constants.
 
   Models compute their per-layer drop-path rates while they are built, e.g. as
-  `[x.item() for x in torch.linspace(0, drop_path_rate, depth)]`. FakeTensorMode
-  reads a Python scalar only from a tensor whose values it knows (a constant),
-  and the outputs of factory ops never are, so this computes them on the CPU.
+  `[x.item() for x in torch.linspace(0, drop_path_rate, depth)]`, and some
+  decide in each training step whether to skip a layer, as in `if
+  torch.rand([]) < self.layerdrop`. FakeTensorMode reads a Python scalar only
+  from a tensor whose values it knows (a constant), and the outputs of factory
+  ops never are, so this computes them on the CPU.
   """
 
   def __init__(self, fake_mode: fake_tensor.FakeTensorMode):
@@ -175,9 +185,7 @@ class _ConstantFactoryMode(_python_dispatch.TorchDispatchMode):
     device = kwargs.get("device")
     if (
         func in _CONSTANT_FACTORIES
-        # The number of steps, i.e. of elements.
-        and isinstance(args[2], int)
-        and args[2] <= _MAX_CONSTANT_NUMEL
+        and _numel(args[_CONSTANT_FACTORIES[func]]) <= _MAX_CONSTANT_NUMEL
         and (device is None or torch.device(device).type == "cpu")
     ):
       with fake_tensor.unset_fake_temporarily():
@@ -188,6 +196,22 @@ class _ConstantFactoryMode(_python_dispatch.TorchDispatchMode):
     return func(*args, **kwargs)
 
 
+def _numel(steps_or_size: Any) -> int | float:
+  """Returns the number of elements of a factory op output, or infinity.
+
+  Args:
+    steps_or_size: The number of steps of `linspace` and `logspace`, or the size
+      of `rand` and `randn`. Symbolic values count as infinitely many elements.
+  """
+  if isinstance(steps_or_size, int):
+    return steps_or_size
+  if isinstance(steps_or_size, (list, tuple)) and all(
+      isinstance(dim, int) for dim in steps_or_size
+  ):
+    return math.prod(steps_or_size)
+  return math.inf
+
+
 @contextlib.contextmanager
 def fake_tensor_context() -> Iterator[None]:
   """Enters FakeTensorMode for the FakeTensorMode CPU presubmit smoke.
@@ -196,10 +220,10 @@ def fake_tensor_context() -> Iterator[None]:
   is validated at flag-parse time to be set only with BENCHMARK_PLATFORM=cpu and
   `--run_scope=presubmit`.
 
-  While active, this disables FakeTensor memoization, makes
-  `torch.nn.init.trunc_normal_` a no-op and lets FakeTensorMode keep the values
-  of small tensors process-wide (by patching private helpers), so it is not
-  thread-safe.
+  While active, this disables FakeTensor memoization and the argument validation
+  of `torch.distributions`, makes `torch.nn.init.trunc_normal_` a no-op and lets
+  FakeTensorMode keep the values of small tensors process-wide (by patching
+  private helpers), so it is not thread-safe.
 
   Yields:
     None.
@@ -241,10 +265,18 @@ def fake_tensor_context() -> Iterator[None]:
   # (`torch.linspace(0, drop_path_rate, sum(depths)).split(depths)`).
   orig_constant_numel_limit = fake_tensor.CONSTANT_NUMEL_LIMIT
   fake_tensor.CONSTANT_NUMEL_LIMIT = _MAX_CONSTANT_NUMEL  # pyrefly: ignore[bad-assignment]
+  # `torch.distributions` checks the parameters of a distribution, e.g. the
+  # logits of the `Categorical` in the TAPAS cell selection loss, with
+  # data-dependent control flow, which FakeTensorMode cannot evaluate.
+  orig_validate_args = torch.distributions.Distribution._validate_args  # pylint: disable=protected-access
+  torch.distributions.Distribution.set_default_validate_args(False)
   try:
     with mode, _ConstantFactoryMode(mode):
       yield
   finally:
+    torch.distributions.Distribution.set_default_validate_args(
+        orig_validate_args
+    )
     fake_tensor.CONSTANT_NUMEL_LIMIT = orig_constant_numel_limit
     torch.nn.init._no_grad_trunc_normal_ = orig_trunc_normal  # pylint: disable=protected-access
 
