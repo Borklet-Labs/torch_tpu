@@ -35,7 +35,7 @@ spec:
       - {effect: NoSchedule, key: "google.com/tpu", operator: Exists}
       containers:
       - name: muse-glimmer-inference
-        image: us-docker.pkg.dev/ml-oss-artifacts-transient/torch-tpu-docker-container/torch-tpu:nightly
+        image: us-docker.pkg.dev/ml-oss-artifacts-published/torch-tpu-public-release-container/torch-tpu:latest
         command: ["/bin/bash", "-c"]
         args:
         - |
