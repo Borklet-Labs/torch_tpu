@@ -459,7 +459,7 @@ def _check_and_adjust_test_tags(
         if is_oss and "nobuild" not in tags:
             tags.append("nobuild")
 
-        notest_oss = True
+        notest_oss = True  # NOTEST_OSS_OK=nobuild_oss implies notest_oss
 
     if notest_oss:
         # notest_oss should only affect the OSS build.
@@ -643,7 +643,7 @@ def check_and_adjust_test_tags_for_testing(
         notap = None,
         nopresubmit = None,
         nolocal = None,
-        notest_oss = False,
+        notest_oss = False,  # NOTEST_OSS_OK=Default parameter in test helper
         nobuild_oss = False,
         nopresubmit_oss = None,
         nonightly_oss = None,
@@ -662,7 +662,7 @@ def check_and_adjust_test_tags_for_testing(
         notap = notap,
         nopresubmit = nopresubmit,
         nolocal = nolocal,
-        notest_oss = notest_oss,
+        notest_oss = notest_oss,  # NOTEST_OSS_OK=Forwarding parameter in test helper
         nobuild_oss = nobuild_oss,
         nopresubmit_oss = nopresubmit_oss,
         nonightly_oss = nonightly_oss,
@@ -686,7 +686,7 @@ def torch_tpu_cc_test(
         notap = None,
         nopresubmit = None,
         nolocal = None,
-        notest_oss = False,
+        notest_oss = False,  # NOTEST_OSS_OK=Default parameter in torch_tpu_cc_test macro
         nobuild_oss = False,
         nopresubmit_oss = None,
         nonightly_oss = None,
@@ -794,7 +794,7 @@ def torch_tpu_cc_test(
         notap = notap,
         nopresubmit = nopresubmit,
         nolocal = nolocal,
-        notest_oss = notest_oss,
+        notest_oss = notest_oss,  # NOTEST_OSS_OK=Forwarding parameter in torch_tpu_cc_test macro
         nobuild_oss = nobuild_oss,
         nopresubmit_oss = nopresubmit_oss,
         nonightly_oss = nonightly_oss,
@@ -1002,7 +1002,7 @@ def torch_tpu_py_test(
         notap = None,
         nopresubmit = None,
         nolocal = None,
-        notest_oss = False,
+        notest_oss = False,  # NOTEST_OSS_OK=Default parameter in _torch_tpu_py_test_internal macro
         nobuild_oss = False,
         nopresubmit_oss = None,
         nonightly_oss = None,
@@ -1329,7 +1329,7 @@ def torch_tpu_py_test(
             notap = notap,
             nopresubmit = target_nopresubmit,
             nolocal = nolocal,
-            notest_oss = notest_oss,
+            notest_oss = notest_oss,  # NOTEST_OSS_OK=Forwarding parameter in torch_tpu_py_test macro
             nobuild_oss = nobuild_oss,
             nopresubmit_oss = nopresubmit_oss,
             nonightly_oss = nonightly_oss,

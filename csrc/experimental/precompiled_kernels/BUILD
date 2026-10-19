@@ -108,7 +108,7 @@ torch_tpu_cc_test(
     exec_properties = {
         "cpp_link.mem": "16g",  # Needed for asan.
     },
-    notest_oss = True,  # Requires libtpu >= 0.0.48 with operand_to_metadata support
+    notest_oss = True,  # NOTEST_OSS_OK=Requires libtpu >= 0.0.48 with operand_to_metadata support
     tags = ["requires-tpu-v5p"],
     deps = [
         ":kernel_test_utils",

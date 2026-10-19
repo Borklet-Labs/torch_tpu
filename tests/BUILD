@@ -1805,7 +1805,7 @@ torch_tpu_py_test(
     },
     main = "errors_test.py",
     nolocal = "Skipping in local runs by default as it requires --config=cuda.",
-    notest_oss = True,  # Low value in maintaining for both internal and OSS and they run different versions of PyTorch.
+    notest_oss = True,  # NOTEST_OSS_OK=Low value in maintaining for both internal and OSS and they run different versions of PyTorch.
     shard_count = 8,
     tags = [
         "nosan",  # *san builds are low-value for error tests.

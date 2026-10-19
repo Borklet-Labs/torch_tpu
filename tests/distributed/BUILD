@@ -1212,7 +1212,7 @@ torch_tpu_py_test(
     name = "window_tpu_test",
     srcs = ["window_tpu_test.py"],
     autoload = True,
-    notest_oss = True,  # Requires PJRT RawBuffer extension not yet exported in OSS libtpu.
+    notest_oss = True,  # NOTEST_OSS_OK=Requires PJRT RawBuffer extension not yet exported in OSS libtpu.
     shard_count = 6,
     tags = if_oss(
         ["exclusive"],
