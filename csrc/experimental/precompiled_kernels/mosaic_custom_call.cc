@@ -18,7 +18,7 @@
 
 #include <cstdint>
 #include <memory>
-#include <string>
+#include <string_view>
 #include <vector>
 
 #include "absl/status/statusor.h"
@@ -27,11 +27,6 @@
 #include "absl/strings/str_join.h"
 #include "absl/types/span.h"
 #include "csrc/common/error_utils.h"
-#include "csrc/internal/mosaic/op_builders.h"
-#include "llvm/Support/raw_ostream.h"
-#include "mlir/Bytecode/BytecodeWriter.h"
-#include "mlir/IR/BuiltinOps.h"
-#include "mlir/Support/LogicalResult.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -41,31 +36,11 @@
 #include "xla/shape.h"
 
 namespace torch_tpu {
-namespace {
-
-absl::StatusOr<std::string> SerializeMosaic(mlir::ModuleOp module) {
-  // Use TorchTPU's pinned Mosaic transport version, not upstream's latest.
-  if (mlir::failed(mlir::torch_tpu::SerializeMosaicKernel(module))) {
-    return TT_ERROR(error::kInternal) << "Mosaic serialization failed";
-  }
-  std::string bytes;
-  llvm::raw_string_ostream stream(bytes);
-  mlir::BytecodeWriterConfig config;
-  // Match JAX's Mosaic bytecode encoding; independent of the serde version.
-  config.setDesiredBytecodeVersion(0);
-  if (mlir::failed(mlir::writeBytecodeToFile(module, stream, config))) {
-    return TT_ERROR(error::kInternal) << "Mosaic bytecode emission failed";
-  }
-  return bytes;
-}
-
-}  // namespace
 
 absl::StatusOr<std::unique_ptr<xla::HloModule>> BuildMosaicCustomCall(
-    mlir::ModuleOp kernel, absl::Span<const xla::Shape> parameters,
+    std::string_view serialized_kernel, absl::Span<const xla::Shape> parameters,
     const xla::Shape& result, absl::Span<const int64_t> operand_to_metadata,
     int aliased_parameter) {
-  TT_ASSIGN_OR_RETURN(auto body, SerializeMosaic(kernel));
   xla::HloComputation::Builder builder("main");
   std::vector<xla::HloInstruction*> operands;
   for (const auto& shape : parameters) {
@@ -79,7 +54,7 @@ absl::StatusOr<std::unique_ptr<xla::HloModule>> BuildMosaicCustomCall(
   // Backend config as a string, for OSS compatibility.
   call->set_raw_backend_config_string(absl::StrCat(
       R"({"device_type":"DEVICE_TYPE_TENSORCORE","custom_call_config":{"body":")",
-      absl::Base64Escape(body),
+      absl::Base64Escape(serialized_kernel),
       R"(","serialization_format":1,"needs_layout_passes":true,)"
       R"("needs_hlo_passes":false,"operand_to_metadata":[)",
       absl::StrJoin(operand_to_metadata, ","), "]}}"));

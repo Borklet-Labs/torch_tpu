@@ -18,6 +18,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -32,33 +33,13 @@
 #include "csrc/common/error_utils.h"
 #include "csrc/common/shape.h"
 #include "csrc/experimental/precompiled_kernels/mosaic_custom_call.h"
-#include "csrc/internal/mosaic/op_builders.h"
+#include "csrc/internal/mosaic/kiln/kiln.h"
 #include "csrc/ops/op_names.h"
-#include "llvm/ADT/ArrayRef.h"
-#include "llvm/ADT/STLFunctionalExtras.h"
-#include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/Dialect/Arith/IR/ArithAttributes.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/Dialect/MemRef/IR/MemRef.h"
-#include "mlir/Dialect/SCF/IR/SCF.h"
-#include "mlir/Dialect/Vector/IR/VectorOps.h"
-#include "mlir/IR/Builders.h"
-#include "mlir/IR/BuiltinAttributes.h"
-#include "mlir/IR/BuiltinOps.h"
-#include "mlir/IR/BuiltinTypeInterfaces.h"
-#include "mlir/IR/BuiltinTypes.h"
-#include "mlir/IR/Location.h"
-#include "mlir/IR/MLIRContext.h"
-#include "mlir/IR/OwningOpRef.h"
-#include "mlir/IR/Types.h"
-#include "mlir/IR/Value.h"
-#include "mlir/IR/ValueRange.h"
 #include "stablehlo/integrations/cpp/builder/AttrTypeBuilderUtil.h"
 #include "xla/client/executable_build_options.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/layout.h"
-#include "xla/mosaic/dialect/tpu/tpu_dialect.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/shape.h"
@@ -68,7 +49,9 @@
 namespace torch_tpu {
 namespace {
 
-namespace tpu = mlir::tpu;
+constexpr int64_t kSublanes = 8;
+constexpr int64_t kLanes = 128;
+
 // Scan rows in order. For each 128-column block, load the containing 8x128
 // input tile, extract the current row, and inspect its valid lanes in order.
 // This baseline reloads the input tile for each row.
@@ -84,245 +67,134 @@ namespace tpu = mlir::tpu;
 //     for col in [0,N):
 //       if IsNonzero(input[row,col]): output[count++] = (row,col)
 // This preserves lexicographic ordering without a sort or prefix sum.
-class NonzeroBuilder {
- public:
-  explicit NonzeroBuilder(mlir::MLIRContext& context)
-      : b_(mlir::UnknownLoc::get(&context), &context) {}
+//
+// Written in Kiln, so a `kiln::Scalar` or `kiln::Tile` is a device value and
+// `kiln::For` / `kiln::If` emit device control flow; the C++ runs once at
+// build time.
 
-  // Emit the complete scalar scan, then flush the remaining output coordinates.
-  mlir::OwningOpRef<mlir::ModuleOp> Build() {
-    auto module = CreateModule();
-    Initialize();
-    mlir::Value num_rows = Dim(input_, 0), num_cols = Dim(input_, 1);
-    For(Const(0), num_rows, 1, [&](mlir::Value row) {
-      For(Const(0), num_cols, 128, [&](mlir::Value col) {
-        mlir::Value values = LoadRow(row, col);
-        mlir::Value limit = Min(Const(128), Sub(num_cols, col));
-        For(Const(0), limit, 1, [&](mlir::Value lane) {
-          When(IsNonzero(values, lane), [&] { Append(row, Add(col, lane)); });
+// Synchronous DMA: source and destination are safe to reuse after this
+// returns.
+void Copy(kiln::Ref src, kiln::Ref dst, kiln::Semaphore sem) {
+  kiln::AsyncCopy(src, dst, sem).Wait();
+}
+
+// Copy one 128-word VMEM tile to a storage-row index in the native output.
+void WriteTile(kiln::Ref tile, kiln::Scalar tile_index, kiln::Ref output,
+               kiln::Semaphore sem) {
+  Copy(tile, output(kiln::Slice(tile_index, 1), kiln::Slice(0, kLanes)), sem);
+}
+
+// Each 128-pair block occupies two low-word tiles: rows, then columns.
+// first is a multiple of 128, so its tile index is 2 * first / 128.
+void Flush(kiln::Scalar first, kiln::Ref stage_rows, kiln::Ref stage_cols,
+           kiln::Ref output, kiln::Semaphore sem) {
+  kiln::Scalar tile = first >> 6;
+  WriteTile(stage_rows, tile, output, sem);
+  WriteTile(stage_cols, tile + 1, output, sem);
+}
+
+// Flush a partial final stage; an exactly full stage was already written.
+void FlushTail(kiln::Ref count, kiln::Ref stage_rows, kiln::Ref stage_cols,
+               kiln::Ref output, kiln::Semaphore sem) {
+  kiln::Scalar n = kiln::Scalar(count);
+  kiln::If((n & 127) != 0,
+           [&] { Flush(n & -128, stage_rows, stage_cols, output, sem); });
+}
+
+// Place one pair at count % 128 and advance the device counter.
+// Flush only when all 128 staged pairs have been filled.
+void Append(kiln::Scalar row, kiln::Scalar col, kiln::Ref count,
+            kiln::Tile position, kiln::Ref stage_rows, kiln::Ref stage_cols,
+            kiln::Ref output, kiln::Semaphore sem) {
+  kiln::Scalar n = kiln::Scalar(count);
+  kiln::Tile mask = position == (n & 127);
+  stage_rows.Store(row, mask);
+  stage_cols.Store(col, mask);
+  kiln::Scalar next = n + 1;
+  count = next;
+  kiln::If((next & 127) == 0,
+           [&] { Flush(n & -128, stage_rows, stage_cols, output, sem); });
+}
+
+// Gather a runtime-selected lane, then extract its replicated value as a
+// scalar.
+kiln::Scalar ExtractLane(kiln::Tile values, kiln::Scalar lane) {
+  kiln::Tile gathered = kiln::Gather(values, kiln::Splat(lane, values.shape()),
+                                     /*axis=*/1);
+  return kiln::Extract(gathered, {0, 0});
+}
+
+// Classify one logical lane using the predicate specified in the header.
+kiln::Cond IsNonzero(kiln::Tile values, kiln::Scalar lane) {
+  // TPU scalar arithmetic is integer-only. Compare float magnitude bits:
+  // any set bit is nonzero, which excludes only +0.0 and -0.0.
+  kiln::Scalar bits = Bitcast(ExtractLane(values, lane), kiln::Int32Type());
+  return (bits & 0x7fffffff) > 0;
+}
+
+// DMA requires whole physical tiles. Select the requested logical row after
+// loading its containing 8x128 tile; the scalar scan masks the column tail.
+kiln::Tile LoadRow(kiln::Scalar row, kiln::Scalar col, kiln::Ref input,
+                   kiln::Ref tile, kiln::Semaphore sem) {
+  kiln::Ref src =
+      input(kiln::Slice(kiln::MultipleOf(row & -8, kSublanes), kSublanes),
+            kiln::Slice(kiln::MultipleOf(col, kLanes), kLanes));
+  Copy(src, tile, sem);
+  // Rotate the wanted row into sublane 0, then keep only that sublane.
+  kiln::Tile values =
+      kiln::Rotate(kiln::Tile(tile), kSublanes - (row & 7), /*axis=*/0);
+  return values.Slice({0, 0}, {1, kLanes});
+}
+
+// Define the Mosaic memrefs: input, private destination and aliased result.
+// The HLO wrapper provides runtime dimensions and the result/destination
+// alias.
+absl::StatusOr<kiln::Kernel> BuildNonzeroIndices() {
+  const kiln::Shape dynamic_2d = {kiln::kDynamic, kiln::kDynamic};
+  return kiln::CreateKernel(
+      kiln::GridSpec{.name = "main"},
+      kiln::InSpec::Hbm(dynamic_2d, kiln::Float32Type()),
+      kiln::InSpec::Hbm(dynamic_2d, kiln::Int32Type()),
+      kiln::OutSpec::Hbm(dynamic_2d, kiln::Int32Type()),
+      [](kiln::Ref input, kiln::Ref /*destination*/, kiln::Ref output) {
+        // The result aliases the private destination; only the result is
+        // written. Allocate one input tile, two coordinate stages and a
+        // scalar count.
+        kiln::Ref tile =
+            kiln::AllocaVmem({kSublanes, kLanes}, kiln::Float32Type());
+        kiln::Ref stage_rows = kiln::AllocaVmem({1, kLanes}, kiln::Int32Type());
+        kiln::Ref stage_cols = kiln::AllocaVmem({1, kLanes}, kiln::Int32Type());
+        kiln::Ref count = kiln::AllocaSmem({}, kiln::Int32Type());
+        kiln::Semaphore sem = kiln::AllocaDmaSemaphore();
+        kiln::Tile position =
+            kiln::Iota({1, kLanes}, kiln::Int32Type(), /*axis=*/1);
+        stage_rows = kiln::Zeros({1, kLanes}, kiln::Int32Type());
+        stage_cols = kiln::Zeros({1, kLanes}, kiln::Int32Type());
+        count = kiln::I32(0);
+        // Coordinates fit S32: zero the native int64 high words once; the scan
+        // and flushes only write low words.
+        kiln::Scalar num_tiles = output.Dim(0);
+        kiln::For(num_tiles >> 1, num_tiles, [&](kiln::Scalar tile_index) {
+          WriteTile(stage_rows, tile_index, output, sem);
         });
+
+        // Emit the complete scalar scan, then flush the remaining output
+        // coordinates.
+        kiln::Scalar num_rows = input.Dim(0), num_cols = input.Dim(1);
+        kiln::For(0, num_rows, [&](kiln::Scalar row) {
+          kiln::For(0, num_cols, kLanes, [&](kiln::Scalar col) {
+            kiln::Tile values = LoadRow(row, col, input, tile, sem);
+            kiln::Scalar limit = Min(num_cols - col, kLanes);
+            kiln::For(0, limit, [&](kiln::Scalar lane) {
+              kiln::If(IsNonzero(values, lane), [&] {
+                Append(row, col + lane, count, position, stage_rows, stage_cols,
+                       output, sem);
+              });
+            });
+          });
+        });
+        FlushTail(count, stage_rows, stage_cols, output, sem);
       });
-    });
-    FlushTail();
-    mlir::func::ReturnOp::create(b_);
-    return module;
-  }
-
- private:
-  // Classify one logical lane using the predicate specified in the header.
-  mlir::Value IsNonzero(mlir::Value values, mlir::Value lane) {
-    // TPU scalar arithmetic is integer-only. Compare float magnitude bits:
-    // any set bit is nonzero, which excludes only +0.0 and -0.0.
-    mlir::Value bits = mlir::arith::BitcastOp::create(
-        b_, b_.getI32Type(), ExtractLane(values, lane));
-    return Compare(mlir::arith::CmpIPredicate::sgt, And(bits, 0x7fffffff),
-                   Const(0));
-  }
-
-  // DMA requires whole physical tiles. Select the requested logical row after
-  // loading its containing 8x128 tile; the scalar scan masks the column tail.
-  mlir::Value LoadRow(mlir::Value row, mlir::Value col) {
-    auto base = tpu::AssumeMultipleOp::create(b_, And(row, -8), 8);
-    auto offset = tpu::AssumeMultipleOp::create(b_, col, 128);
-    auto src = tpu::MemRefSliceOp::create(
-        b_, Ref({8, 128}, b_.getF32Type(), tpu::MemorySpace::kHbm), input_,
-        mlir::ValueRange{base, offset}, mlir::ValueRange{});
-    Copy(src, tile_);
-    auto type = mlir::VectorType::get({8, 128}, b_.getF32Type());
-    mlir::Value values = mlir::vector::LoadOp::create(
-        b_, type, tile_, mlir::ValueRange{Index(0), Index(0)});
-    values = tpu::DynamicRotateOp::create(
-        b_, type, values, Sub(Const(8), And(row, 7)), 0, mlir::IntegerAttr(),
-        mlir::IntegerAttr());
-    return mlir::vector::ExtractStridedSliceOp::create(
-        b_, values, llvm::ArrayRef<int64_t>{0, 0},
-        llvm::ArrayRef<int64_t>{1, 128}, llvm::ArrayRef<int64_t>{1, 1});
-  }
-
-  // Place one pair at count % 128 and advance the device counter.
-  // Flush only when all 128 staged pairs have been filled.
-  void Append(mlir::Value row, mlir::Value col) {
-    mlir::Value count =
-        mlir::memref::LoadOp::create(b_, count_, mlir::ValueRange{});
-    mlir::Value mask = mlir::arith::CmpIOp::create(
-        b_, mlir::arith::CmpIPredicate::eq, position_, Splat(And(count, 127)));
-    Store(Splat(row), stage_[0], mask);
-    Store(Splat(col), stage_[1], mask);
-    mlir::Value next = Add(count, Const(1));
-    mlir::memref::StoreOp::create(b_, next, count_, mlir::ValueRange{});
-    When(Compare(mlir::arith::CmpIPredicate::eq, And(next, 127), Const(0)),
-         [&] { Flush(And(count, -128)); });
-  }
-
-  // Each 128-pair block occupies two low-word tiles: rows, then columns.
-  // first is a multiple of 128, so its tile index is 2 * first / 128.
-  void Flush(mlir::Value first) {
-    mlir::Value tile = mlir::arith::ShRSIOp::create(b_, first, Const(6));
-    WriteTile(stage_[0], tile);
-    WriteTile(stage_[1], Add(tile, Const(1)));
-  }
-
-  // Flush a partial final stage; an exactly full stage was already written.
-  void FlushTail() {
-    mlir::Value count =
-        mlir::memref::LoadOp::create(b_, count_, mlir::ValueRange{});
-    When(Compare(mlir::arith::CmpIPredicate::ne, And(count, 127), Const(0)),
-         [&] { Flush(And(count, -128)); });
-  }
-
-  // Copy one 128-word VMEM tile to a storage-row index in the native output.
-  void WriteTile(mlir::Value tile, mlir::Value tile_index) {
-    auto dst = tpu::MemRefSliceOp::create(
-        b_, Ref({1, 128}, b_.getI32Type(), tpu::MemorySpace::kHbm), output_,
-        mlir::ValueRange{tile_index, Const(0)}, mlir::ValueRange{});
-    Copy(tile, dst);
-  }
-
-  // Gather a runtime-selected lane, then extract its replicated value as a
-  // scalar.
-  mlir::Value ExtractLane(mlir::Value values, mlir::Value lane) {
-    mlir::Value gathered =
-        tpu::DynamicGatherOp::create(b_, values.getType(), values, Splat(lane),
-                                     b_.getDenseI32ArrayAttr({1}));
-    return mlir::vector::ExtractOp::create(b_, gathered,
-                                           llvm::ArrayRef<int64_t>{0, 0});
-  }
-
-  // Write staging lanes; a mask preserves coordinates already in the stage.
-  void Store(mlir::Value value, mlir::Value ref,
-             mlir::Value mask = mlir::Value()) {
-    tpu::VectorStoreOp::create(
-        b_, value, ref, mlir::ValueRange{Index(0), Index(0)}, mask, false);
-  }
-
-  // Synchronous DMA: source and destination are safe to reuse after this
-  // returns.
-  void Copy(mlir::Value src, mlir::Value dst) {
-    tpu::EnqueueDMAOp::create(b_, src, mlir::Value(), dst, sem_, mlir::Value(),
-                              mlir::Value(), mlir::Value());
-    tpu::WaitDMAOp::create(b_, src, mlir::Value(), dst, sem_, mlir::Value(),
-                           mlir::Value(), mlir::Value(), /*priority=*/0,
-                           /*strict_ordering=*/false, /*wait_target=*/true);
-  }
-
-  // Local IR arithmetic helpers; Const emits an S32 constant, Index an MLIR
-  // index.
-  mlir::Value Const(int64_t v) {
-    return mlir::arith::ConstantIntOp::create(b_, v, 32);
-  }
-
-  mlir::Value Index(int64_t v) {
-    return mlir::arith::ConstantIndexOp::create(b_, v);
-  }
-
-  mlir::Value Add(mlir::Value a, mlir::Value b) {
-    return mlir::arith::AddIOp::create(b_, a, b);
-  }
-
-  mlir::Value Sub(mlir::Value a, mlir::Value b) {
-    return mlir::arith::SubIOp::create(b_, a, b);
-  }
-
-  mlir::Value Min(mlir::Value a, mlir::Value b) {
-    return mlir::arith::MinSIOp::create(b_, a, b);
-  }
-
-  mlir::Value Compare(mlir::arith::CmpIPredicate predicate, mlir::Value a,
-                      mlir::Value b) {
-    return mlir::arith::CmpIOp::create(b_, predicate, a, b);
-  }
-
-  mlir::Value And(mlir::Value a, int64_t mask) {
-    return mlir::arith::AndIOp::create(b_, a, Const(mask));
-  }
-
-  // Replicate a scalar across the 128 lanes of a staging vector.
-  mlir::Value Splat(mlir::Value v) {
-    return mlir::vector::BroadcastOp::create(
-        b_, mlir::VectorType::get({1, 128}, v.getType()), v);
-  }
-
-  // Read an actual runtime extent from the memref metadata as S32.
-  mlir::Value Dim(mlir::Value ref, int axis) {
-    return mlir::arith::IndexCastOp::create(
-        b_, b_.getI32Type(), mlir::memref::DimOp::create(b_, ref, axis));
-  }
-
-  // Describe buffer shape and memory space without allocating storage.
-  mlir::MemRefType Ref(llvm::ArrayRef<int64_t> dims, mlir::Type type,
-                       tpu::MemorySpace space) {
-    return mlir::MemRefType::get(
-        dims, type, nullptr, tpu::MemorySpaceAttr::get(b_.getContext(), space));
-  }
-
-  // Emit a device loop over [begin,end); the C++ callback builds its body once.
-  void For(mlir::Value begin, mlir::Value end, int step,
-           llvm::function_ref<void(mlir::Value)> body) {
-    auto loop = mlir::scf::ForOp::create(b_, begin, end, Const(step));
-    mlir::OpBuilder::InsertionGuard guard(b_);
-    b_.setInsertionPointToStart(loop.getBody());
-    body(loop.getInductionVar());
-  }
-
-  // Emit a device conditional; this is not a host-side branch.
-  void When(mlir::Value condition, llvm::function_ref<void()> body) {
-    auto branch = mlir::scf::IfOp::create(b_, condition, false);
-    mlir::OpBuilder::InsertionGuard guard(b_);
-    b_.setInsertionPointToStart(&branch.getThenRegion().front());
-    body();
-  }
-
-  // Allocate one input tile, two coordinate stages and a scalar count.
-  // Zero the output high words once; scan and flush only write coordinate low
-  // words.
-  void Initialize() {
-    tile_ = mlir::memref::AllocaOp::create(
-        b_, Ref({8, 128}, b_.getF32Type(), tpu::MemorySpace::kVmem));
-    for (auto& plane : stage_) {
-      plane = mlir::memref::AllocaOp::create(
-          b_, Ref({1, 128}, b_.getI32Type(), tpu::MemorySpace::kVmem));
-      Store(Splat(Const(0)), plane);
-    }
-    count_ = mlir::memref::AllocaOp::create(
-        b_, Ref({}, b_.getI32Type(), tpu::MemorySpace::kSmem));
-    mlir::memref::StoreOp::create(b_, Const(0), count_, mlir::ValueRange{});
-    sem_ = tpu::AllocaSemaphoreOp::create(
-        b_, Ref({}, tpu::DMASemaphoreType::get(b_.getContext()),
-                tpu::MemorySpace::kSemaphoreMem));
-    auto type = mlir::VectorType::get({1, 128}, b_.getI32Type());
-    position_ = tpu::IotaOp::create(b_, type, 1);
-    // Coordinates fit S32: initialize the native int64 high words to zero.
-    mlir::Value num_tiles = Dim(output_, 0);
-    mlir::Value high = mlir::arith::ShRSIOp::create(b_, num_tiles, Const(1));
-    For(high, num_tiles, 1,
-        [&](mlir::Value tile) { WriteTile(stage_[0], tile); });
-  }
-
-  // Define the Mosaic memrefs: input, private destination and aliased result.
-  // The HLO wrapper provides runtime dimensions and the result/destination
-  // alias.
-  mlir::OwningOpRef<mlir::ModuleOp> CreateModule() {
-    auto module =
-        mlir::OwningOpRef<mlir::ModuleOp>(mlir::ModuleOp::create(b_.getLoc()));
-    b_.setInsertionPointToEnd(module->getBody());
-    const int64_t dyn = mlir::ShapedType::kDynamic;
-    auto input = Ref({dyn, dyn}, b_.getF32Type(), tpu::MemorySpace::kHbm);
-    auto output = Ref({dyn, dyn}, b_.getI32Type(), tpu::MemorySpace::kHbm);
-    auto fn = mlir::func::FuncOp::create(
-        b_, "main", b_.getFunctionType({input, output, output}, {}));
-    auto* entry = fn.addEntryBlock();
-    b_.setInsertionPointToStart(entry);
-    input_ = entry->getArgument(0);
-    output_ = entry->getArgument(2);  // Result aliases the private destination.
-    return module;
-  }
-  mlir::ImplicitLocOpBuilder b_;
-  mlir::Value input_, output_, tile_, stage_[2], count_, sem_, position_;
-};
-
-mlir::OwningOpRef<mlir::ModuleOp> BuildNonzeroIndices(
-    mlir::MLIRContext& context) {
-  return NonzeroBuilder(context).Build();
 }
 
 // Returns a rank-2 unbounded-dynamic shape with a row-major tiled layout.
@@ -346,7 +218,8 @@ absl::StatusOr<xla::Shape> DestinationPhysicalShape(const Shape& logical,
 }
 
 // Bitcasts the kernel's only result, the S32[R,128] destination, back to the
-// logical S64[K,2]{0,1:T(2,128)} output; see the buffer contract in the header.
+// logical S64[K,2]{0,1:T(2,128)} output; see the buffer contract in the
+// header.
 absl::StatusOr<std::vector<std::unique_ptr<xla::PjRtBuffer>>>
 BitcastToLogicalIndices(std::vector<std::unique_ptr<xla::PjRtBuffer>> results,
                         const absl::Span<const Shape> logical_output_shapes) {
@@ -422,13 +295,13 @@ BuildNonzeroIndicesExecutable(xla::PjRtClient& client,
                               UniqueCompileOptions compile_options) {
   const xla::Shape output_view = MakeUnbounded(xla::S32, xla::Tile({1, 128}));
   const std::vector<xla::Shape> parameters = NonzeroParameters();
-  const std::unique_ptr<mlir::MLIRContext> context =
-      mlir::torch_tpu::CreateMlirContextWithDialects();
-  mlir::OwningOpRef<mlir::ModuleOp> module = BuildNonzeroIndices(*context);
+  TT_ASSIGN_OR_RETURN(kiln::Kernel kernel, BuildNonzeroIndices());
+  TT_ASSIGN_OR_RETURN(const std::string serialized_kernel,
+                      std::move(kernel).Serialize());
   TT_ASSIGN_OR_RETURN(
       const std::unique_ptr<xla::HloModule> hlo,
-      BuildMosaicCustomCall(*module, parameters, output_view, {2, 3, -1, -1},
-                            /*aliased_parameter=*/1));
+      BuildMosaicCustomCall(serialized_kernel, parameters, output_view,
+                            {2, 3, -1, -1}, /*aliased_parameter=*/1));
   xla::ExecutableBuildOptions& build =
       compile_options->executable_build_options;
   build.set_run_backend_only(true);

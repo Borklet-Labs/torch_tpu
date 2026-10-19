@@ -18,6 +18,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -25,11 +26,8 @@
 #include "csrc/common/error_utils.h"
 #include "csrc/common/status_test_utils.h"
 #include "csrc/experimental/precompiled_kernels/kernel_test_utils.h"
-#include "csrc/internal/mosaic/op_builders.h"
+#include "csrc/internal/mosaic/kiln/kiln.h"
 #include "gtest/gtest.h"
-#include "mlir/IR/BuiltinOps.h"
-#include "mlir/IR/MLIRContext.h"
-#include "mlir/Parser/Parser.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
 #include "xla/pjrt/pjrt_executable.h"
@@ -44,49 +42,33 @@ namespace {
 TEST(DynamicMosaic, CopiesDifferentShapesWithOneExecutable) {
   TT_ASSERT_OK_AND_ASSIGN(auto client, CreateKernelTestClient());
   xla::HloRunner runner(std::move(client));
-  auto context = mlir::torch_tpu::CreateMlirContextWithDialects();
   // Copy from src to dst, with runtime-varying dimensions.
-  auto module = mlir::parseSourceString<mlir::ModuleOp>(R"mlir(
-    #hbm = #tpu.memory_space<hbm>
-    #vmem = #tpu.memory_space<vmem>
-    !payload = memref<?x?xf32, #hbm>
-    !hbm_tile = memref<8x128xf32, #hbm>
-    !tile = memref<8x128xf32, #vmem>
-    !sem = memref<!tpu.semaphore, #tpu.memory_space<semaphore_mem>>
-    module {
-      func.func @main(%src: !payload, %destination: !payload, %dst: !payload) {
-        %i0 = arith.constant 0 : index
-        %i1 = arith.constant 1 : index
-        %zero = arith.constant 0 : i32
-        %one = arith.constant 1 : i32
-        %eight = arith.constant 8 : i32
-        %lanes = arith.constant 128 : i32
-        %m = memref.dim %src, %i0 : !payload
-        %n = memref.dim %src, %i1 : !payload
-        %rows = arith.index_cast %m : index to i32
-        %cols = arith.index_cast %n : index to i32
-        %tile = memref.alloca() : !tile
-        %sem = tpu.sem_alloc : !sem
-        scf.for %row = %zero to %rows step %eight : i32 {
-          scf.for %col = %zero to %cols step %lanes : i32 {
-            %r = tpu.assume_multiple %row, 8 : i32
-            %c = tpu.assume_multiple %col, 128 : i32
-            %in = tpu.memref_slice %src[%r, %c] : !payload -> !hbm_tile
-            %out = tpu.memref_slice %dst[%r, %c] : !payload -> !hbm_tile
-            tpu.enqueue_dma source(%in : !hbm_tile) target(%tile : !tile)
-              target_semaphore(%sem : !sem)
-            tpu.sem_wait %sem, %one : !sem
-            tpu.enqueue_dma source(%tile : !tile) target(%out : !hbm_tile)
-              target_semaphore(%sem : !sem)
-            tpu.sem_wait %sem, %one : !sem
-          }
-        }
-        return
-      }
-    }
-  )mlir",
-                                                        context.get());
-  ASSERT_TRUE(module);
+  const kiln::Shape dynamic_2d = {kiln::kDynamic, kiln::kDynamic};
+  TT_ASSERT_OK_AND_ASSIGN(
+      kiln::Kernel kernel,
+      kiln::CreateKernel(
+          kiln::GridSpec{.name = "main"},
+          kiln::InSpec::Hbm(dynamic_2d, kiln::Float32Type()),
+          kiln::InSpec::Hbm(dynamic_2d, kiln::Float32Type()),
+          kiln::OutSpec::Hbm(dynamic_2d, kiln::Float32Type()),
+          [](kiln::Ref src, kiln::Ref /*destination*/, kiln::Ref dst) {
+            kiln::Ref tile = kiln::AllocaVmem({8, 128}, kiln::Float32Type());
+            kiln::Semaphore sem = kiln::AllocaDmaSemaphore();
+            kiln::For(0, src.Dim(0), 8, [&](kiln::Scalar row) {
+              kiln::For(0, src.Dim(1), 128, [&](kiln::Scalar col) {
+                kiln::Scalar r = kiln::MultipleOf(row, 8);
+                kiln::Scalar c = kiln::MultipleOf(col, 128);
+                kiln::AsyncCopy(src(kiln::Slice(r, 8), kiln::Slice(c, 128)),
+                                tile, sem)
+                    .Wait();
+                kiln::AsyncCopy(
+                    tile, dst(kiln::Slice(r, 8), kiln::Slice(c, 128)), sem)
+                    .Wait();
+              });
+            });
+          }));
+  TT_ASSERT_OK_AND_ASSIGN(const std::string serialized_kernel,
+                          std::move(kernel).Serialize());
   auto payload = xla::ShapeUtil::MakeShape(xla::F32, {8, 128});
   payload.mutable_layout()->add_tiles()->add_dimensions(8).add_dimensions(128);
   auto dynamic = payload;
@@ -97,9 +79,9 @@ TEST(DynamicMosaic, CopiesDifferentShapesWithOneExecutable) {
   auto metadata = xla::ShapeUtil::MakeShape(xla::S32, {2});
   metadata.mutable_layout()->add_tiles()->add_dimensions(128);
   TT_ASSERT_OK_AND_ASSIGN(
-      auto hlo,
-      BuildMosaicCustomCall(*module, {dynamic, dynamic, metadata, metadata},
-                            dynamic, {2, 3, -1, -1}, /*aliased_parameter=*/1));
+      auto hlo, BuildMosaicCustomCall(
+                    serialized_kernel, {dynamic, dynamic, metadata, metadata},
+                    dynamic, {2, 3, -1, -1}, /*aliased_parameter=*/1));
   TT_ASSERT_OK_AND_ASSIGN(
       auto executable,
       runner.CreateExecutable(std::move(hlo), /*run_hlo_passes=*/false));
