@@ -27,10 +27,8 @@ from absl.testing import absltest
 from absl.testing import parameterized
 import torch
 from torch import distributed as dist
-import torch.multiprocessing as mp
 from torch_tpu._internal.distributed import multiprocessing
-from tests import seed_test_utils
-from tests.distributed import distributed_utils
+from tests.distributed import continuous_test_utils
 
 _FP8_DTYPES = (
     ("e4m3fn", torch.float8_e4m3fn),
@@ -52,20 +50,6 @@ _FP8_DTYPES_AND_MODES = tuple(
 # encoding.
 _ROWS = 16
 _COLS = 32
-
-
-def _test_wrapper(
-    test_fn: Callable[..., None], *args: Any, **kwargs: Any
-) -> None:
-  """Runs `test_fn` in an initialized process group."""
-  dist.init_process_group(backend="tpu_dist")
-  try:
-    test_fn(*args, **kwargs)
-  finally:
-    # Keep the process group alive until every rank is done with it.
-    if dist.is_initialized():
-      dist.barrier()
-      dist.destroy_process_group()
 
 
 def _run(
@@ -346,54 +330,46 @@ def run_reduce_scatter_tensor(dtype: torch.dtype, compiled: bool) -> None:
   _assert_bytes_equal_except_nans(output, expected, f"rank {rank}")
 
 
-class Fp8CollectivesTest(seed_test_utils.MultiProcessRepeatableTest):
-  _world_size = 8
+class Fp8CollectivesTest(continuous_test_utils.TpuMultiProcContinuousTest):
 
-  def _dist_run(self, test_fn: Callable[..., None], **kwargs: Any) -> None:
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=_test_wrapper,
-        test_fn=test_fn,
-        **kwargs,
-    )
+  world_size = 8
 
   @parameterized.named_parameters(*_FP8_DTYPES_AND_MODES)
-  def test_all_gather_into_tensor(self, dtype: torch.dtype, compiled: bool):
-    self._dist_run(run_all_gather_into_tensor, dtype=dtype, compiled=compiled)
+  def test_all_gather_into_tensor(
+      self, dtype: torch.dtype, compiled: bool
+  ) -> None:
+    run_all_gather_into_tensor(dtype=dtype, compiled=compiled)
 
   @parameterized.named_parameters(*_FP8_DTYPES)
-  def test_all_gather_into_tensor_stacked(self, dtype: torch.dtype):
-    self._dist_run(
-        run_all_gather_into_tensor, dtype=dtype, compiled=False, stacked=True
-    )
+  def test_all_gather_into_tensor_stacked(self, dtype: torch.dtype) -> None:
+    run_all_gather_into_tensor(dtype=dtype, compiled=False, stacked=True)
 
   @parameterized.named_parameters(*_FP8_DTYPES_AND_MODES)
-  def test_all_gather(self, dtype: torch.dtype, compiled: bool):
-    self._dist_run(run_all_gather, dtype=dtype, compiled=compiled)
+  def test_all_gather(self, dtype: torch.dtype, compiled: bool) -> None:
+    run_all_gather(dtype=dtype, compiled=compiled)
 
   @parameterized.named_parameters(*_FP8_DTYPES_AND_MODES)
-  def test_all_to_all_single(self, dtype: torch.dtype, compiled: bool):
-    self._dist_run(run_all_to_all_single, dtype=dtype, compiled=compiled)
+  def test_all_to_all_single(self, dtype: torch.dtype, compiled: bool) -> None:
+    run_all_to_all_single(dtype=dtype, compiled=compiled)
 
   @parameterized.named_parameters(*_FP8_DTYPES)
-  def test_all_to_all_single_uneven(self, dtype: torch.dtype):
-    self._dist_run(
-        run_all_to_all_single, dtype=dtype, compiled=False, uneven=True
-    )
+  def test_all_to_all_single_uneven(self, dtype: torch.dtype) -> None:
+    run_all_to_all_single(dtype=dtype, compiled=False, uneven=True)
 
   @parameterized.named_parameters(*_FP8_DTYPES)
-  def test_all_to_all_uniform(self, dtype: torch.dtype):
-    self._dist_run(run_all_to_all, dtype=dtype, uniform=True)
+  def test_all_to_all_uniform(self, dtype: torch.dtype) -> None:
+    run_all_to_all(dtype=dtype, uniform=True)
 
   @parameterized.named_parameters(*_FP8_DTYPES)
-  def test_all_to_all_uneven(self, dtype: torch.dtype):
-    self._dist_run(run_all_to_all, dtype=dtype, uniform=False)
+  def test_all_to_all_uneven(self, dtype: torch.dtype) -> None:
+    run_all_to_all(dtype=dtype, uniform=False)
 
   @parameterized.named_parameters(*_FP8_DTYPES_AND_MODES)
-  def test_reduce_scatter_tensor(self, dtype: torch.dtype, compiled: bool):
-    self._dist_run(run_reduce_scatter_tensor, dtype=dtype, compiled=compiled)
+  def test_reduce_scatter_tensor(
+      self, dtype: torch.dtype, compiled: bool
+  ) -> None:
+    run_reduce_scatter_tensor(dtype=dtype, compiled=compiled)
 
 
 if __name__ == "__main__":  # We are in the parent process.
-  mp.set_start_method("spawn")
   multiprocessing.handle_test_main(absltest.main)

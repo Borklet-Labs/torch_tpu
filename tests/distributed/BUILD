@@ -562,13 +562,12 @@ torch_tpu_py_test(
         "requires-tpu-v5lite:8",
     ],
     deps = [
-        ":distributed_utils",
+        ":continuous_test_utils",
         "//shims/absl_py/testing:absltest",
         "//shims/absl_py/testing:parameterized",
         "//shims/torch:pytorch",
         "//src/torch_tpu",
         "//src/torch_tpu/_internal/distributed:multiprocessing",
-        "//tests:seed_test_utils",
     ],
 )
 
@@ -593,13 +592,12 @@ torch_tpu_py_test(
         "requires-tpu-v7x:4",
     ],
     deps = [
-        ":distributed_utils",
+        ":continuous_test_utils",
         "//shims/absl_py/testing:absltest",
         "//shims/absl_py/testing:parameterized",
         "//shims/torch:pytorch",
         "//src/torch_tpu",
         "//src/torch_tpu/_internal/distributed:multiprocessing",
-        "//tests:seed_test_utils",
     ],
 )
 
