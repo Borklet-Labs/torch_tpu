@@ -54,6 +54,16 @@ def default_load_model(
     context_length = getattr(config, "context_length", None)
     if isinstance(context_length, int) and context_length > seq_len:
       config.context_length = seq_len
+      # Patch-based models such as PatchTSMixer size their patch-mixing layers
+      # by `num_patches`, which the config derived from the uncapped
+      # `context_length` when it was created.
+      if all(
+          isinstance(getattr(config, name, None), int)
+          for name in ("num_patches", "patch_length", "patch_stride")
+      ):
+        config.num_patches = (
+            max(seq_len, config.patch_length) - config.patch_length
+        ) // config.patch_stride + 1
     if ctx.run_scope == context_lib.RunScope.PRESUBMIT:
       if hasattr(config, "num_hidden_layers"):
         config.num_hidden_layers = 2

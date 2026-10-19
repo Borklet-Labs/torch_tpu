@@ -45,10 +45,6 @@ _DATA_DEPENDENT_SHAPE = (
     "uses an op whose output shape depends on tensor values (e.g."
     " aten.nonzero), which FakeTensorMode cannot evaluate"
 )
-_SHORT_AUDIO = (
-    "the 128-sample presubmit-scope audio input is shorter than the receptive"
-    " field of the convolutional feature encoder"
-)
 
 # Generated benchmarks that the FakeTensorMode CPU smoke test
 # (`--fake_tensor_mode`) cannot run, with the reason. Every other generated
@@ -107,24 +103,6 @@ _FAKE_TENSOR_MODE_UNSUPPORTED: Mapping[str, str] = {
     # go/keep-sorted end
 }
 
-# Generated benchmarks whose presubmit-scope inputs (batch size 1, sequence
-# length 128) do not fit the model, with the reason.
-_PRESUBMIT_SCOPE_UNSUPPORTED: Mapping[str, str] = {
-    # go/keep-sorted start
-    "granite_timeseries_patchtsmixer_forward_gen": (
-        "the 128-step presubmit-scope context does not match the patch"
-        " configuration of the model"
-    ),
-    "hubert_large_speech_emotion_recognition_russian_dusha_finetuned_forward_gen": (
-        _SHORT_AUDIO
-    ),
-    "wav2vec2_large_robust_12_ft_emotion_msp_dim_forward_gen": _SHORT_AUDIO,
-    "wav2vec2_large_xlsr_53_portuguese_forward_gen": _SHORT_AUDIO,
-    "wavlm_base_plus_forward_gen": _SHORT_AUDIO,
-    "wavlm_emotion_russian_resd_forward_gen": _SHORT_AUDIO,
-    # go/keep-sorted end
-}
-
 
 @functools.cache
 def has_in_tree_config(model_id: str) -> bool:
@@ -147,26 +125,19 @@ def has_in_tree_config(model_id: str) -> bool:
   )
 
 
-def fake_tensor_smoke_skip_reason(
-    model_id: str, name: str, run_scope: context_lib.RunScope
-) -> str | None:
+def fake_tensor_smoke_skip_reason(model_id: str, name: str) -> str | None:
   """Returns why the FakeTensorMode smoke test skips a generated benchmark.
 
   Args:
     model_id: The HuggingFace model ID of the benchmark's model.
     name: The name of the generated benchmark.
-    run_scope: The run scope of the smoke test.
 
   Returns:
     The reason, or None if the smoke test runs the benchmark.
   """
   if not has_in_tree_config(model_id):
     return f"the config of {model_id} is not in-tree"
-  if name in _FAKE_TENSOR_MODE_UNSUPPORTED:
-    return _FAKE_TENSOR_MODE_UNSUPPORTED[name]
-  if run_scope is context_lib.RunScope.PRESUBMIT:
-    return _PRESUBMIT_SCOPE_UNSUPPORTED.get(name)
-  return None
+  return _FAKE_TENSOR_MODE_UNSUPPORTED.get(name)
 
 
 def _make_factory(
@@ -241,7 +212,7 @@ def _register_gen_benchmarks():
   for model_gen_spec, is_training, step in _iter_gen_benchmark_specs():
     name = model_gen_spec.benchmark_name(is_training=is_training, suffix="gen")
     if fake_tensor_mode and fake_tensor_smoke_skip_reason(
-        model_gen_spec.model_id, name, run_scope
+        model_gen_spec.model_id, name
     ):
       continue
     extra_config = model_gen_spec.get_extra_config(is_training, suffix="gen")

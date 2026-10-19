@@ -343,6 +343,17 @@ torch_tpu_py_test(
     ],
 )
 
+torch_tpu_py_test(
+    name = "transformers_inputs_test",
+    srcs = ["transformers_inputs_test.py"],
+    deps = [
+        ":module_registry",
+        ":seed_test_utils",
+        "//shims/absl_py/testing:absltest",
+        "//src/torch_tpu",
+    ],
+)
+
 torch_tpu_py_library(
     name = "accelerator_test_utils",
     testonly = True,

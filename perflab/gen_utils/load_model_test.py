@@ -163,12 +163,15 @@ class LoadModelTest(seed_test_utils.RepeatableTest):
       context_length: int,
       run_scope: context_lib.RunScope = context_lib.RunScope.FULL,
       full_scope_batch_size: int = 1,
+      **config_kwargs: int,
   ) -> tuple[nn.Module, dict[str, Any]]:
     ctx = context_lib.Context(
         target=target_lib.make_target(platform=target_lib.Platform.CPU),
         run_scope=run_scope,
     )
-    config = types.SimpleNamespace(context_length=context_length)
+    config = types.SimpleNamespace(
+        context_length=context_length, **config_kwargs
+    )
     with mock.patch.object(
         model_helpers,
         "get_module_registry",
@@ -208,6 +211,29 @@ class LoadModelTest(seed_test_utils.RepeatableTest):
 
     self.assertEqual(model.config.context_length, 512)
     self.assertEqual(inputs["past_values"].shape, (1, 512))
+
+  def test_capped_context_length_recomputes_num_patches(self):
+    # The config of ibm-granite/granite-timeseries-patchtsmixer: 512 steps in
+    # patches of 16, i.e. 32 patches, and 8 patches in the 128 presubmit steps.
+    model, inputs = self._load_time_series(
+        context_length=512,
+        run_scope=context_lib.RunScope.PRESUBMIT,
+        num_patches=32,
+        patch_length=16,
+        patch_stride=16,
+    )
+
+    self.assertEqual(model.config.context_length, 128)
+    self.assertEqual(model.config.num_patches, 8)
+    self.assertEqual(inputs["past_values"].shape, (1, 128))
+
+  def test_uncapped_context_length_keeps_num_patches(self):
+    model, _ = self._load_time_series(
+        context_length=512, num_patches=32, patch_length=16, patch_stride=16
+    )
+
+    self.assertEqual(model.config.context_length, 512)
+    self.assertEqual(model.config.num_patches, 32)
 
 
 if __name__ == "__main__":

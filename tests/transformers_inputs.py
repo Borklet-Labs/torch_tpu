@@ -2252,6 +2252,31 @@ _AUDIO_EXTRA_BUILDERS: tuple[tuple[_Matcher, _Builder], ...] = (
 )
 
 
+def _min_feature_encoder_samples(config: Any) -> int:
+  """Returns the fewest waveform samples that the feature encoder accepts.
+
+  Speech encoders such as wav2vec2, HuBERT and WavLM turn the raw waveform into
+  frames with a stack of strided 1D convolutions (`conv_kernel` and
+  `conv_stride`), so a waveform shorter than the receptive field of one frame
+  leaves a convolution with fewer inputs than its kernel.
+
+  Args:
+    config: The model config.
+
+  Returns:
+    The receptive field of one frame, or 0 if the model has no convolutional
+    feature encoder.
+  """
+  kernels = _cfg_lookup(config, "conv_kernel")
+  strides = _cfg_lookup(config, "conv_stride")
+  if not isinstance(kernels, Sequence) or not isinstance(strides, Sequence):
+    return 0
+  samples = 1
+  for kernel, stride in zip(reversed(kernels), reversed(strides)):
+    samples = (samples - 1) * stride + kernel
+  return samples
+
+
 def _build_audio_inputs(ctx: InputContext) -> dict[str, Any]:
   """Builds inputs for audio models."""
   input_kwargs: dict[str, Any] = {}
@@ -2260,6 +2285,9 @@ def _build_audio_inputs(ctx: InputContext) -> dict[str, Any]:
   )
   if not input_kwargs:
     seq_len = ctx.shape[1] if ctx.shape and len(ctx.shape) > 1 else 16000
+    # Short shapes, e.g. the 128 steps of the perflab presubmit run scope, are
+    # too short a waveform for a convolutional feature encoder.
+    seq_len = max(seq_len, _min_feature_encoder_samples(ctx.config))
     input_kwargs["input_values"] = ctx.randn(ctx.batch_size, seq_len)
   return input_kwargs
 

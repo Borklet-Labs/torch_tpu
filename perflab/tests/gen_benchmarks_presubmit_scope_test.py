@@ -46,22 +46,14 @@ _MODERNBERT_BENCHMARKS = (
 )
 
 
-def _unsupported() -> dict[str, str]:
-  """Returns the generated benchmarks that the smoke test skips by name."""
-  return {
-      **gen_benchmarks._FAKE_TENSOR_MODE_UNSUPPORTED,  # pylint: disable=protected-access
-      **gen_benchmarks._PRESUBMIT_SCOPE_UNSUPPORTED,  # pylint: disable=protected-access
-  }
-
-
 def _fake_tensor_smoke_names() -> set[str]:
   """Returns the generated benchmarks expected in the presubmit-scope smoke."""
-  unsupported = _unsupported()
   names = set()
   for spec, is_training, _ in gen_benchmarks._iter_gen_benchmark_specs():  # pylint: disable=protected-access
     name = spec.benchmark_name(is_training=is_training, suffix="gen")
-    if name not in unsupported and gen_benchmarks.has_in_tree_config(
-        spec.model_id
+    if (
+        name not in gen_benchmarks._FAKE_TENSOR_MODE_UNSUPPORTED  # pylint: disable=protected-access
+        and gen_benchmarks.has_in_tree_config(spec.model_id)
     ):
       names.add(name)
   return names
@@ -142,17 +134,13 @@ class GenBenchmarksPresubmitScopeTest(seed_test_utils.RepeatableTest):
     self.assertEqual(gen_benchmarks.has_in_tree_config(model_id), expected)
 
   def test_skipped_benchmarks_have_in_tree_configs_and_reasons(self):
-    self.assertEmpty(
-        gen_benchmarks._FAKE_TENSOR_MODE_UNSUPPORTED.keys()  # pylint: disable=protected-access
-        & gen_benchmarks._PRESUBMIT_SCOPE_UNSUPPORTED.keys()  # pylint: disable=protected-access
-    )
     model_ids = {
         spec.benchmark_name(
             is_training=is_training, suffix="gen"
         ): spec.model_id
         for spec, is_training, _ in gen_benchmarks._iter_gen_benchmark_specs()  # pylint: disable=protected-access
     }
-    for name, reason in _unsupported().items():
+    for name, reason in gen_benchmarks._FAKE_TENSOR_MODE_UNSUPPORTED.items():  # pylint: disable=protected-access
       with self.subTest(name):
         # Entries for benchmarks that are no longer generated, or whose model
         # config is not in-tree, skip nothing, so they must be removed.
@@ -163,32 +151,10 @@ class GenBenchmarksPresubmitScopeTest(seed_test_utils.RepeatableTest):
   def test_skip_reason_of_a_model_without_an_in_tree_config(self):
     self.assertEqual(
         gen_benchmarks.fake_tensor_smoke_skip_reason(
-            "Alibaba-NLP/gte-modernbert-base",
-            "gte_modernbert_base_forward_gen",
-            context_lib.RunScope.PRESUBMIT,
+            "Alibaba-NLP/gte-modernbert-base", "gte_modernbert_base_forward_gen"
         ),
         "the config of Alibaba-NLP/gte-modernbert-base is not in-tree",
     )
-
-  def test_presubmit_scope_skips_run_at_full_scope(self):
-    for name in gen_benchmarks._PRESUBMIT_SCOPE_UNSUPPORTED:  # pylint: disable=protected-access
-      with self.subTest(name):
-        model_id = next(
-            spec.model_id
-            for spec, is_training, _ in gen_benchmarks._iter_gen_benchmark_specs()  # pylint: disable=protected-access
-            if spec.benchmark_name(is_training=is_training, suffix="gen")
-            == name
-        )
-        self.assertIsNotNone(
-            gen_benchmarks.fake_tensor_smoke_skip_reason(
-                model_id, name, context_lib.RunScope.PRESUBMIT
-            )
-        )
-        self.assertIsNone(
-            gen_benchmarks.fake_tensor_smoke_skip_reason(
-                model_id, name, context_lib.RunScope.FULL
-            )
-        )
 
   @parameterized.parameters(
       "cpu",
