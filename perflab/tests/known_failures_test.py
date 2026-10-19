@@ -155,8 +155,6 @@ class FakeTensorModeKnownFailuresTest(seed_test_utils.RepeatableTest):
   @parameterized.named_parameters(
       ("conformer_forward", "conformer_forward"),
       ("conformer_training", "conformer_training"),
-      ("timm_vit_small_dino_forward", "timm_vit_small_dino_forward"),
-      ("timm_vit_small_dino_training", "timm_vit_small_dino_training"),
   )
   def test_only_cpu_is_skipped(self, benchmark):
     for device_kind in target_lib.DeviceKind:

@@ -93,6 +93,35 @@ def _fake_time_series_registry(config: types.SimpleNamespace) -> Any:
   return types.SimpleNamespace(get_module_spec=get_module_spec)
 
 
+class _FakeTextModel(nn.Module):
+  """Stand-in for a HuggingFace model that takes token IDs."""
+
+  def __init__(self, config: types.SimpleNamespace):
+    super().__init__()
+    self.config = config
+
+
+def _fake_text_registry(config: types.SimpleNamespace) -> Any:
+  """Returns a module registry that applies the config hook of the caller.
+
+  Args:
+    config: The model config, passed to the config hook.
+  """
+
+  def get_module_spec(*args, modify_config_hook, **kwargs):
+    del args, kwargs  # Unused.
+    hooked_config = modify_config_hook(config)
+    return types.SimpleNamespace(
+        module_factory=lambda: _FakeTextModel(hooked_config),
+        sample_inputs_factory=lambda shape, device: (
+            None,
+            {"input_ids": torch.zeros(shape, dtype=torch.long)},
+        ),
+    )
+
+  return types.SimpleNamespace(get_module_spec=get_module_spec)
+
+
 class LoadModelTest(seed_test_utils.RepeatableTest):
 
   def setUp(self):
@@ -234,6 +263,65 @@ class LoadModelTest(seed_test_utils.RepeatableTest):
 
     self.assertEqual(model.config.context_length, 512)
     self.assertEqual(model.config.num_patches, 32)
+
+  def _load_text(
+      self, config: types.SimpleNamespace, run_scope: context_lib.RunScope
+  ) -> nn.Module:
+    ctx = context_lib.Context(
+        target=target_lib.make_target(platform=target_lib.Platform.CPU),
+        run_scope=run_scope,
+    )
+    with mock.patch.object(
+        model_helpers,
+        "get_module_registry",
+        return_value=_fake_text_registry(config),
+    ):
+      model, _ = load_model.default_load_model(
+          ctx, "fake/text_model", is_training=False
+      )
+    return model
+
+  def test_presubmit_keeps_two_layers(self):
+    model = self._load_text(
+        types.SimpleNamespace(num_hidden_layers=12),
+        context_lib.RunScope.PRESUBMIT,
+    )
+
+    self.assertEqual(model.config.num_hidden_layers, 2)
+
+  def test_presubmit_keeps_a_layer_per_dpt_neck_stage(self):
+    # The config of Intel/dpt-hybrid-midas.
+    model = self._load_text(
+        types.SimpleNamespace(
+            num_hidden_layers=12, backbone_out_indices=[2, 5, 8, 11]
+        ),
+        context_lib.RunScope.PRESUBMIT,
+    )
+
+    self.assertEqual(model.config.num_hidden_layers, 4)
+    self.assertEqual(model.config.backbone_out_indices, [0, 1, 2, 3])
+
+  def test_presubmit_reads_the_kept_layers_for_few_dpt_neck_stages(self):
+    model = self._load_text(
+        types.SimpleNamespace(
+            num_hidden_layers=12, backbone_out_indices=[5, 11]
+        ),
+        context_lib.RunScope.PRESUBMIT,
+    )
+
+    self.assertEqual(model.config.num_hidden_layers, 2)
+    self.assertEqual(model.config.backbone_out_indices, [0, 1])
+
+  def test_full_scope_keeps_dpt_layers(self):
+    model = self._load_text(
+        types.SimpleNamespace(
+            num_hidden_layers=12, backbone_out_indices=[2, 5, 8, 11]
+        ),
+        context_lib.RunScope.FULL,
+    )
+
+    self.assertEqual(model.config.num_hidden_layers, 12)
+    self.assertEqual(model.config.backbone_out_indices, [2, 5, 8, 11])
 
 
 if __name__ == "__main__":

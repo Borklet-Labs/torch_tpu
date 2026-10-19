@@ -67,6 +67,13 @@ def default_load_model(
     if ctx.run_scope == context_lib.RunScope.PRESUBMIT:
       if hasattr(config, "num_hidden_layers"):
         config.num_hidden_layers = 2
+        # DPT feeds its neck the hidden states of the layers in
+        # `backbone_out_indices`, so keep at least one layer per index and read
+        # the first ones.
+        out_indices = getattr(config, "backbone_out_indices", None)
+        if isinstance(out_indices, list):
+          config.num_hidden_layers = max(2, len(out_indices))
+          config.backbone_out_indices = list(range(len(out_indices)))
       if hasattr(config, "text_config") and config.text_config is not None:
         if hasattr(config.text_config, "num_hidden_layers"):
           config.text_config.num_hidden_layers = 2

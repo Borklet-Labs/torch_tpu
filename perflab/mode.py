@@ -16,13 +16,24 @@
 
 import contextlib
 import enum
-from typing import Iterator
+from typing import Any, Iterator
 
 import torch
 from torch._subclasses import fake_tensor
+from torch.utils import _python_dispatch
 from perflab import common
 from perflab import flags as flags_lib
 from perflab import target as target_lib
+
+# The most elements of a tensor whose values FakeTensorMode keeps in the
+# FakeTensorMode CPU smoke test, e.g. the per-layer drop-path rates of a model.
+_MAX_CONSTANT_NUMEL = 1024
+
+# Factory ops whose values depend only on their Python number arguments.
+_CONSTANT_FACTORIES = frozenset({
+    torch.ops.aten.linspace.default,
+    torch.ops.aten.logspace.default,
+})
 
 
 class Framework(enum.Enum):
@@ -140,6 +151,43 @@ def run_mode_context(
     execution_mode.eager_mode = original_eager_mode
 
 
+class _ConstantFactoryMode(_python_dispatch.TorchDispatchMode):
+  """Makes small `linspace` and `logspace` tensors FakeTensorMode constants.
+
+  Models compute their per-layer drop-path rates while they are built, e.g. as
+  `[x.item() for x in torch.linspace(0, drop_path_rate, depth)]`. FakeTensorMode
+  reads a Python scalar only from a tensor whose values it knows (a constant),
+  and the outputs of factory ops never are, so this computes them on the CPU.
+  """
+
+  def __init__(self, fake_mode: fake_tensor.FakeTensorMode):
+    super().__init__()
+    self._fake_mode = fake_mode
+
+  def __torch_dispatch__(
+      self,
+      func: Any,
+      types: Any,
+      args: tuple[Any, ...] = (),
+      kwargs: dict[str, Any] | None = None,
+  ) -> Any:
+    kwargs = kwargs or {}
+    device = kwargs.get("device")
+    if (
+        func in _CONSTANT_FACTORIES
+        # The number of steps, i.e. of elements.
+        and isinstance(args[2], int)
+        and args[2] <= _MAX_CONSTANT_NUMEL
+        and (device is None or torch.device(device).type == "cpu")
+    ):
+      with fake_tensor.unset_fake_temporarily():
+        value = func(*args, **kwargs)
+      return self._fake_mode.fake_tensor_converter.from_real_tensor(
+          self._fake_mode, value, make_constant=True
+      )
+    return func(*args, **kwargs)
+
+
 @contextlib.contextmanager
 def fake_tensor_context() -> Iterator[None]:
   """Enters FakeTensorMode for the FakeTensorMode CPU presubmit smoke.
@@ -148,9 +196,10 @@ def fake_tensor_context() -> Iterator[None]:
   is validated at flag-parse time to be set only with BENCHMARK_PLATFORM=cpu and
   `--run_scope=presubmit`.
 
-  While active, this disables FakeTensor memoization and makes
-  `torch.nn.init.trunc_normal_` a no-op process-wide (by patching its private
-  helper), so it is not thread-safe.
+  While active, this disables FakeTensor memoization, makes
+  `torch.nn.init.trunc_normal_` a no-op and lets FakeTensorMode keep the values
+  of small tensors process-wide (by patching private helpers), so it is not
+  thread-safe.
 
   Yields:
     None.
@@ -186,10 +235,17 @@ def fake_tensor_context() -> Iterator[None]:
   torch.nn.init._no_grad_trunc_normal_ = (  # pylint: disable=protected-access
       lambda tensor, *args, **kwargs: tensor
   )
+  # FakeTensorMode keeps the values only of tensors with at most
+  # `CONSTANT_NUMEL_LIMIT` elements, by default 1. Raise it so that it also
+  # keeps them for e.g. the per-stage slices of the drop-path rates
+  # (`torch.linspace(0, drop_path_rate, sum(depths)).split(depths)`).
+  orig_constant_numel_limit = fake_tensor.CONSTANT_NUMEL_LIMIT
+  fake_tensor.CONSTANT_NUMEL_LIMIT = _MAX_CONSTANT_NUMEL  # pyrefly: ignore[bad-assignment]
   try:
-    with mode:
+    with mode, _ConstantFactoryMode(mode):
       yield
   finally:
+    fake_tensor.CONSTANT_NUMEL_LIMIT = orig_constant_numel_limit
     torch.nn.init._no_grad_trunc_normal_ = orig_trunc_normal  # pylint: disable=protected-access
 
 

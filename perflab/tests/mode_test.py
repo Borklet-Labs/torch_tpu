@@ -199,6 +199,38 @@ class FakeTensorContextTest(seed_test_utils.RepeatableTest):
     torch.nn.init.trunc_normal_(x, a=1.0, b=2.0)
     self.assertTrue(bool((x >= 1.0).all()))
 
+  def test_drop_path_rates_are_readable_inside(self):
+    with mode_lib.fake_tensor_context():
+      rates = torch.linspace(0, 0.3, 4)
+      self.assertIsInstance(rates, fake_tensor.FakeTensor)
+      # As in HuggingFace Swin2SR and timm. Without the constants, `.item()`
+      # would raise DataDependentOutputException.
+      layer_rates = [x.item() for x in rates]
+      # As in HuggingFace ConvNeXt V2.
+      stage_rates = [x.tolist() for x in rates.split([1, 3])]
+      # As in HuggingFace BiT, which builds them with NumPy.
+      tensor_stage_rates = [
+          x.tolist() for x in torch.tensor([0.0, 0.1, 0.2, 0.3]).split([1, 3])
+      ]
+    self.assertSequenceAlmostEqual(layer_rates, [0.0, 0.1, 0.2, 0.3], places=6)
+    self.assertLen(stage_rates, 2)
+    self.assertSequenceAlmostEqual(stage_rates[1], [0.1, 0.2, 0.3], places=6)
+    self.assertSequenceAlmostEqual(
+        tensor_stage_rates[1], [0.1, 0.2, 0.3], places=6
+    )
+
+  def test_large_linspace_stays_fake(self):
+    with mode_lib.fake_tensor_context():
+      x = torch.linspace(0, 1, 4096)
+      with self.assertRaises(fake_tensor.DataDependentOutputException):
+        x[0].item()
+
+  def test_restores_constant_numel_limit_on_exit(self):
+    limit = fake_tensor.CONSTANT_NUMEL_LIMIT
+    with mode_lib.fake_tensor_context():
+      pass
+    self.assertEqual(fake_tensor.CONSTANT_NUMEL_LIMIT, limit)
+
 
 if __name__ == "__main__":
   absltest.main()

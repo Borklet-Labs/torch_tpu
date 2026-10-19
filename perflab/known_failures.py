@@ -150,24 +150,6 @@ KNOWN_FAILURES: tuple[KnownFailure, ...] = (
             " tensor, which FakeTensorMode cannot evaluate"
         ),
     ),
-    KnownFailure(
-        benchmark="timm_vit_small_dino_forward",
-        framework=mode_lib.Framework.TORCH,
-        device_kind=target_lib.DeviceKind.CPU,
-        reason=(
-            ".item() in timm calculate_drop_path_rates during model init reads"
-            " a scalar from a fake tensor, which FakeTensorMode cannot evaluate"
-        ),
-    ),
-    KnownFailure(
-        benchmark="timm_vit_small_dino_training",
-        framework=mode_lib.Framework.TORCH,
-        device_kind=target_lib.DeviceKind.CPU,
-        reason=(
-            ".item() in timm calculate_drop_path_rates during model init reads"
-            " a scalar from a fake tensor, which FakeTensorMode cannot evaluate"
-        ),
-    ),
     # TODO(b/568037427): Remove the TorchAX entries as their failures are fixed.
     #
     # `torch._grouped_mm`, used by the transformers MoE experts, has no
