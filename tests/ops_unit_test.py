@@ -22400,6 +22400,20 @@ class OpTestingFrameworkTest(op_testing.OpInfoTestBase):
     self.assertIn("precision = [DEFAULT, DEFAULT]", mlir_text)
     self.assertNotIn("precision = [HIGHEST, HIGHEST]", mlir_text)
 
+  def test_sum_unsigned_dtypes(self):
+    for dtype in (torch.uint16, torch.uint32, torch.uint64):
+      with self.subTest(dtype=dtype):
+        x_cpu = torch.tensor([[1, 2, 3], [4, 5, 6]], dtype=dtype)
+        x_tpu = x_cpu.to("tpu")
+        self.assertEqual(
+            torch.sum(x_tpu, dim=0, dtype=dtype).cpu().tolist(),
+            torch.sum(x_cpu.to(torch.int64), dim=0).tolist(),
+        )
+        self.assertEqual(
+            torch.sum(x_tpu, dtype=dtype).cpu().item(),
+            torch.sum(x_cpu.to(torch.int64)).item(),
+        )
+
 
 if __name__ == "__main__":
   absltest.main()

@@ -1084,6 +1084,17 @@ torch_tpu_cc_library(
     ],
 )
 
+torch_tpu_cc_test(
+    name = "aten_utils_test",
+    srcs = ["aten_utils_test.cc"],
+    deps = [
+        ":aten_utils",
+        ":status_test_utils",
+        "//csrc/common:oss_test_main",
+        "@stablehlo//stablehlo/integrations/cpp/builder:attr_type_builder_util",
+    ],
+)
+
 torch_tpu_cc_library(
     name = "discovery",
     srcs = ["discovery.cc"],

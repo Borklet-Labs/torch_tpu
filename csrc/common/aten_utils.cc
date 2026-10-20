@@ -85,11 +85,26 @@ c10::ScalarType InferOutputDtype(const at::Tensor& self) {
 absl::StatusOr<mlir::ElementType> InferComputationDtype(
     mlir::ElementType input_dtype) {
   at::ScalarType input_type = ConvertTo<at::ScalarType>(input_dtype);
-  // at::toOpMathType preserves FP8/FP4 types, but XLA HLO operations generally
-  // require working on standard FP32 formats. We intercept FP4 here to
-  // explicitly specify F32 computation.
-  if (input_type == at::kFloat4_e2m1fn_x2) {
-    return mlir::ElementType::F32;
+  switch (input_type) {
+    // at::toOpMathType preserves FP8/FP4 types, but XLA HLO operations
+    // generally require working on standard FP32 formats. We intercept FP4 here
+    // to explicitly specify F32 computation.
+    case at::ScalarType::Float4_e2m1fn_x2:
+      return mlir::ElementType::F32;
+    // Upstream at::toOpMathType switches over AT_ALL_SCALAR_TYPES_WITH_COMPLEX,
+    // which omits barebones unsigned types (UInt16, UInt32, UInt64) and
+    // sub-byte integer types (Int2, Int4, UInt2, UInt4), even though
+    // at::OpMathType<T> is the identity type for all integral types.
+    case at::ScalarType::Int2:
+    case at::ScalarType::Int4:
+    case at::ScalarType::UInt2:
+    case at::ScalarType::UInt4:
+    case at::ScalarType::UInt16:
+    case at::ScalarType::UInt32:
+    case at::ScalarType::UInt64:
+      return input_dtype;
+    default:
+      break;
   }
   at::ScalarType computation_type = at::toOpMathType(input_type);
   return ConvertTo<mlir::ElementType>(computation_type);
