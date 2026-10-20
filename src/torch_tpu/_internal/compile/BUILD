@@ -98,6 +98,7 @@ torch_tpu_py_library(
         ":debug",
         ":flex_attention_redirect",
         ":grouped_mm_meta",
+        ":meta_registration_overrides",
         ":nested_compile_region",
         ":scan",
         ":tpu_backend",
@@ -131,6 +132,12 @@ torch_tpu_py_library(
         "//src/torch_tpu/_internal/export",
         "//src/torch_tpu/_internal/pallas:tpu_torch_pallas",
     ],
+)
+
+torch_tpu_py_library(
+    name = "meta_registration_overrides",
+    srcs = ["meta_registration_overrides.py"],
+    deps = ["//shims/torch:pytorch"],
 )
 
 torch_tpu_py_library(
