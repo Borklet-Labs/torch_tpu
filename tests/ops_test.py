@@ -891,9 +891,6 @@ ACCURACY_OVERRIDES_GRAD_VS_GPU: dict[
         "_foreach_sigmoid": {
             torch.float16: {"atol": 5.9e-4},
         },
-        "_foreach_tanh": {
-            torch.float32: {"atol": 7.3e-5},
-        },
         "_native_batch_norm_legit": {
             torch.bfloat16: {"atol": 1.1e-2},
             torch.float16: {"atol": 1.4e-3},
@@ -1045,10 +1042,6 @@ ACCURACY_OVERRIDES_GRAD_VS_GPU: dict[
         },
         "tan": {
             torch.float32: {"rtol": 3.8e-6, "atol": 8.4e-3},
-        },
-        "tanh": {
-            torch.float16: {"atol": 9.8e-4},
-            torch.float32: {"rtol": 1, "atol": 6.1e-5},
         },
         # go/keep-sorted end
     },

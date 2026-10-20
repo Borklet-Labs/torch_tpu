@@ -73,7 +73,6 @@ TT_UNARY_BUILDER_FP_ONLY_(BuildSinShlo, mlir::stablehlo::Sine);
 TT_UNARY_BUILDER_FP_ONLY_(BuildSinhShlo, mlir::chlo::Sinh);
 TT_UNARY_BUILDER_FP_ONLY_(BuildSqrtShlo, mlir::stablehlo::Sqrt);
 TT_UNARY_BUILDER_FP_ONLY_(BuildTanShlo, mlir::stablehlo::Tan);
-TT_UNARY_BUILDER_FP_ONLY_(BuildTanhShlo, mlir::stablehlo::Tanh);
 // go/keep-sorted end
 
 // This macro is not needed anywhere else.
@@ -90,6 +89,8 @@ absl::StatusOr<mlir::MlirOp> BuildReciprocalShlo(
 absl::StatusOr<mlir::MlirOp> BuildReluShlo(mlir::MlirOp input_op);
 absl::StatusOr<mlir::MlirOp> BuildSgnShlo(mlir::MlirOp input);
 absl::StatusOr<mlir::MlirOp> BuildSignShlo(mlir::MlirOp input_op);
+absl::StatusOr<mlir::MlirOp> BuildTanhShlo(mlir::MlirOp input_op,
+                                           mlir::ElementType default_dtype);
 absl::StatusOr<mlir::MlirOp> BuildTruncShlo(mlir::MlirOp input_op);
 absl::StatusOr<mlir::MlirOp> BuildLiftFreshShlo(mlir::MlirOp input_op);
 absl::StatusOr<mlir::MlirOp> BuildExp2Shlo(mlir::MlirOp input_op,

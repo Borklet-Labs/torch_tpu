@@ -1822,6 +1822,35 @@ class OpsUnitTest(TorchTpuVsCpuTestBase):
         torch.sigmoid(x).to(torch.float64),
     )
 
+  @parameterized.parameters(torch.float32, torch.float16, torch.bfloat16)
+  def test_tanh_edge_cases(self, dtype):
+    small_val = 1e-15 if dtype == torch.float32 else 1e-3
+    x_init = torch.tensor(
+        [
+            -float("inf"),
+            -100.0,
+            -20.0,
+            -small_val,
+            -0.0,
+            0.0,
+            small_val,
+            20.0,
+            100.0,
+            float("inf"),
+            float("nan"),
+        ],
+        dtype=dtype,
+    )
+    grad_out = torch.ones_like(x_init)
+
+    def compute(device):
+      x = to(x_init.clone(), device=device).requires_grad_(True)
+      out = torch.tanh(x)
+      out.backward(to(grad_out, device=device))
+      return out, x.grad
+
+    self.assert_close_tpu_vs_cpu(compute)
+
   def test_logit_out_upcast(self):
     device = torch.device("tpu")
     x = torch.tensor([0.2, 0.8], dtype=torch.float32, device=device)

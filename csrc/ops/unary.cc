@@ -244,6 +244,41 @@ absl::StatusOr<mlir::MlirOp> BuildLog1pShlo(mlir::MlirOp input_op,
   return mlir::stablehlo::ConvertElementType(result_op, default_dtype);
 }
 
+absl::StatusOr<mlir::MlirOp> BuildTanhShlo(mlir::MlirOp input_op,
+                                           mlir::ElementType default_dtype) {
+  at::ScalarType default_scalar_type = ConvertTo<at::ScalarType>(default_dtype);
+  // Half and BFloat16 inputs are promoted to Float for the actual
+  // mathematical computation.
+  at::ScalarType computation_scalar_type =
+      at::toOpMathType(default_scalar_type);
+
+  TT_ASSIGN_OR_RETURN(mlir::ElementType computation_type,
+                      ConvertTo<mlir::ElementType>(computation_scalar_type));
+
+  TT_ASSIGN_OR_RETURN(mlir::MlirOp computation_input_op,
+                      ConvertIfInteger(input_op, computation_type));
+  TT_ASSIGN_OR_RETURN(computation_input_op,
+                      CastIfNeeded(computation_input_op, computation_type));
+
+  mlir::MlirOp result_op;
+  if (c10::isComplexType(computation_scalar_type)) {
+    result_op = mlir::stablehlo::Tanh(computation_input_op);
+  } else {
+    mlir::MlirOp two = MakeConstantLike(computation_input_op, 2.0);
+    mlir::MlirOp neg_two = MakeConstantLike(computation_input_op, -2.0);
+    mlir::MlirOp abs_x = mlir::stablehlo::Abs(computation_input_op);
+    mlir::MlirOp neg_two_abs_x = mlir::stablehlo::Mul(neg_two, abs_x);
+    mlir::MlirOp expm1_val = mlir::stablehlo::Expm1(neg_two_abs_x);
+    mlir::MlirOp num = mlir::stablehlo::Neg(expm1_val);
+    mlir::MlirOp denom = mlir::stablehlo::Add(two, expm1_val);
+    mlir::MlirOp abs_tanh = mlir::stablehlo::Div(num, denom);
+    mlir::MlirOp sign_x = mlir::stablehlo::Sign(computation_input_op);
+    result_op = mlir::stablehlo::Mul(sign_x, abs_tanh);
+  }
+
+  return CastIfNeeded(result_op, default_dtype);
+}
+
 absl::StatusOr<mlir::MlirOp> BuildExp2Shlo(
     mlir::MlirOp input_op, mlir::ElementType default_mlir_type) {
   TT_ASSIGN_OR_RETURN(mlir::MlirOp op,
