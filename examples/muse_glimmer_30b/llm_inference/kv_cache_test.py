@@ -184,43 +184,6 @@ class KvCacheTest(absltest.TestCase):
         past_kv.get_seq_length(), cfg.prefill_seq_len + cfg.num_decode_steps
     )
 
-  def test_muse_glimmer_constraint_violation_when_max_val_exceeds_buffer(self):
-    torch._dynamo.reset()
-    cfg = model.Config(
-        vocab_size=32,
-        num_layers=4,
-        dmodel=32,
-        dff=64,
-        dhead=8,
-        num_q_heads=4,
-        num_kv_heads=2,
-        prefill_seq_len=4,
-        num_decode_steps=4,
-    )
-    m = model.MuseGlimmer30B(cfg)
-
-    prompt = torch.randint(0, cfg.vocab_size, (1, cfg.prefill_seq_len))
-    logits, past_kv = m(prompt)
-    compiled_model = torch.compile(m, backend="eager", dynamic=None)
-
-    # If max_val is set to prefill_seq_len + num_decode_steps (8), Dynamo's
-    # buffer slice guard past_len <= 7 will detect a constraint violation.
-    invalid_max_val = cfg.prefill_seq_len + cfg.num_decode_steps
-    for idx in range(len(past_kv.keys)):
-      if past_kv.window(idx) is None:
-        torch._dynamo.mark_dynamic(
-            past_kv.keys[idx], 2, min=4, max=invalid_max_val
-        )
-        torch._dynamo.mark_dynamic(
-            past_kv.values[idx], 2, min=4, max=invalid_max_val
-        )
-    next_tok = torch.argmax(logits[:, -1:, :], dim=-1)
-
-    with self.assertRaises(
-        torch.fx.experimental.symbolic_shapes.ConstraintViolationError
-    ):
-      compiled_model(next_tok, past_key_values=past_kv)
-
   def test_dynamic_cache_swa_layers_not_marked_dynamic(self):
     # pylint: disable=protected-access
     cache = kv_cache.DynamicCache(swa_size=4, swa_layers=(True, False))

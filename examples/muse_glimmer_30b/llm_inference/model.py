@@ -87,12 +87,8 @@ class MuseGlimmer30B(nn.Module):
     self.rope_cos = nn.Buffer(rope_cos, persistent=False)
 
     causal_mask = torch.ones(1, 1, max_len, max_len).tril()
-    swa_mask = causal_mask.triu(-config.swa_size + 1)
     self.causal_mask = nn.Buffer(
         torch.where(causal_mask == 1, 0, float("-inf")), persistent=False
-    )
-    self.swa_mask = nn.Buffer(
-        torch.where(swa_mask == 1, 0, float("-inf")), persistent=False
     )
 
   def forward(
@@ -108,43 +104,39 @@ class MuseGlimmer30B(nn.Module):
       )
     past_len = past_key_values.get_seq_length()
     seq_len = tok.shape[1]
+    cache_position = torch.arange(seq_len, device=tok.device) + past_len
+    # Select the RoPE rows and build the SWA mask from positions instead of
+    # slicing fixed-size buffers with the dynamic length: a slice makes Dynamo
+    # bound that length by the buffer size, which can differ from the bound
+    # TorchTPU gives the KV cache, and the mismatch fails to compile in
+    # PyTorch versions before 2.15.
+    rope_sin_cos = (
+        self.rope_sin.index_select(2, cache_position),
+        self.rope_cos.index_select(2, cache_position),
+    )
+    is_dynamic_prefill = (
+        isinstance(past_key_values, kv_cache.DynamicCache) and past_len == 0
+    )
+    # Keys after the query position are masked with -inf, as are keys swa_size
+    # or more positions behind. Empty window slots map to positions after the
+    # newest token, so they are masked too. The mask's last dimension is the
+    # number of keys SWA layers attend to.
+    if is_dynamic_prefill:
+      # The DynamicCache prefill returns the whole prompt for SWA layers.
+      swa_key_pos = cache_position
+    else:
+      swa_key_pos = past_key_values.swa_key_positions(seq_len)
+    q_pos = cache_position[:, None]  # [seq_len, 1]
+    k_pos = swa_key_pos[None, :]  # [1, num_keys]
+    in_window = (k_pos <= q_pos) & (k_pos > q_pos - self.config.swa_size)
+    swa_mask = torch.where(in_window, 0.0, float("-inf"))[None, None]
     if isinstance(past_key_values, kv_cache.StaticCache):
-      cache_position = torch.arange(seq_len, device=tok.device) + past_len
-      rope_sin_cos = (
-          self.rope_sin.index_select(2, cache_position),
-          self.rope_cos.index_select(2, cache_position),
-      )
       causal_mask = self.causal_mask.index_select(2, cache_position)
-      swa_mask = self.swa_mask.index_select(2, cache_position)
-      # SWA buffers only hold the window; pick the mask columns of the absolute
-      # positions their slots hold after this step.
-      swa_mask = swa_mask.index_select(
-          3, past_key_values.swa_key_positions(seq_len)
-      )
     else:
       # SDPA with is_causal=True aligns the causal mask to the top-left corner,
       # which is only valid when the cache is empty (past_len == 0).
       assert past_len == 0 or seq_len == 1
-      kv_len = past_len + seq_len
-      rope_sin_cos = (
-          self.rope_sin[:, :, past_len:kv_len, :],
-          self.rope_cos[:, :, past_len:kv_len, :],
-      )
       causal_mask = None
-      if past_len == 0:
-        # Prefill: SWA layers attend all prompt keys (`update()` returns them)
-        # under the band mask.
-        swa_mask = self.swa_mask[:, :, :seq_len, :seq_len]
-      else:
-        # Decode: the SWA buffers hold the window; pick the mask columns of the
-        # positions their slots hold, as in the StaticCache branch. The mask is
-        # applied unconditionally: while the window is still filling up, the
-        # empty slots hold zero keys and must be masked, and once it is full
-        # the mask is all zeros but keeping it is what leaves the decode step
-        # without a branch on the sequence length.
-        swa_mask = self.swa_mask[:, :, past_len:kv_len, :].index_select(
-            3, past_key_values.swa_key_positions(seq_len)
-        )
 
     h = self.embed_norm(self.embed_tokens(tok))
     for layer in self.layers:
