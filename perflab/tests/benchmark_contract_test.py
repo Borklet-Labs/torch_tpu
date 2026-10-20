@@ -62,7 +62,6 @@ _GCS_ONLY_MODEL_IDS = frozenset({
     "facebook/sapiens2-pose-0.4b",
     "google-bert/bert-large-uncased-whole-word-masking-finetuned-squad",
     "google/flan-t5-base",
-    "microsoft/deberta-base-mnli",
     "microsoft/deberta-v3-base",
     "microsoft/git-base",
     "microsoft/git-large-vqav2",

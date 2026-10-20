@@ -249,31 +249,6 @@ KNOWN_FAILURES: tuple[KnownFailure, ...] = (
         framework=mode_lib.Framework.TORCHAX,
         reason="host OOM while moving the model to the device",
     ),
-    # TODO(b/327271919): Remove once Inductor CPU codegen works on GPU hosts.
-    #
-    # The model forward creates a tensor without `device=`, which lands on CPU.
-    # Inductor then emits a CPU C++ kernel for it, and the GPU benchmark hosts
-    # have no C++ compiler (`InvalidCxxCompiler`).
-    KnownFailure(
-        benchmark="blip_vqa_capfilt_large_forward_gen",
-        framework=mode_lib.Framework.TORCH,
-        device_kind=target_lib.DeviceKind.CUDA,
-        run_modes=frozenset({common.RunMode.COMPILED}),
-        reason=(
-            "torch.ones() without device= for the image attention mask in"
-            " modeling_blip.py needs a C++ compiler for Inductor CPU codegen"
-        ),
-    ),
-    KnownFailure(
-        benchmark="deberta_base_mnli_forward_gen",
-        framework=mode_lib.Framework.TORCH,
-        device_kind=target_lib.DeviceKind.CUDA,
-        run_modes=frozenset({common.RunMode.COMPILED}),
-        reason=(
-            "torch.tensor() without device= in scaled_size_sqrt() in"
-            " modeling_deberta.py needs a C++ compiler for Inductor CPU codegen"
-        ),
-    ),
     # TODO(b/571695076): Remove once the 4096 parameter training step compiles
     # within the subprocess timeout.
     KnownFailure(

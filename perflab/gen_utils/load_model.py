@@ -12,12 +12,36 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import functools
 from typing import Any
 
 import torch
 from perflab import context as context_lib
 from perflab import model_helpers
 from perflab import torch_device_ops
+
+
+def _run_blip_forward_on_model_device(model: torch.nn.Module) -> None:
+  """Wraps BLIP `model.forward` in `torch.device` of the model parameters.
+
+  `BlipForQuestionAnswering.forward` and `BlipForImageTextRetrieval.forward` in
+  `modeling_blip.py` create `image_attention_mask` / `image_atts` with
+  `torch.ones(image_embeds.size()[:-1], dtype=torch.long)` without `device=`.
+  On CUDA `compiled` benchmarks, that places the mask on CPU and causes
+  TorchInductor to emit a CPU C++ kernel that fails on GPU benchmark hosts
+  without a C++ compiler (`InvalidCxxCompiler`).
+  TODO(b/327271919): Remove once `modeling_blip.py` passes `device=` upstream or
+  Inductor CPU codegen works on GPU hosts.
+  """
+  if getattr(getattr(model, "config", None), "model_type", None) == "blip":
+    orig_forward = model.forward
+
+    @functools.wraps(orig_forward)
+    def forward_on_model_device(*args: Any, **kwargs: Any) -> Any:
+      with torch.device(next(model.parameters()).device):
+        return orig_forward(*args, **kwargs)
+
+    model.forward = forward_on_model_device
 
 
 def default_load_model(
@@ -95,6 +119,7 @@ def default_load_model(
   device_str = ctx.device_kind.value
   with torch.device(device_str):
     model = module_spec.module_factory().to(dtype=dtype)
+  _run_blip_forward_on_model_device(model)
 
   if is_training:
     model.train()

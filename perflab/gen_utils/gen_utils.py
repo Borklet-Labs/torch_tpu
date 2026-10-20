@@ -685,13 +685,6 @@ _GEN_MODEL_CONFIGS_RAW: dict[str, dict[str, Any]] = {
             "eager_optimized",
         },
     },
-    "deberta_base_mnli_train_gen": {
-        "skipped_run_modes": {
-            "compiled",
-            "eager_default",
-            "eager_optimized",
-        },
-    },
     "deberta_v3_base_train_gen": {
         "step_kwargs": {
             "compute_loss": dummy_compute_loss,
@@ -2615,7 +2608,6 @@ _GEN_FULL_SCOPE_BATCH_SIZES: dict[str, int] = {
     "contriever_forward_gen": 16,
     "cross_encoder_mmarco_german_distilbert_base_forward_gen": 16,
     "csm_1b_forward_gen": 64,
-    "deberta_base_mnli_forward_gen": 64,
     "detr_resnet_50_forward_gen": 64,
     "dinov2_small_forward_gen": 8,
     "dinov2_small_train_gen": 4,

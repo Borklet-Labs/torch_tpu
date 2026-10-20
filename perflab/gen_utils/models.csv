@@ -246,7 +246,6 @@ transformers,docling-project/docling-layout-heron,rt_detr_v2,Other,unknown,18524
 transformers,datnth1709/VietAI-NLP-ITN,encoder-decoder,Other,translation,6,516,1,2022-09-22T19:22:12+00:00,1,0,True,,Tier 3
 transformers,ibm-granite/granite-speech-3.3-2b,granite_speech,Audio,automatic-speech-recognition,513572,2639660,55,2025-04-28T15:25:29+00:00,0,3009285376,True,ibm-granite/granite-3.3-2b-instruct,Tier 3
 transformers,BAAI/AltCLIP,altclip,Computer Vision,zero-shot-image-classification,49160,1114918,32,2022-11-15T03:22:10+00:00,0,0,False,,Tier 3
-transformers,microsoft/deberta-base-mnli,deberta,Natural Language Processing,text-classification,72087,2303223,9,2022-03-02T23:29:05+00:00,1,0,False,,Tier 3
 transformers,Organika/sdxl-detector,swin,Computer Vision,image-classification,133803,715251,57,2023-12-31T04:54:35+00:00,0,86802898,False,,Tier 3
 transformers,Bagus/wav2vec2-xlsr-greek-speech-emotion-recognition,wav2vec2,Other,audio-classification,32,1805,1,2022-03-02T23:29:04+00:00,0,0,False,,Tier 3
 transformers,czczup/textnet-base,textnet,Computer Vision,image-feature-extraction,2666,16663,4,2024-12-24T10:10:58+00:00,0,13552064,False,,Tier 3

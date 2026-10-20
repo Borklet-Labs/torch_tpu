@@ -323,6 +323,142 @@ class LoadModelTest(seed_test_utils.RepeatableTest):
     self.assertEqual(model.config.num_hidden_layers, 12)
     self.assertEqual(model.config.backbone_out_indices, [2, 5, 8, 11])
 
+  def test_blip_forward_compiled_graph_has_no_cpu_tensors_on_accelerator(self):
+    class _FakeVisionOutput:
+
+      def __init__(self, last_hidden_state: torch.Tensor):
+        self.last_hidden_state = last_hidden_state
+        self.hidden_states = None
+        self.attentions = None
+
+    class _FakeBlipVisionModel(nn.Module):
+
+      def __init__(self):
+        super().__init__()
+        self.proj = nn.Linear(4, 4)
+
+      def forward(
+          self,
+          pixel_values: torch.Tensor,
+          interpolate_pos_encoding: bool = False,
+          **kwargs: Any,
+      ) -> _FakeVisionOutput:
+        del interpolate_pos_encoding, kwargs  # Unused.
+        return _FakeVisionOutput(self.proj(pixel_values))
+
+    class _FakeBlipTextEncoder(nn.Module):
+
+      def forward(
+          self,
+          input_ids: torch.Tensor,
+          attention_mask: torch.Tensor | None = None,
+          encoder_hidden_states: torch.Tensor | None = None,
+          encoder_attention_mask: torch.Tensor | None = None,
+          **kwargs: Any,
+      ) -> tuple[torch.Tensor]:
+        del input_ids, attention_mask, kwargs  # Unused.
+        assert encoder_hidden_states is not None
+        assert encoder_attention_mask is not None
+        mask = encoder_attention_mask.to(
+            device=encoder_hidden_states.device,
+            dtype=encoder_hidden_states.dtype,
+        )
+        return (encoder_hidden_states * mask.unsqueeze(-1),)
+
+    class _FakeDecoderOutput:
+
+      def __init__(self, loss: torch.Tensor | None):
+        self.loss = loss
+
+    class _FakeBlipTextDecoder(nn.Module):
+
+      def forward(
+          self,
+          input_ids: torch.Tensor,
+          attention_mask: torch.Tensor | None = None,
+          encoder_hidden_states: torch.Tensor | None = None,
+          encoder_attention_mask: torch.Tensor | None = None,
+          labels: torch.Tensor | None = None,
+          reduction: str = "mean",
+          **kwargs: Any,
+      ) -> _FakeDecoderOutput:
+        del input_ids, attention_mask, encoder_attention_mask, reduction, kwargs
+        assert encoder_hidden_states is not None
+        loss = encoder_hidden_states.sum() if labels is not None else None
+        return _FakeDecoderOutput(loss)
+
+    class BlipForQuestionAnswering(nn.Module):
+
+      def __init__(self):
+        super().__init__()
+        self.config = types.SimpleNamespace(model_type="blip")
+        self.vision_model = _FakeBlipVisionModel()
+        self.text_encoder = _FakeBlipTextEncoder()
+        self.text_decoder = _FakeBlipTextDecoder()
+
+      def forward(
+          self,
+          input_ids: torch.Tensor,
+          pixel_values: torch.Tensor,
+          decoder_input_ids: torch.Tensor | None = None,
+          **kwargs: Any,
+      ) -> Any:
+        vision_outputs = self.vision_model(pixel_values=pixel_values, **kwargs)
+        image_embeds = vision_outputs.last_hidden_state
+        # Mirrors `modeling_blip.BlipForQuestionAnswering.forward`: omits
+        # `device=image_embeds.device`.
+        image_attention_mask = torch.ones(
+            image_embeds.size()[:-1], dtype=torch.long
+        )
+        question_embeds = self.text_encoder(
+            input_ids=input_ids,
+            encoder_hidden_states=image_embeds,
+            encoder_attention_mask=image_attention_mask,
+        )[0]
+        return self.text_decoder(
+            input_ids=decoder_input_ids,
+            encoder_hidden_states=question_embeds,
+            labels=decoder_input_ids,
+        )
+
+    with torch.device("meta"):
+      model = BlipForQuestionAnswering()
+      input_ids = torch.zeros((2, 6), dtype=torch.long)
+      decoder_input_ids = torch.zeros((2, 6), dtype=torch.long)
+      pixel_values = torch.randn((2, 6, 4))
+
+    model, _ = self._load(model, is_training=False)
+    eager_out = model(
+        input_ids=input_ids,
+        decoder_input_ids=decoder_input_ids,
+        pixel_values=pixel_values,
+    )
+    self.assertEqual(eager_out.loss.device.type, "meta")
+
+    captured_graphs = []
+
+    def _capture_backend(gm: torch.fx.GraphModule, example_inputs):
+      del example_inputs  # Unused.
+      captured_graphs.append(gm)
+      return gm.forward
+
+    compiled = torch.compile(model, backend=_capture_backend)
+    out = compiled(
+        input_ids=input_ids,
+        decoder_input_ids=decoder_input_ids,
+        pixel_values=pixel_values,
+    )
+
+    self.assertEqual(out.loss.device.type, "meta")
+    self.assertNotEmpty(captured_graphs)
+    tensor_devices = {
+        val.device.type
+        for gm in captured_graphs
+        for node in gm.graph.nodes
+        if isinstance((val := node.meta.get("example_value")), torch.Tensor)
+    }
+    self.assertEqual(tensor_devices, {"meta"})
+
 
 if __name__ == "__main__":
   absltest.main()
