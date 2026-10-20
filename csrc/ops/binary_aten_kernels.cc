@@ -46,6 +46,7 @@
 #include "csrc/ops/op_builder_utils.h"
 #include "csrc/ops/op_names.h"
 #include "csrc/ops/unary.h"
+#include "csrc/ops/unary_aten_kernels.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Types.h"
@@ -1743,23 +1744,48 @@ at::Tensor& AtenPowScalarOut(const at::Scalar& self, const at::Tensor& exponent,
 at::Tensor& AtenPowTensorScalarOut(const at::Tensor& self,
                                    const at::Scalar& exponent,
                                    at::Tensor& out) {
-  auto promoted_exponent = PromoteScalar(exponent);
-  TT_KERNEL(OpName::kPowTensorScalarOut, _, (self, promoted_exponent, out), {
-    TT_THROW_IF_ERROR(ValidatePowInputs(self, exponent));
-    const at::ScalarType result_type = at::result_type(self, exponent);
-    TT_ASSIGN_OR_THROW(const at::Tensor exponent_tensor,
-                       promoted_exponent.GetTensor(result_type));
-    TT_ASSIGN_OR_THROW(const auto result_element_type,
-                       ConvertTo<mlir::ElementType>(result_type));
-    TT_THROW_IF_ERROR(
-        BinaryOpOut(self, exponent_tensor, out, BuildPowShlo,
-                    // Use kPowOut for cache key as the builder logic is the
-                    // same as for AtenPowTensorTensorOut.
-                    {.op_name = OpName::kPowOut,
-                     .op_param_cache_keys = OpParamCacheKeys::Empty(),
-                     .result_dtype = result_element_type}));
-    return out;
-  });
+  auto promoted_exponent =
+      PromoteScalar(exponent).AvoidPromoting(ScalarValue::kTwo);
+  TT_KERNEL(
+      OpName::kPowTensorScalarOut, param_keys, (self, promoted_exponent, out), {
+        // Lower pow(x, 2) to x * x instead of stablehlo::Pow(x, 2).
+        // Computing x^2 via multiplication is both faster and numerically more
+        // accurate than general exponentiation (which uses exp(2 * log(x)) and
+        // suffers from catastrophic cancellation in 1 - x^2 during atanh
+        // backward near |x| = 1).
+        if (promoted_exponent.IsTwo()) {
+          const at::ScalarType result_type = at::result_type(self, exponent);
+          TT_ASSIGN_OR_THROW(const auto result_element_type,
+                             ConvertTo<mlir::ElementType>(result_type));
+          TT_THROW_IF_ERROR(
+              param_keys.SetParam("result_dtype", result_element_type));
+          auto op_builder =
+              [](mlir::MlirOp base_op) -> absl::StatusOr<mlir::MlirOp> {
+            return stablehlo::Mul(base_op, base_op);
+          };
+          TT_THROW_IF_ERROR(
+              UnaryOpOut(self, out, std::move(op_builder),
+                         {.op_param_cache_keys = std::move(param_keys),
+                          .out_dtype = result_element_type,
+                          .computation_dtype = result_element_type}));
+          return out;
+        }
+
+        TT_THROW_IF_ERROR(ValidatePowInputs(self, exponent));
+        const at::ScalarType result_type = at::result_type(self, exponent);
+        TT_ASSIGN_OR_THROW(const at::Tensor exponent_tensor,
+                           promoted_exponent.GetTensor(result_type));
+        TT_ASSIGN_OR_THROW(const auto result_element_type,
+                           ConvertTo<mlir::ElementType>(result_type));
+        TT_THROW_IF_ERROR(
+            BinaryOpOut(self, exponent_tensor, out, BuildPowShlo,
+                        // Use kPowOut for cache key as the builder logic is the
+                        // same as for AtenPowTensorTensorOut.
+                        {.op_name = OpName::kPowOut,
+                         .op_param_cache_keys = OpParamCacheKeys::Empty(),
+                         .result_dtype = result_element_type}));
+        return out;
+      });
 }
 
 at::Tensor& AtenPowTensorTensorOut(const at::Tensor& self,

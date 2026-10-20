@@ -7645,6 +7645,56 @@ class OpsUnitTest(TorchTpuVsCpuTestBase):
         golden_result=a_cpu, torch_tpu_result=a_tpu.cpu(), rtol=rtol, atol=atol
     )
 
+  @parameterized.parameters(
+      torch.float32,
+      torch.float64,
+      torch.bfloat16,
+      torch.float16,
+      torch.complex64,
+      torch.complex128,
+  )
+  def test_pow_exponent_two(self, dtype):
+    if dtype.is_complex:
+      x_init = torch.tensor(
+          [-2.5 + 1.25j, -0.99 - 0.5j, 0.0 + 0.0j, 1.5 - 2.25j], dtype=dtype
+      )
+    else:
+      x_init = torch.tensor([-2.5, -0.99, 0.0, 0.99, 3.25], dtype=dtype)
+    grad_out = torch.ones_like(x_init)
+
+    for exp in (2, 2.0):
+
+      def compute(device, exp_val=exp):
+        x = to(x_init.clone(), device=device).requires_grad_(True)
+        out = torch.pow(x, exp_val)
+        out.backward(to(grad_out, device=device))
+        return out, x.grad
+
+      self.assert_close_tpu_vs_cpu(compute)
+
+  @parameterized.parameters(
+      torch.float32,
+      torch.float64,
+      torch.bfloat16,
+      torch.float16,
+  )
+  def test_atanh_backward_near_unit_boundary(self, dtype):
+    vals = (
+        [-0.99, -0.95, -0.9, 0.9, 0.95, 0.99]
+        if dtype in (torch.float16, torch.bfloat16)
+        else [-0.9995, -0.999, -0.99, -0.9, 0.9, 0.99, 0.999, 0.9995]
+    )
+    x_init = torch.tensor(vals, dtype=dtype)
+    grad_out = torch.ones_like(x_init)
+
+    def compute(device):
+      x = to(x_init.clone(), device=device).requires_grad_(True)
+      out = torch.atanh(x)
+      out.backward(to(grad_out, device=device))
+      return x.grad
+
+    self.assert_close_tpu_vs_cpu(compute)
+
   def test_repeat_interleave_self_int(self):
     t = torch.tensor([1, 2, 3])
     self.assert_close_tpu_vs_cpu(

@@ -275,22 +275,20 @@ class InternalSyncTest(absltest.TestCase):  # ABSLTEST_OK=Internal sync test
         digraph {
           // Vertices:
           0 [shape="box", label=" uint64[2] (materialized)"];
-          1 [shape="box", label=" float32[] (materialized)"];
-          2 [label="uniform_"];
-          3 [shape="box", label="x: float32[2, 3]"];
-          4 [label="sum.IntList_out"];
-          5 [shape="box", label="z: float32[]"];
-          6 [label="pow.out"];
-          7 [shape="box", label="y: float32[2, 3]"];
+          1 [label="uniform_"];
+          2 [shape="box", label="x: float32[2, 3]"];
+          3 [label="sum.IntList_out"];
+          4 [shape="box", label="z: float32[]"];
+          5 [label="pow.Tensor_Scalar_out"];
+          6 [shape="box", label="y: float32[2, 3]"];
 
           // Edges:
-          0 -> 2
+          0 -> 1
+          1 -> 2
           2 -> 3
           3 -> 4
-          4 -> 5
-          3 -> 6
-          1 -> 6
-          6 -> 7
+          2 -> 5
+          5 -> 6
         }
         """)
 

@@ -70,7 +70,7 @@ namespace torch_tpu {
 class PromotedScalar;
 class MaybePromotedScalar;
 
-enum class ScalarValue { kZero, kOne, kMinusOne };
+enum class ScalarValue { kZero, kOne, kMinusOne, kTwo };
 
 namespace internal {
 
@@ -166,6 +166,9 @@ class MaybePromotedScalar {
 
   // Returns true if the scalar value is minus one.
   [[nodiscard]] bool IsMinusOne() const;
+
+  // Returns true if the scalar value is two.
+  [[nodiscard]] bool IsTwo() const;
 
   // Returns the tensor value. Must be called at least once when the op
   // succeeds, unless the value matches an exclude.

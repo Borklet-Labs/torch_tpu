@@ -112,7 +112,22 @@ TEST(OpParamCacheKeys, SetParamMaybePromotedScalarExcludedOne) {
   EXPECT_THAT(params, ElementsAre(Pair("foo", Fingerprint("1"))));
 }
 
-TEST(MaybePromotedScalar, IsZeroAndIsOne) {
+TEST(OpParamCacheKeys, SetParamMaybePromotedScalarExcludedTwo) {
+  auto dummy_promoter =
+      [](const at::Scalar&,
+         std::optional<at::ScalarType>) -> absl::StatusOr<at::Tensor> {
+    return TT_ERROR(error::kPythonNotImplementedError)
+           << "Not implemented in test";
+  };
+  PromotedScalar ps(dummy_promoter, at::Scalar(2.0));
+  MaybePromotedScalar mps(std::move(ps), ScalarValue::kTwo);
+
+  TT_ASSERT_OK_AND_ASSIGN(auto params,
+                          *OpParamCacheKeysBuilder().SetParam("foo", mps));
+  EXPECT_THAT(params, ElementsAre(Pair("foo", Fingerprint("2"))));
+}
+
+TEST(MaybePromotedScalar, IsZeroAndIsOneAndIsTwo) {
   auto dummy_promoter =
       [](const at::Scalar&,
          std::optional<at::ScalarType>) -> absl::StatusOr<at::Tensor> {
@@ -125,6 +140,7 @@ TEST(MaybePromotedScalar, IsZeroAndIsOne) {
     MaybePromotedScalar mps(std::move(ps), ScalarValue::kOne);
     EXPECT_TRUE(mps.IsZero());
     EXPECT_FALSE(mps.IsOne());
+    EXPECT_FALSE(mps.IsTwo());
   }
 
   {
@@ -132,6 +148,15 @@ TEST(MaybePromotedScalar, IsZeroAndIsOne) {
     MaybePromotedScalar mps(std::move(ps), ScalarValue::kZero);
     EXPECT_FALSE(mps.IsZero());
     EXPECT_TRUE(mps.IsOne());
+    EXPECT_FALSE(mps.IsTwo());
+  }
+
+  {
+    PromotedScalar ps(dummy_promoter, at::Scalar(2));
+    MaybePromotedScalar mps(std::move(ps), ScalarValue::kTwo);
+    EXPECT_FALSE(mps.IsZero());
+    EXPECT_FALSE(mps.IsOne());
+    EXPECT_TRUE(mps.IsTwo());
   }
 
   {
@@ -139,6 +164,7 @@ TEST(MaybePromotedScalar, IsZeroAndIsOne) {
     MaybePromotedScalar mps(std::move(ps), ScalarValue::kZero);
     EXPECT_FALSE(mps.IsZero());
     EXPECT_FALSE(mps.IsOne());
+    EXPECT_FALSE(mps.IsTwo());
   }
 }
 

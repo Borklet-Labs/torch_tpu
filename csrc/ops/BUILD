@@ -427,6 +427,7 @@ torch_tpu_cc_library(
         ":op_builder_utils",
         ":op_names",
         ":unary",
+        ":unary_aten_kernels",
         "//csrc/common:aten_utils",
         "//csrc/common:cache_key",
         "//csrc/common:device_type",
