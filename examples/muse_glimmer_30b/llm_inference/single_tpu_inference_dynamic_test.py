@@ -20,8 +20,9 @@ class SingleTpuInferenceDynamicTest(absltest.TestCase):
   """Manual benchmark entrypoints for Muse Glimmer 30B dynamic inference on TPU.
 
   Each test method represents a distinct execution mode and is intended to be
-  run individually (exclusively) using `--test_filter=<test_name>`, rather
-  than running all test methods together.
+  run individually (exclusively), rather than running all test methods
+  together, for example with
+  `launch.sh dynamic --test_filter=SingleTpuInferenceDynamicTest.<test_name>`.
   """
 
   def test_muse_glimmer_bounded_dynamism(self):

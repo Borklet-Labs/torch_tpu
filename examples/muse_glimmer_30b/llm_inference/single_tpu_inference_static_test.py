@@ -20,8 +20,9 @@ class SingleTpuInferenceStaticTest(absltest.TestCase):
   """Manual benchmark entrypoints for Muse Glimmer 30B static inference on TPU.
 
   Each test method represents a distinct execution mode and is intended to be
-  run individually (exclusively) using `--test_filter=<test_name>`, rather
-  than running all test methods together.
+  run individually (exclusively), rather than running all test methods
+  together, for example with
+  `launch.sh static --test_filter=SingleTpuInferenceStaticTest.<test_name>`.
   """
 
   def test_muse_glimmer_static(self):

@@ -47,6 +47,7 @@ export LIBTPU_INIT_ARGS="${LIBTPU_INIT_ARGS:-} --xla_tpu_dvfs_p_state=7"
 
 MODE="all"
 USE_RANDOM_WEIGHTS=false
+TEST_NAME=""
 PASSTHROUGH_ARGS=()
 
 for arg in "$@"; do
@@ -63,28 +64,45 @@ for arg in "$@"; do
     --random-weights|--random_weights)
       USE_RANDOM_WEIGHTS=true
       ;;
+    --test_filter=*)
+      # Open-source absl-py has no --test_filter flag, so the test name is
+      # passed as a positional argument instead, which both support.
+      TEST_NAME="${arg#--test_filter=}"
+      ;;
     *)
       PASSTHROUGH_ARGS+=("$arg")
       ;;
   esac
 done
 
-HAS_TEST_FILTER=false
-for arg in "${PASSTHROUGH_ARGS[@]}"; do
-  if [[ "$arg" == --test_filter* ]]; then
-    HAS_TEST_FILTER=true
-  fi
-done
+# A test name selects one test script, so run only the matching benchmark.
+if [[ -n "$TEST_NAME" && "$MODE" == "all" ]]; then
+  case "$TEST_NAME" in
+    SingleTpuInferenceDynamicTest.*)
+      MODE="dynamic"
+      ;;
+    SingleTpuInferenceStaticTest.*)
+      MODE="static"
+      ;;
+    *)
+      echo "Error: --test_filter=${TEST_NAME} must start with" \
+        "SingleTpuInferenceDynamicTest. or SingleTpuInferenceStaticTest.," \
+        "or pass 'dynamic' or 'static'." >&2
+      exit 1
+      ;;
+  esac
+fi
 
 run_dynamic() {
-  local args=("${PASSTHROUGH_ARGS[@]}")
-  if [[ "$HAS_TEST_FILTER" == "false" ]]; then
+  local test_name="${TEST_NAME}"
+  if [[ -z "$test_name" ]]; then
     if [[ "$USE_RANDOM_WEIGHTS" == "true" ]]; then
-      args+=("--test_filter=SingleTpuInferenceDynamicTest.test_muse_glimmer_random_weights_bounded_dynamism")
+      test_name="SingleTpuInferenceDynamicTest.test_muse_glimmer_random_weights_bounded_dynamism"
     else
-      args+=("--test_filter=SingleTpuInferenceDynamicTest.test_muse_glimmer_bounded_dynamism")
+      test_name="SingleTpuInferenceDynamicTest.test_muse_glimmer_bounded_dynamism"
     fi
   fi
+  local args=("${PASSTHROUGH_ARGS[@]}" "$test_name")
 
   echo "============================================================"
   echo " Running Single TPU Dynamic Inference Benchmark"
@@ -98,14 +116,15 @@ run_dynamic() {
 }
 
 run_static() {
-  local args=("${PASSTHROUGH_ARGS[@]}")
-  if [[ "$HAS_TEST_FILTER" == "false" ]]; then
+  local test_name="${TEST_NAME}"
+  if [[ -z "$test_name" ]]; then
     if [[ "$USE_RANDOM_WEIGHTS" == "true" ]]; then
-      args+=("--test_filter=SingleTpuInferenceStaticTest.test_muse_glimmer_random_weights_static")
+      test_name="SingleTpuInferenceStaticTest.test_muse_glimmer_random_weights_static"
     else
-      args+=("--test_filter=SingleTpuInferenceStaticTest.test_muse_glimmer_static")
+      test_name="SingleTpuInferenceStaticTest.test_muse_glimmer_static"
     fi
   fi
+  local args=("${PASSTHROUGH_ARGS[@]}" "$test_name")
 
   echo "============================================================"
   echo " Running Single TPU Static Inference Benchmark"
