@@ -776,17 +776,18 @@ class CompileApiTest(seed_test_utils.RepeatableTest):
       self.assertIsNotNone(compile_result.executable)
 
     with self.subTest('Test Execution Results'):
+      x = torch.ones(1, 8, dtype=torch.float32, device='tpu')
+      size = torch.tensor(4, dtype=torch.int32, device='tpu')
+      x = torch.ops.tpu._set_dimension_logical_size(x, 1, size)
       result = tpu_torch_compile.execute(
           compile_result.executable,
-          [
-              torch.ones(1, 8, dtype=torch.float32).to(
-                  device=torch.device('tpu')
-              )
-          ],
+          [x],
       )
       self.assertLen(result, 1)
       self.assertEqual(result[0].shape, (1, 4))
       self.assertEqual(result[0].dtype, torch.float32)
+      expected = torch.ones(1, 4, dtype=torch.float32)
+      utils.assert_close(result[0].cpu(), expected)
 
   def test_make_constant_tensor(self):
     # Arrange
