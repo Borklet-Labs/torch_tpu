@@ -482,11 +482,11 @@ def fx_to_mlir(
       # tracebacks enabled by default so that the MLIR we generate has file
       # location info.
       device = torch.accelerator.current_accelerator()
-      device_module = getattr(torch, device.type)
+      device_module = getattr(torch, device.type)  # pyrefly: ignore[missing-attribute]
 
       # Add the default RNG generator for the device to the args if not already
       # present.
-      default_device_index = device.index or 0
+      default_device_index = device.index or 0  # pyrefly: ignore[missing-attribute]
       default_generator = device_module.default_generators[default_device_index]
       argument_generators = [
           arg for arg in args if isinstance(arg, torch.Generator)

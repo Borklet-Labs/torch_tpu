@@ -530,7 +530,7 @@ class TorchTpuCompiledExecutable(CompiledArtifact):
       args = args[0]  # pyrefly: ignore[bad-assignment]
 
     device = torch.accelerator.current_accelerator()
-    device_module = getattr(torch, device.type)
+    device_module = getattr(torch, device.type)  # pyrefly: ignore[missing-attribute]
 
     # Update RNG state as the last argument.
     generators = [arg for arg in args if type(arg) is torch.Generator]  # pylint: disable=unidiomatic-typecheck
