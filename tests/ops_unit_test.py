@@ -21115,6 +21115,139 @@ class OpsGradUnitTest(TorchTpuVsCpuTestBase):
           ),
       )
 
+  @parameterized.product(
+      spatial_ndim=[2, 3],
+      padding_mode=["zeros", "border", "reflection"],
+      align_corners=[False, True],
+      output_mask=[(False, True), (True, False)],
+  )
+  def test_grid_sample_backward_partial_output_mask(
+      self,
+      spatial_ndim: int,
+      padding_mode: str,
+      align_corners: bool,
+      output_mask: tuple[bool, bool],
+  ) -> None:
+    torch.manual_seed(0)
+    in_shape = (2, 2, 4, 5) if spatial_ndim == 2 else (1, 2, 3, 4, 4)
+    grid_shape = (2, 3, 4, 2) if spatial_ndim == 2 else (1, 2, 3, 3, 3)
+    modes = (
+        ["bilinear", "nearest", "bicubic"]
+        if spatial_ndim == 2
+        else ["bilinear", "nearest"]
+    )
+    compute_grad_input, compute_grad_grid = output_mask
+    x_base = torch.randn(in_shape, dtype=torch.float32)
+    grid_base = torch.empty(grid_shape, dtype=torch.float32).uniform_(-1.5, 1.5)
+
+    for mode in modes:
+      with self.subTest(mode=mode):
+        x_cpu = x_base.clone().detach().requires_grad_(compute_grad_input)
+        grid_cpu = grid_base.clone().detach().requires_grad_(compute_grad_grid)
+        x_tpu = x_base.detach().to("tpu").requires_grad_(compute_grad_input)
+        grid_tpu = (
+            grid_base.detach().to("tpu").requires_grad_(compute_grad_grid)
+        )
+
+        out_cpu = torch.nn.functional.grid_sample(
+            x_cpu,
+            grid_cpu,
+            mode=mode,
+            padding_mode=padding_mode,
+            align_corners=align_corners,
+        )
+        out_tpu = torch.nn.functional.grid_sample(
+            x_tpu,
+            grid_tpu,
+            mode=mode,
+            padding_mode=padding_mode,
+            align_corners=align_corners,
+        )
+        grad_out = torch.randn_like(out_cpu)
+        out_cpu.backward(grad_out)
+        out_tpu.backward(grad_out.to("tpu"))
+
+        if compute_grad_input:
+          utils.assert_close(
+              actual=x_tpu.grad.cpu(),
+              expected=x_cpu.grad,
+              rtol=1e-4,
+              atol=1e-4,
+          )
+        else:
+          self.assertIsNone(x_tpu.grad)
+
+        if compute_grad_grid:
+          utils.assert_close(
+              actual=grid_tpu.grad.cpu(),
+              expected=grid_cpu.grad,
+              rtol=1e-4,
+              atol=1e-4,
+          )
+        else:
+          self.assertIsNone(grid_tpu.grad)
+
+  @parameterized.product(
+      in_shape=[(2, 2, 1, 4), (2, 2, 4, 1), (2, 2, 1, 1), (1, 2, 1, 3, 4)],
+      align_corners=[False, True],
+  )
+  def test_grid_sample_reflection_unit_spatial_dim(
+      self, in_shape: tuple[int, ...], align_corners: bool
+  ) -> None:
+    torch.manual_seed(0)
+    grid_shape = (2, 3, 3, 2) if len(in_shape) == 4 else (1, 2, 2, 2, 3)
+    modes = (
+        ["bilinear", "nearest", "bicubic"]
+        if len(in_shape) == 4
+        else ["bilinear", "nearest"]
+    )
+    x_base = torch.randn(in_shape, dtype=torch.float32)
+    grid_base = torch.empty(grid_shape, dtype=torch.float32).uniform_(-2.0, 2.0)
+
+    for mode in modes:
+      with self.subTest(mode=mode):
+        x_cpu = x_base.clone().detach().requires_grad_(True)
+        grid_cpu = grid_base.clone().detach().requires_grad_(True)
+        x_tpu = x_base.detach().to("tpu").requires_grad_(True)
+        grid_tpu = grid_base.detach().to("tpu").requires_grad_(True)
+
+        out_cpu = torch.nn.functional.grid_sample(
+            x_cpu,
+            grid_cpu,
+            mode=mode,
+            padding_mode="reflection",
+            align_corners=align_corners,
+        )
+        out_tpu = torch.nn.functional.grid_sample(
+            x_tpu,
+            grid_tpu,
+            mode=mode,
+            padding_mode="reflection",
+            align_corners=align_corners,
+        )
+        grad_out = torch.randn_like(out_cpu)
+        out_cpu.backward(grad_out)
+        out_tpu.backward(grad_out.to("tpu"))
+
+        utils.assert_close(
+            actual=out_tpu.cpu(),
+            expected=out_cpu,
+            rtol=1e-4,
+            atol=1e-4,
+        )
+        utils.assert_close(
+            actual=x_tpu.grad.cpu(),
+            expected=x_cpu.grad,
+            rtol=1e-4,
+            atol=1e-4,
+        )
+        utils.assert_close(
+            actual=grid_tpu.grad.cpu(),
+            expected=grid_cpu.grad,
+            rtol=1e-4,
+            atol=1e-4,
+        )
+
 
 class OpTestingFrameworkTest(op_testing.OpInfoTestBase):
   """Tests for the op_testing framework itself."""

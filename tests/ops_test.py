@@ -998,8 +998,8 @@ ACCURACY_OVERRIDES_GRAD_VS_GPU: dict[
             torch.float32: {"rtol": 3.6e-3, "atol": 2.2e-4},
         },
         "nn.functional.grid_sample": {
-            torch.bfloat16: {"rtol": 2.6, "atol": 1},
-            torch.float16: {"rtol": 5.5e-1, "atol": 1},
+            torch.bfloat16: {"rtol": 1.9e-2, "atol": 1.9e-2},
+            torch.float16: {"rtol": 3.6e-3, "atol": 2.4e-3},
         },
         "nn.functional.hardswish": {
             torch.bfloat16: {"rtol": 5.2e-2, "atol": 3e-3},
