@@ -16,7 +16,8 @@ import glob
 import hashlib
 import os
 import re
-from typing import TypeAlias
+import shutil
+from typing import Any, TypeAlias
 from unittest import mock
 
 from absl.testing import absltest
@@ -24,10 +25,11 @@ import torch
 from torch import distributed as dist
 from torch_tpu._internal import execution_mode
 from torch_tpu._internal.distributed import multiprocessing
-from tests import seed_test_utils
-from tests.distributed import distributed_utils
+from tests.distributed import continuous_test_utils
 
 EagerMode: TypeAlias = execution_mode.EagerMode
+
+_DUMP_DIR = os.path.join(absltest.get_default_test_tmpdir(), "xla_dump")
 
 
 def _update_xla_dump_to(xla_flags: str, dump_dir: str) -> str:
@@ -36,16 +38,6 @@ def _update_xla_dump_to(xla_flags: str, dump_dir: str) -> str:
   if re.search(pattern, xla_flags):
     return re.sub(pattern, new_flag, xla_flags)
   return f"{xla_flags} {new_flag}".strip()
-
-
-def _test_wrapper(test_fn, *args, **kwargs):
-  dist.init_process_group(backend="tpu_dist")
-  try:
-    test_fn(*args, **kwargs)
-  finally:
-    if dist.is_initialized():
-      dist.barrier()
-      dist.destroy_process_group()
 
 
 def run_spmd_safe_decorator_test(compile_test: bool = False):
@@ -148,9 +140,33 @@ def run_spmd_safe_multi_dtensor_compile_test():
   assert isinstance(out, torch.distributed.tensor.DTensor)
 
 
-class SpmdSafeDecoratorTest(seed_test_utils.MultiProcessRepeatableTest):
+class SpmdSafeDecoratorTest(continuous_test_utils.TpuMultiProcContinuousTest):
 
-  _world_size = distributed_utils.get_tpu_device_count()
+  # Using world_size = 4 has flakiness on 8-chip TPU v5e CI runners:
+  # initializing only 4 chips leaves the rest of the physical interconnect ring
+  # idle, causing process group init to intermittently hang for ~20s and fail
+  # with SIGTERM (ProcessExitedException). Setting this to 8 ensures all chips
+  # on the host participate, allowing the physical ring to close and sync
+  # deterministically.
+  world_size = 8
+
+  @classmethod
+  def _spawn_processes(cls, world_size: int) -> None:
+    # Sets per-rank dump dirs so workers don't collide when
+    # verifying MLIR fusions.
+    xla_flags = _update_xla_dump_to(
+        os.environ.get("XLA_FLAGS", ""), f"{_DUMP_DIR}/rank_${{RANK}}"
+    )
+    with mock.patch.dict(os.environ, {"XLA_FLAGS": xla_flags}):
+      super()._spawn_processes(world_size)
+
+  @classmethod
+  def _run_test_given_id(cls, test_id: str, **kwargs: Any) -> None:
+    # Clear compiler MLIR dumps from previous tests on this worker rank.
+    shutil.rmtree(f"{_DUMP_DIR}/rank_{cls.rank}", ignore_errors=True)
+    # Flush Dynamo cache so subsequent tests trigger fresh compilation passes.
+    torch._dynamo.reset()
+    super()._run_test_given_id(test_id, **kwargs)
 
   def _check_fused_mlir(self, dump_dir, expected_count=1):
     """Checks there is exactly `expected_count` unique fused modules with all_reduce and multiply."""
@@ -184,7 +200,7 @@ class SpmdSafeDecoratorTest(seed_test_utils.MultiProcessRepeatableTest):
   def _check_all_reduce_mlir_matching(self, dump_dir):
     """Verifies that all MLIR files containing all_reduce match across all ranks."""
     rank_mlirs = []
-    for r in range(self._world_size):
+    for r in range(self.world_size):
       rank_dir = os.path.join(dump_dir, f"rank_{r}")
       mlir_files = glob.glob(
           os.path.join(rank_dir, "**/*.mlir"), recursive=True
@@ -204,7 +220,7 @@ class SpmdSafeDecoratorTest(seed_test_utils.MultiProcessRepeatableTest):
         rank_0_mlirs, f"No all_reduce MLIR files found for rank 0 in {dump_dir}"
     )
 
-    for r in range(1, self._world_size):
+    for r in range(1, self.world_size):
       self.assertEqual(
           len(rank_mlirs[r]),
           len(rank_0_mlirs),
@@ -220,91 +236,35 @@ class SpmdSafeDecoratorTest(seed_test_utils.MultiProcessRepeatableTest):
         )
 
   def test_spmd_safe_decorator(self):
-    dump_dir = self.create_tempdir(name="xla_dump_fused_collective").full_path
-    with mock.patch.dict(
-        os.environ,
-        {
-            "XLA_FLAGS": _update_xla_dump_to(
-                os.environ.get("XLA_FLAGS", ""), dump_dir
-            )
-        },
-    ):
-      distributed_utils.dist_run(
-          nproc_per_node=self._world_size,
-          fn=_test_wrapper,
-          test_fn=run_spmd_safe_decorator_test,
-      )
-    self._check_fused_mlir(dump_dir)
+    run_spmd_safe_decorator_test()
+    if self.rank == 0:
+      self._check_fused_mlir(_DUMP_DIR)
 
   def test_spmd_safe_decorator_compile(self):
-    dump_dir = self.create_tempdir(
-        name="xla_dump_fused_collective_compile"
-    ).full_path
-    with mock.patch.dict(
-        os.environ,
-        {
-            "XLA_FLAGS": _update_xla_dump_to(
-                os.environ.get("XLA_FLAGS", ""), dump_dir
-            )
-        },
-    ):
-      distributed_utils.dist_run(
-          nproc_per_node=self._world_size,
-          fn=_test_wrapper,
-          test_fn=run_spmd_safe_decorator_test,
-          compile_test=True,
-      )
-    self._check_fused_mlir(dump_dir)
+    run_spmd_safe_decorator_test(compile_test=True)
+    if self.rank == 0:
+      self._check_fused_mlir(_DUMP_DIR)
 
   def test_spmd_safe_decorator_compile_backward(self):
-    dump_dir = self.create_tempdir(
-        name="xla_dump_fused_collective_compile_backward"
-    ).full_path
-    with mock.patch.dict(
-        os.environ,
-        {
-            "XLA_FLAGS": _update_xla_dump_to(
-                os.environ.get("XLA_FLAGS", ""), dump_dir
-            )
-        },
-    ):
-      distributed_utils.dist_run(
-          nproc_per_node=self._world_size,
-          fn=_test_wrapper,
-          test_fn=run_spmd_safe_decorator_backward_test,
-      )
-    self._check_fused_mlir(dump_dir, expected_count=2)
+    run_spmd_safe_decorator_backward_test()
+    if self.rank == 0:
+      self._check_fused_mlir(_DUMP_DIR, expected_count=2)
 
   def test_uncoordinated_op_stream_deadlock(self):
-    dump_dir = self.create_tempdir(name="xla_dump_deadlock_test").full_path
-    with mock.patch.dict(
-        os.environ,
-        {
-            "XLA_FLAGS": _update_xla_dump_to(
-                os.environ.get("XLA_FLAGS", ""), f"{dump_dir}/rank_${{RANK}}"
-            )
-        },
-    ):
-      distributed_utils.dist_run(
-          nproc_per_node=self._world_size,
-          fn=_test_wrapper,
-          test_fn=run_uncoordinated_op_stream_test,
-      )
-    self._check_all_reduce_mlir_matching(dump_dir)
+    run_uncoordinated_op_stream_test()
+    if self.rank == 0:
+      self._check_all_reduce_mlir_matching(_DUMP_DIR)
+
+
+class SpmdSafeDTensorTest(continuous_test_utils.TpuMultiProcContinuousTest):
+
+  world_size = 8
 
   def test_spmd_safe_dtensor_compile(self):
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=_test_wrapper,
-        test_fn=run_spmd_safe_dtensor_compile_test,
-    )
+    run_spmd_safe_dtensor_compile_test()
 
   def test_spmd_safe_multi_dtensor_compile(self):
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=_test_wrapper,
-        test_fn=run_spmd_safe_multi_dtensor_compile_test,
-    )
+    run_spmd_safe_multi_dtensor_compile_test()
 
 
 if __name__ == "__main__":
