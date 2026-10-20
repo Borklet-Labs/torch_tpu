@@ -644,7 +644,7 @@ def check_and_adjust_test_tags_for_testing(
         nopresubmit = None,
         nolocal = None,
         notest_oss = False,  # NOTEST_OSS_OK=Default parameter in test helper
-        nobuild_oss = False,
+        nobuild_oss = False,  # NOBUILD_OSS_OK=Default parameter in test helper
         nopresubmit_oss = None,
         nonightly_oss = None,
         oss_presubmit_tpu_generation = None,
@@ -663,7 +663,7 @@ def check_and_adjust_test_tags_for_testing(
         nopresubmit = nopresubmit,
         nolocal = nolocal,
         notest_oss = notest_oss,  # NOTEST_OSS_OK=Forwarding parameter in test helper
-        nobuild_oss = nobuild_oss,
+        nobuild_oss = nobuild_oss,  # NOBUILD_OSS_OK=Forwarding parameter in test helper
         nopresubmit_oss = nopresubmit_oss,
         nonightly_oss = nonightly_oss,
         oss_presubmit_tpu_generation = oss_presubmit_tpu_generation,
@@ -687,7 +687,7 @@ def torch_tpu_cc_test(
         nopresubmit = None,
         nolocal = None,
         notest_oss = False,  # NOTEST_OSS_OK=Default parameter in torch_tpu_cc_test macro
-        nobuild_oss = False,
+        nobuild_oss = False,  # NOBUILD_OSS_OK=Default parameter in torch_tpu_cc_test macro
         nopresubmit_oss = None,
         nonightly_oss = None,
         oss_presubmit_tpu_generation = None,
@@ -795,7 +795,7 @@ def torch_tpu_cc_test(
         nopresubmit = nopresubmit,
         nolocal = nolocal,
         notest_oss = notest_oss,  # NOTEST_OSS_OK=Forwarding parameter in torch_tpu_cc_test macro
-        nobuild_oss = nobuild_oss,
+        nobuild_oss = nobuild_oss,  # NOBUILD_OSS_OK=Forwarding parameter in torch_tpu_cc_test macro
         nopresubmit_oss = nopresubmit_oss,
         nonightly_oss = nonightly_oss,
         oss_presubmit_tpu_generation = oss_presubmit_tpu_generation,
@@ -1003,7 +1003,7 @@ def torch_tpu_py_test(
         nopresubmit = None,
         nolocal = None,
         notest_oss = False,  # NOTEST_OSS_OK=Default parameter in _torch_tpu_py_test_internal macro
-        nobuild_oss = False,
+        nobuild_oss = False,  # NOBUILD_OSS_OK=Default parameter in _torch_tpu_py_test_internal macro
         nopresubmit_oss = None,
         nonightly_oss = None,
         oss_presubmit_tpu_generation = None,
@@ -1330,7 +1330,7 @@ def torch_tpu_py_test(
             nopresubmit = target_nopresubmit,
             nolocal = nolocal,
             notest_oss = notest_oss,  # NOTEST_OSS_OK=Forwarding parameter in torch_tpu_py_test macro
-            nobuild_oss = nobuild_oss,
+            nobuild_oss = nobuild_oss,  # NOBUILD_OSS_OK=Forwarding parameter in torch_tpu_py_test macro
             nopresubmit_oss = nopresubmit_oss,
             nonightly_oss = nonightly_oss,
             oss_presubmit_tpu_generation = target_tpu_generation,
