@@ -45,6 +45,29 @@ from tests.distributed import continuous_test_utils
 from tests.distributed import distributed_utils
 
 
+_UNSUPPORTED_64BIT_REDUCE_OPS = (
+    (
+        torch.int64,
+        (
+            dist.ReduceOp.PRODUCT,
+            dist.ReduceOp.MIN,
+            dist.ReduceOp.MAX,
+            dist.ReduceOp.BAND,
+            dist.ReduceOp.BOR,
+            dist.ReduceOp.BXOR,
+        ),
+    ),
+    (
+        torch.float64,
+        (
+            dist.ReduceOp.PRODUCT,
+            dist.ReduceOp.MIN,
+            dist.ReduceOp.MAX,
+        ),
+    ),
+)
+
+
 def run_all_reduce_error() -> None:
   """Tests all-reduce error."""
   x = torch.tensor([0.0, 1.0, 2.0, 3.0], dtype=torch.float32, device="tpu")
@@ -58,6 +81,21 @@ def run_all_reduce_error() -> None:
         x, op=torch.distributed.ReduceOp.BAND, async_op=True
     )
     handle.wait()
+
+  for dtype, ops in _UNSUPPORTED_64BIT_REDUCE_OPS:
+    t = torch.ones(4, dtype=dtype, device="tpu")
+    dtype_name = str(dtype).removeprefix("torch.")
+    for reduce_op in ops:
+      op_name = reduce_op.name.lower()
+      expected_64bit_msg = (
+          f"distributed.all_reduce(): reduce op {op_name} is not supported for"
+          f" {dtype_name} tensors; only sum and avg are supported for 64-bit"
+          " dtypes"
+      )
+      with et.assert_raises_message(
+          NotImplementedError, tpu=expected_64bit_msg
+      ):
+        dist.all_reduce(t, op=reduce_op)
 
 
 def run_all_gather_tensor_wrong_number_output_dimensions() -> None:
@@ -259,6 +297,26 @@ def run_reduce_scatter_errors() -> None:
   ):
     torch.distributed.reduce_scatter(output, inputs)
 
+  # 64-bit dtypes only support sum and avg reduction ops:
+  for dtype, ops in _UNSUPPORTED_64BIT_REDUCE_OPS:
+    inputs = [
+        torch.zeros((2, 3), device="tpu", dtype=dtype)
+        for _ in range(world_size)
+    ]
+    output = torch.zeros((2, 3), device="tpu", dtype=dtype)
+    dtype_name = str(dtype).removeprefix("torch.")
+    for reduce_op in ops:
+      op_name = reduce_op.name.lower()
+      expected_64bit_msg = (
+          f"distributed.reduce_scatter(): reduce op {op_name} is not supported"
+          f" for {dtype_name} tensors; only sum and avg are supported for"
+          " 64-bit dtypes"
+      )
+      with et.assert_raises_message(
+          NotImplementedError, tpu=expected_64bit_msg
+      ):
+        torch.distributed.reduce_scatter(output, inputs, op=reduce_op)
+
 
 def run_reduce_scatter_tensor_errors() -> None:
   """Tests reduce_scatter_tensor with invalid inputs."""
@@ -274,6 +332,24 @@ def run_reduce_scatter_tensor_errors() -> None:
   )
   with et.assert_raises_message(RuntimeError, tpu=expected_msg):
     torch.distributed.reduce_scatter_tensor(output, input_invalid)
+
+  for dtype, ops in _UNSUPPORTED_64BIT_REDUCE_OPS:
+    output = torch.zeros((3, 4), device="tpu", dtype=dtype)
+    input_tensor = torch.zeros((world_size * 3, 4), device="tpu", dtype=dtype)
+    dtype_name = str(dtype).removeprefix("torch.")
+    for reduce_op in ops:
+      op_name = reduce_op.name.lower()
+      expected_64bit_msg = (
+          f"distributed.reduce_scatter_tensor(): reduce op {op_name} is not"
+          f" supported for {dtype_name} tensors; only sum and avg are supported"
+          " for 64-bit dtypes"
+      )
+      with et.assert_raises_message(
+          NotImplementedError, tpu=expected_64bit_msg
+      ):
+        torch.distributed.reduce_scatter_tensor(
+            output, input_tensor, op=reduce_op
+        )
 
 
 def run_gather_wrong_input_size() -> None:

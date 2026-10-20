@@ -4461,6 +4461,15 @@ module {
           expected_error="""reduce_scatter_dim(): expected the tensors dtype to be integer on bitwise reduction ops (BAND, BOR, BXOR), got float32""",
       ),
       dict(
+          testcase_name="reduce_scatter_dim_64bit_non_sum",
+          op="_reduce_scatter_dim",
+          shape=(2, 4),
+          args=("min", 0, 2),
+          dtype=torch.int64,
+          exception=NotImplementedError,
+          expected_error="""reduce_scatter_dim(): reduce op min is not supported for int64 tensors; only sum and avg are supported for 64-bit dtypes""",
+      ),
+      dict(
           testcase_name="all_gather_dim_group_size_mismatch",
           op="_all_gather_dim",
           shape=(2, 4),
@@ -4477,7 +4486,13 @@ module {
   )
   @et.why_tpu_only("torch.ops.tpu dimensional collectives are TPU-specific ops")
   def test_dimensional_collectives(
-      self, op, shape, args, expected_error, exception=RuntimeError
+      self,
+      op,
+      shape,
+      args,
+      expected_error,
+      exception=RuntimeError,
+      dtype=torch.float32,
   ):
     # The default group is named "0", and its TPU backend is a
     # FakeProcessGroup rather than a ProcessGroupTpu.
@@ -4485,7 +4500,7 @@ module {
         "tpu:fake", store=fake_pg.FakeStore(), rank=0, world_size=2
     )
     self.addCleanup(dist.destroy_process_group)
-    x = torch.ones(shape, device=et.device())
+    x = torch.ones(shape, dtype=dtype, device=et.device())
     with et.assert_raises_message(exception, tpu=expected_error):
       getattr(torch.ops.tpu, op)(x, *args, "0")
 

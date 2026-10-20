@@ -74,12 +74,23 @@ absl::Status ValidateReductionOp(c10d::ReduceOp reduce_op,
                              reduce_op == c10d::ReduceOp::BXOR;
   TT_RET_CHECK(is_valid_bitwise_op || is_valid_standard_op,
                error::kInvalidArgument)
-      << "reduce option not supported: " << ToString(reduce_op);
+      << "reduce option not supported: " << ToString(reduce_op.op_);
   if (is_valid_bitwise_op) {
     TT_RET_CHECK(IsIntegral(scalar_type), error::kInvalidArgument)
         << "expected the tensors dtype to be integer on bitwise reduction ops "
            "(BAND, BOR, BXOR), got "
         << ToString(scalar_type);
+  }
+  const bool is_64bit_dtype = scalar_type == c10::ScalarType::Long ||
+                              scalar_type == c10::ScalarType::Double ||
+                              scalar_type == c10::ScalarType::UInt64;
+  if (is_64bit_dtype) {
+    TT_RET_CHECK(
+        reduce_op == c10d::ReduceOp::SUM || reduce_op == c10d::ReduceOp::AVG,
+        error::kPythonNotImplementedError)
+        << "reduce op " << ToString(reduce_op.op_) << " is not supported for "
+        << ToString(scalar_type)
+        << " tensors; only sum and avg are supported for 64-bit dtypes";
   }
   return absl::OkStatus();
 }
