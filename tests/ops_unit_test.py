@@ -2305,8 +2305,8 @@ class OpsUnitTest(TorchTpuVsCpuTestBase):
     # Relax tolerances because we are running in BF16 on TPU for performance.
     self.assert_close_tpu_vs_cpu(run_forward, rtol=3e-2, atol=2e-2)
 
-  @parameterized.product(training=[True, False])
-  def test_batch_norm_backward_mixed_dtype(self, training):
+  @parameterized.product(training=[True, False], has_weight=[True, False])
+  def test_batch_norm_backward_mixed_dtype(self, training, has_weight):
     """Tests batch_norm_backward with mixed BF16 input and F32 stats."""
     # This scenario happens often in mixed precision training where
     # inputs/grads are BF16 but running stats are kept in F32.
@@ -2318,7 +2318,7 @@ class OpsUnitTest(TorchTpuVsCpuTestBase):
     # Create inputs
     grad_out = torch.randn(n, c, h, w, dtype=input_dtype)
     input_val = torch.randn(n, c, h, w, dtype=input_dtype)
-    weight = torch.randn(c, dtype=stats_dtype)
+    weight = torch.randn(c, dtype=stats_dtype) if has_weight else None
     running_mean = torch.randn(c, dtype=stats_dtype)
     running_var = torch.rand(c, dtype=stats_dtype)  # Positive variance
     save_mean = torch.randn(c, dtype=stats_dtype)
@@ -2328,7 +2328,7 @@ class OpsUnitTest(TorchTpuVsCpuTestBase):
       return torch.ops.aten.native_batch_norm_backward(
           grad_out.to(device),
           input_val.to(device),
-          weight.to(device),
+          weight.to(device) if weight is not None else None,
           running_mean.to(device),
           running_var.to(device),
           save_mean.to(device),
@@ -2340,6 +2340,78 @@ class OpsUnitTest(TorchTpuVsCpuTestBase):
 
     # Relax tolerances because we are running in BF16 on TPU for performance.
     self.assert_close_tpu_vs_cpu(run_backward, rtol=6e-2, atol=4e-2)
+
+  @parameterized.product(
+      dtype=[torch.float32, torch.bfloat16, torch.float16],
+      stats_dtype=[torch.float32, None],
+  )
+  def test_batch_norm_backward_training_no_weight_with_running_stats(
+      self, dtype, stats_dtype
+  ):
+    """Tests training backward with weight=None and running statistics present."""
+    effective_stats_dtype = stats_dtype if stats_dtype is not None else dtype
+    n, c, h, w = 2, 4, 8, 8
+    grad_out = torch.randn(n, c, h, w, dtype=dtype)
+    input_val = torch.randn(n, c, h, w, dtype=dtype)
+    running_mean = torch.randn(c, dtype=effective_stats_dtype)
+    running_var = torch.rand(c, dtype=effective_stats_dtype) + 0.1
+    save_mean = torch.randn(c, dtype=effective_stats_dtype)
+    save_invstd = torch.rand(c, dtype=effective_stats_dtype) + 0.1
+
+    def run_backward(device):
+      return torch.ops.aten.native_batch_norm_backward(
+          grad_out.to(device),
+          input_val.to(device),
+          None,
+          running_mean.to(device),
+          running_var.to(device),
+          save_mean.to(device),
+          save_invstd.to(device),
+          True,  # training
+          1e-5,  # eps
+          [True, True, True],
+      )
+
+    tpu_grads = run_backward("tpu")
+    self.assertEqual(tpu_grads[1].dtype, effective_stats_dtype)
+    self.assertEqual(tpu_grads[2].dtype, effective_stats_dtype)
+    rtol = 5e-2 if dtype != torch.float32 else 1e-4
+    atol = 5e-2 if dtype != torch.float32 else 1e-4
+    self.assert_close_tpu_vs_cpu(run_backward, rtol=rtol, atol=atol)
+
+  @parameterized.product(
+      dtype=[torch.float32, torch.bfloat16, torch.float16],
+      has_weight=[True, False],
+  )
+  def test_native_batch_norm_backward_inference_grad_weight_precision(
+      self, dtype, has_weight
+  ):
+    """Tests inference native_batch_norm_backward grad_weight accumulation precision."""
+    n, c, h, w = 4, 4, 16, 16
+    stats_dtype = torch.float32
+    grad_out = torch.randn(n, c, h, w, dtype=dtype)
+    input_val = torch.randn(n, c, h, w, dtype=dtype) + 50.0
+    weight = torch.randn(c, dtype=stats_dtype) if has_weight else None
+    running_mean = torch.full((c,), 50.0, dtype=stats_dtype)
+    running_var = torch.rand(c, dtype=stats_dtype) * 0.05 + 1e-3
+
+    def run_backward(device):
+      return torch.ops.aten.native_batch_norm_backward(
+          grad_out.to(device),
+          input_val.to(device),
+          weight.to(device) if weight is not None else None,
+          running_mean.to(device),
+          running_var.to(device),
+          None,
+          None,
+          False,  # training
+          1e-5,  # eps
+          [True, True, True],
+      )
+
+    rtol = 5e-2 if dtype != torch.float32 else 1e-4
+    atol = 5e-2 if dtype != torch.float32 else 1e-4
+    self.assert_close_tpu_vs_cpu(run_backward, rtol=rtol, atol=atol)
 
   @parameterized.product(training=[True, False])
   def test_batch_norm_backward_extreme_stats(self, training):
@@ -2567,9 +2639,10 @@ class OpsUnitTest(TorchTpuVsCpuTestBase):
       has_weight=[True, False],
       has_bias=[True, False],
       has_running_stats=[True, False],
+      training=[True, False],
   )
   def test_native_batch_norm_optional_args(
-      self, has_weight, has_bias, has_running_stats
+      self, has_weight, has_bias, has_running_stats, training
   ):
     input_dtype = torch.float32
     stats_dtype = torch.float32
@@ -2588,16 +2661,41 @@ class OpsUnitTest(TorchTpuVsCpuTestBase):
     )
 
     def run_op(device):
-      return torch.ops.aten.native_batch_norm(
+      is_cpu_eval = not training and str(device) == "cpu"
+      rm = (
+          running_mean.to(device)
+          if running_mean is not None
+          else (
+              torch.zeros(c, dtype=stats_dtype, device=device)
+              if is_cpu_eval
+              else None
+          )
+      )
+      rv = (
+          running_var.to(device)
+          if running_var is not None
+          else (
+              torch.ones(c, dtype=stats_dtype, device=device)
+              if is_cpu_eval
+              else None
+          )
+      )
+      out, save_mean, save_invstd = torch.ops.aten.native_batch_norm(
           input_val.to(device),
           weight.to(device) if weight is not None else None,
           bias.to(device) if bias is not None else None,
-          running_mean.to(device) if running_mean is not None else None,
-          running_var.to(device) if running_var is not None else None,
-          training=True,
+          rm,
+          rv,
+          training=training,
           momentum=0.1,  # momentum
           eps=eps,  # eps
       )
+      if is_cpu_eval:
+        # Match TPU/CUDA inference semantics where save_mean and save_invstd
+        # return the effective running_mean and rsqrt(running_var + eps).
+        save_mean = rm
+        save_invstd = torch.rsqrt(rv + eps)
+      return out, save_mean, save_invstd
 
     self.assert_close_tpu_vs_cpu(run_op)
 

@@ -156,6 +156,8 @@ absl::StatusOr<mlir::MlirOp> ComputeTrainingGradInput(
 absl::StatusOr<MlirOpResults<3>> BuildBatchNormBackwardTraining(
     mlir::MlirOp grad_out, mlir::MlirOp input,
     std::optional<mlir::MlirOp> weight_opt,
+    std::optional<mlir::MlirOp> running_mean_opt,
+    std::optional<mlir::MlirOp> running_variance_opt,
     std::optional<mlir::MlirOp> save_mean_opt,
     std::optional<mlir::MlirOp> save_invstd_opt,
     std::array<bool, 3> output_mask, mlir::ElementType acc_dtype) {
@@ -168,7 +170,8 @@ absl::StatusOr<MlirOpResults<3>> BuildBatchNormBackwardTraining(
   const mlir::RankedTensorType input_type = GetTensorTypeOrDie(input);
   const mlir::ElementType input_dtype = GetElementTypeOrDie(input);
   const mlir::ElementType weight_dtype = GetParamElementType(
-      input_dtype, {weight_opt, save_mean_opt, save_invstd_opt});
+      input_dtype, {weight_opt, running_mean_opt, running_variance_opt,
+                    save_mean_opt, save_invstd_opt});
   const Dimensions reduce_dims =
       GetBatchDimensions(input_type.getRank(), kTorchFeaturesDimensionIndex);
 
@@ -300,14 +303,11 @@ absl::StatusOr<MlirOpResults<3>> BuildBatchNormBackwardInference(
         BroadcastIfNeeded(mean, input, {kTorchFeaturesDimensionIndex}));
     mlir::MlirOp x_minus_mean =
         mlir::stablehlo::Subtract(input, broadcasted_mean);
-    TT_ASSIGN_OR_RETURN(
-        mlir::MlirOp broadcasted_inv_std,
-        BroadcastIfNeeded(inv_std, input, {kTorchFeaturesDimensionIndex}));
-    mlir::MlirOp norm = mlir::stablehlo::Mul(x_minus_mean, broadcasted_inv_std);
-    mlir::MlirOp grad_out_times_norm = mlir::stablehlo::Mul(grad_out, norm);
-
-    TT_ASSIGN_OR_RETURN(grad_weight,
-                        BuildSumShlo(grad_out_times_norm, reduce_dims));
+    mlir::MlirOp grad_out_times_x_minus_mean =
+        mlir::stablehlo::Mul(grad_out, x_minus_mean);
+    TT_ASSIGN_OR_RETURN(mlir::MlirOp dot_p,
+                        BuildSumShlo(grad_out_times_x_minus_mean, reduce_dims));
+    grad_weight = mlir::stablehlo::Mul(dot_p, inv_std);
     grad_weight =
         mlir::stablehlo::ConvertElementType(grad_weight, weight_dtype);
   } else {
@@ -340,9 +340,9 @@ absl::StatusOr<MlirOpResults<3>> BuildBatchNormBackward(
                << " input=" << input.ToString() << " training=" << training
                << " eps=" << eps;
   if (training) {
-    return BuildBatchNormBackwardTraining(grad_out, input, weight_opt,
-                                          save_mean_opt, save_invstd_opt,
-                                          output_mask, acc_dtype);
+    return BuildBatchNormBackwardTraining(
+        grad_out, input, weight_opt, running_mean_opt, running_variance_opt,
+        save_mean_opt, save_invstd_opt, output_mask, acc_dtype);
   }
   return BuildBatchNormBackwardInference(grad_out, input, weight_opt,
                                          running_mean_opt, running_variance_opt,
@@ -411,7 +411,7 @@ absl::StatusOr<MlirOpResults<3>> BuildBatchNorm(
     mlir::MlirOp running_variance =
         running_variance_opt
             ? *running_variance_opt
-            : MakeConstant(builder, 0.0, input_dtype, {num_features});
+            : MakeConstant(builder, 1.0, input_dtype, {num_features});
 
     // Promotion to accumulation precision.
     input = mlir::stablehlo::ConvertElementType(input, acc_dtype);

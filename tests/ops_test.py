@@ -997,10 +997,6 @@ ACCURACY_OVERRIDES_GRAD_VS_GPU: dict[
             torch.bfloat16: {"atol": 1.1e-2},
             torch.float16: {"atol": 1.4e-3},
         },
-        "nn.functional.batch_norm": {
-            torch.bfloat16: {"rtol": 1, "atol": 1.5e-3},
-            torch.float16: {"rtol": 1.1, "atol": 2.6e-4},
-        },
         "nn.functional.cross_entropy": {
             torch.bfloat16: {"atol": 1.2e-3},
             torch.float16: {"atol": 3e-4},
