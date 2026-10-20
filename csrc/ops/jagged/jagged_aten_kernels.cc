@@ -42,10 +42,10 @@
 #include "csrc/eager/op_dispatcher.h"
 #include "csrc/eager/structured_log_buffer.h"
 #include "csrc/eager/tensor_to_buffer.h"
+#include "csrc/ops/copy_from/tpu_to_cpu.h"
 #include "csrc/ops/macros/kernel.h"
 #include "csrc/ops/op_builder_utils.h"
 #include "csrc/ops/op_names.h"
-#include "csrc/pjrt/pjrt_transfer.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/IR/Builders.h"
@@ -67,7 +67,8 @@ namespace {
 // In TorchTPU eager execution, calling ATen methods like .to(at::kCPU) triggers
 // nested ATen dispatch (_to_copy), which is banned under composite op checks.
 // To circumvent composite dispatch, we directly transfer device memory to host
-// using MaterializeAndReturn + TpuMemcpyDtoHDirect when offsets reside on TPU.
+// using MaterializeAndReturn + CopyDeviceBufferRefToCpuPtr when offsets reside
+// on TPU.
 absl::StatusOr<Indices> GetCpuOffsets(const at::Tensor& offsets_tensor) {
   const int64_t num_elements = offsets_tensor.numel();
   Indices offsets(num_elements);
@@ -83,7 +84,8 @@ absl::StatusOr<Indices> GetCpuOffsets(const at::Tensor& offsets_tensor) {
         auto materialized_buf,
         MaterializeAndReturn(offsets_tensor,
                              MaterializationReason::kScalarConversion));
-    TT_RETURN_IF_ERROR(TpuMemcpyDtoHDirect(materialized_buf, offsets.data()));
+    TT_RETURN_IF_ERROR(
+        CopyDeviceBufferRefToCpuPtr(materialized_buf, offsets.data()));
   }
   return offsets;
 }

@@ -34,8 +34,15 @@ absl::Status CopyTpuToCpu(const at::Tensor& src, const at::Tensor& dest,
                           bool non_blocking);
 
 // Writes the values of src_buffer_ref (on TPU) to a new, contiguous CPU tensor.
-absl::StatusOr<at::Tensor> CopyDeviceBufferRefToCpu(
-    const DeviceBufferRef& src_buffer_ref, bool non_blocking);
+// This is always a blocking copy.
+absl::StatusOr<at::Tensor> CopyDeviceBufferRefToCpuTensor(
+    const DeviceBufferRef& src_buffer_ref);
+
+// Writes the values of src_buffer_ref (on TPU) to the given CPU pointer.
+// The caller is responsible for allocating sufficient memory for dest_ptr.
+// This is always a blocking copy.
+absl::Status CopyDeviceBufferRefToCpuPtr(const DeviceBufferRef& src_buffer_ref,
+                                         void* dest_ptr);
 
 }  // namespace torch_tpu
 

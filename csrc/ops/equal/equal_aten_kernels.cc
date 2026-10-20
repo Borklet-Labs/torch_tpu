@@ -30,10 +30,10 @@
 #include "csrc/eager/op_dispatcher.h"
 #include "csrc/eager/structured_log_buffer.h"
 #include "csrc/eager/tensor_to_buffer.h"
+#include "csrc/ops/copy_from/tpu_to_cpu.h"
 #include "csrc/ops/macros/kernel.h"
 #include "csrc/ops/op_builder_utils.h"
 #include "csrc/ops/op_names.h"
-#include "csrc/pjrt/pjrt_transfer.h"
 #include "mlir/IR/Types.h"
 #include "stablehlo/dialect/StablehloOps.h"
 #include "stablehlo/integrations/cpp/builder/AttrTypeBuilderUtil.h"
@@ -106,7 +106,7 @@ bool AtenEqual(const at::Tensor& self, const at::Tensor& other) {
         auto materialized_result_buf,
         MaterializeAndReturn(result, MaterializationReason::kScalarConversion));
     TT_THROW_IF_ERROR(
-        TpuMemcpyDtoHDirect(materialized_result_buf, &result_scalar));
+        CopyDeviceBufferRefToCpuPtr(materialized_result_buf, &result_scalar));
   });
 
   return result_scalar;

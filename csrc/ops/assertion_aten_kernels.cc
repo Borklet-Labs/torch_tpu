@@ -114,8 +114,7 @@ void ScheduleAsyncAssertionCheck(const at::Tensor& self,
     // This is a blocking transfer on a background thread, which is async
     // relative to the thread that called `ScheduleAsyncAssertionCheck`.
     // It needs to be blocking so that we can immediately call ".item()" below.
-    auto status_or_tensor =
-        CopyDeviceBufferRefToCpu(materialized_buf, /*non_blocking=*/false);
+    auto status_or_tensor = CopyDeviceBufferRefToCpuTensor(materialized_buf);
     if (!status_or_tensor.ok()) {
       SetStickyError(status_or_tensor.status());
       return;

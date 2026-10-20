@@ -128,10 +128,16 @@ bool CanCopyStorageDirect(const at::Tensor& src, const at::Tensor& dest,
   return src.storage().nbytes() == dest.nbytes();
 }
 
-// Materializes src_buffer_ref and copies it directly into dest's storage.
-absl::Status CopyDeviceBufferRefToCpuStorageDirect(
-    const DeviceBufferRef& src_buffer_ref, const at::Tensor& dest,
-    bool non_blocking) {
+// Materializes src_buffer_ref and copies it directly into dest_ptr.
+absl::Status CopyDeviceBufferRefToCpuPtrImpl(
+    const DeviceBufferRef& src_buffer_ref, void* dest_ptr, bool non_blocking) {
+  if (src_buffer_ref.size_bytes() == 0) {
+    // Copying nothing is a no-op.
+    return absl::OkStatus();
+  }
+  TT_RET_CHECK(  // ERROR_COV_INFEASIBLE=unreachable from Python
+      dest_ptr != nullptr, error::kInvalidArgument)
+      << "cannot copy a nonzero amount of data to a null pointer";
   const MaterializationBlockMode block_mode =
       non_blocking ? MaterializationBlockMode::kNonBlocking
                    : MaterializationBlockMode::kBlockUntilStarted;
@@ -140,10 +146,10 @@ absl::Status CopyDeviceBufferRefToCpuStorageDirect(
     TT_RETURN_IF_ERROR(TranslateXlaTensorOomError(
         Materialize(src_buffer_ref, MaterializationReason::kCpuTransfer,
                     GraphSplitMode::kSplitGraph, block_mode),
-        dest.scalar_type(), dest.sizes()));
+        ConvertTo<at::ScalarType>(src_buffer_ref.element_type()),
+        src_buffer_ref.dimensions()));
   }
-  // Copy directly into dest's storage.
-  return TpuMemcpyDtoHDirect(src_buffer_ref, dest.data_ptr(), non_blocking);
+  return TpuMemcpyDtoHDirect(src_buffer_ref, dest_ptr, non_blocking);
 }
 
 // Materializes the base buffer of src, and copies it byte-for-byte into dest's
@@ -154,7 +160,8 @@ absl::Status CopyTpuToCpuStorageDirect(const at::Tensor& src,
                                        bool non_blocking) {
   TT_ASSIGN_OR_RETURN(DeviceBufferRef base_buf, GetBaseBuffer(src));
   ABSL_DCHECK(CanCopyStorageDirect(src, dest, base_buf.element_type()));
-  return CopyDeviceBufferRefToCpuStorageDirect(base_buf, dest, non_blocking);
+  return CopyDeviceBufferRefToCpuPtrImpl(base_buf, dest.data_ptr(),
+                                         non_blocking);
 }
 
 // Converts a TPU source tensor into a contiguous DeviceBufferRef with the same
@@ -227,8 +234,8 @@ absl::Status CopyTpuToCpuWithTpuConversion(
   // is unchanged.
   TT_ASSIGN_OR_RETURN(DeviceBufferRef converted_src_buf,
                       GetBuffer(converted_src));
-  return CopyDeviceBufferRefToCpuStorageDirect(converted_src_buf, dest,
-                                               non_blocking);
+  return CopyDeviceBufferRefToCpuPtrImpl(converted_src_buf, dest.data_ptr(),
+                                         non_blocking);
 }
 
 // PJRT can only asynchronously copy from a TPU tensor into contiguous CPU
@@ -247,9 +254,8 @@ absl::Status CopyTpuToCpuWithCpuConversion(const at::Tensor& src,
   // Materialize the contiguous base buffer of the source tensor and copy it to
   // a temporary CPU tensor.
   TT_ASSIGN_OR_RETURN(DeviceBufferRef base_buf, GetBaseBuffer(src));
-  TT_ASSIGN_OR_RETURN(
-      at::Tensor cpu_temp,
-      CopyDeviceBufferRefToCpu(base_buf, /*non_blocking=*/false));
+  TT_ASSIGN_OR_RETURN(at::Tensor cpu_temp,
+                      CopyDeviceBufferRefToCpuTensor(base_buf));
 
   // View the source Storage on host in the same way as on TPU.
   auto* cpu_temp_impl = cpu_temp.unsafeGetTensorImpl();
@@ -350,8 +356,14 @@ absl::Status CopyTpuToCpu(const at::Tensor& src, const at::Tensor& dest,
   return CopyTpuToCpuWithCpuConversion(src, dest);
 }
 
-absl::StatusOr<at::Tensor> CopyDeviceBufferRefToCpu(
-    const DeviceBufferRef& src_buffer_ref, bool non_blocking) {
+absl::Status CopyDeviceBufferRefToCpuPtr(const DeviceBufferRef& src_buffer_ref,
+                                         void* dest_ptr) {
+  return CopyDeviceBufferRefToCpuPtrImpl(src_buffer_ref, dest_ptr,
+                                         /*non_blocking=*/false);
+}
+
+absl::StatusOr<at::Tensor> CopyDeviceBufferRefToCpuTensor(
+    const DeviceBufferRef& src_buffer_ref) {
   const at::ScalarType src_scalar_type =
       ConvertTo<at::ScalarType>(src_buffer_ref.element_type());
   at::IntArrayRef contiguous_dims = src_buffer_ref.dimensions();
@@ -377,8 +389,9 @@ absl::StatusOr<at::Tensor> CopyDeviceBufferRefToCpu(
                                   .dtype(src_scalar_type)
                                   .device(at::DeviceType::CPU)
                                   .memory_format(at::MemoryFormat::Contiguous));
-  TT_RETURN_IF_ERROR(CopyDeviceBufferRefToCpuStorageDirect(src_buffer_ref, dest,
-                                                           non_blocking));
+  TT_RETURN_IF_ERROR(CopyDeviceBufferRefToCpuPtrImpl(src_buffer_ref,
+                                                     dest.data_ptr(),
+                                                     /*non_blocking=*/false));
   return dest;
 }
 
