@@ -1192,6 +1192,83 @@ class MeasurePostWarmupXprofTest(seed_test_utils.RepeatableTest):
             step, ops, name="test_cuda_recompile", enable_xprof=False
         )
 
+  def test_post_warmup_hook_per_step_and_final_xprof_hook_outside_session(
+      self,
+  ):
+    events = []
+
+    class HookTrackingStep(CountingStep):
+
+      def __call__(self):
+        events.append("step")
+        return super().__call__()
+
+      def pre_warmup_init(self) -> None:
+        events.append("pre_warmup_init")
+
+      def post_warmup_hook(self) -> None:
+        events.append("post_warmup_hook")
+
+    class SessionTrackingOps(RecordingOps):
+
+      def await_result(self, out) -> None:
+        events.append("await")
+        super().await_result(out)
+
+      def check_result(self, out) -> None:
+        events.append("check")
+        super().check_result(out)
+
+    def _end_warmup_session():
+      events.append("warmup_xprof_end")
+      return None, "http://xprof/?session_id=warmup_id"
+
+    def _start_post_warmup_session(**_):
+      events.append("post_warmup_xprof_start")
+
+    def _end_post_warmup_session():
+      events.append("post_warmup_xprof_end")
+      return None, "http://xprof/?session_id=post_warmup_id"
+
+    warmup_session = mock.MagicMock()
+    warmup_session.end_session_and_get_xspace_and_url.side_effect = (
+        _end_warmup_session
+    )
+    post_warmup_session = mock.MagicMock()
+    post_warmup_session.start_session.side_effect = _start_post_warmup_session
+    post_warmup_session.end_session_and_get_xspace_and_url.side_effect = (
+        _end_post_warmup_session
+    )
+
+    with mock.patch.object(
+        measure_lib.xprof_adapter,
+        "XprofSession",
+        side_effect=[warmup_session, post_warmup_session],
+    ):
+      _run_measure(
+          HookTrackingStep(),
+          SessionTrackingOps(),
+          steps=2,
+          min_warmup=2,
+          xprof_steps=2,
+          enable_xprof=True,
+      )
+
+    # 2 warmup steps + 2 post-warmup steps + 2 profiled steps = 6 steps, so
+    # post_warmup_hook must run exactly 6 times (never twice between warmup and
+    # post-warmup), and the final profiled step's post_warmup_hook must run
+    # AFTER post_warmup_xprof_end so it is not captured in XSpace.
+    self.assertEqual(events.count("step"), 6)
+    self.assertEqual(events.count("post_warmup_hook"), 6)
+    xprof_start_idx = events.index("post_warmup_xprof_start")
+    xprof_end_idx = events.index("post_warmup_xprof_end")
+    hooks_inside_xprof = events[xprof_start_idx:xprof_end_idx].count(
+        "post_warmup_hook"
+    )
+    hooks_after_xprof = events[xprof_end_idx:].count("post_warmup_hook")
+    self.assertEqual(hooks_inside_xprof, 1)
+    self.assertEqual(hooks_after_xprof, 1)
+
 
 if __name__ == "__main__":
   absltest.main()

@@ -14,9 +14,10 @@
 
 """Utilities for device operations in TorchBench."""
 
+from collections.abc import Mapping, Sequence
 import json
 import os
-from typing import Any, Callable, Sequence
+from typing import Any, Callable, Final
 
 from absl import logging
 import psutil
@@ -93,29 +94,103 @@ def _get_peak_hbm_memory_mb(
     return -1.0
 
 
-def _sum_xla_module_time_s(plane: Any) -> tuple[float, int]:
-  """Sums all 'XLA Modules' event durations on a single device plane.
+_POST_WARMUP_STEP_TRACE_PREFIX: Final[str] = 'post_warmup_step'
 
-  Every event is summed. A single step commonly executes several XLA modules
-  (e.g. forward, backward and optimizer modules, or a graph split across
-  several executables), so the event count is not the step count and the
-  events must not be truncated to a step count.
+
+def _extract_step_windows_ps(xspace: Any) -> list[tuple[int, int]]:
+  """Extracts host (start_ps, end_ps) windows for post_warmup_step TraceMes."""
+  windows: list[tuple[int, int]] = []
+  for plane in getattr(xspace, 'planes', []):
+    plane_name = getattr(plane, 'name', '')
+    if not isinstance(plane_name, str) or plane_name.startswith('/device:'):
+      continue
+    event_metadata = getattr(plane, 'event_metadata', None)
+    if not isinstance(event_metadata, Mapping):
+      continue
+    matching_meta_ids: set[Any] = set()
+    for meta_id, meta in event_metadata.items():
+      name = getattr(meta, 'name', '') or getattr(meta, 'display_name', '')
+      if isinstance(name, str) and name.startswith(
+          _POST_WARMUP_STEP_TRACE_PREFIX
+      ):
+        matching_meta_ids.add(meta_id)
+    if not matching_meta_ids:
+      continue
+    for line in getattr(plane, 'lines', []):
+      ts_ns = getattr(line, 'timestamp_ns', 0)
+      line_start_ps = (ts_ns if isinstance(ts_ns, int) else 0) * 1000
+      for event in getattr(line, 'events', []):
+        if getattr(event, 'metadata_id', None) not in matching_meta_ids:
+          continue
+        offset_ps = getattr(event, 'offset_ps', 0)
+        duration_ps = getattr(event, 'duration_ps', 0)
+        if (
+            isinstance(offset_ps, int)
+            and isinstance(duration_ps, int)
+            and duration_ps > 0
+        ):
+          start_ps = line_start_ps + offset_ps
+          windows.append((start_ps, start_ps + duration_ps))
+  return windows
+
+
+def _event_overlaps_windows(
+    start_ps: int,
+    end_ps: int,
+    windows_ps: Sequence[tuple[int, int]],
+) -> bool:
+  """Returns whether an event window overlaps any step window."""
+  for win_start_ps, win_end_ps in windows_ps:
+    if start_ps < win_end_ps and end_ps > win_start_ps:
+      return True
+  return False
+
+
+def _sum_xla_module_time_s(
+    plane: Any,
+    step_windows_ps: Sequence[tuple[int, int]] = (),
+) -> tuple[float, int]:
+  """Sums 'XLA Modules' event durations on a single device plane.
+
+  Every step event is summed. A single step commonly executes several XLA
+  modules (e.g. forward, backward and optimizer modules, or a graph split
+  across several executables), so the event count is not the step count and
+  the events must not be truncated to a step count. When `step_windows_ps` is
+  non-empty, only XLA module events overlapping a `post_warmup_step` host
+  TraceMe window are summed, excluding interstep hook overhead such as KV cache
+  resets.
 
   Args:
     plane: An XPlane whose name identifies a single device.
+    step_windows_ps: Optional `(start_ps, end_ps)` host windows for measured
+      steps.
 
   Returns:
     A tuple of (total seconds, number of events summed).
   """
-  device_time_ps = 0
-  event_count = 0
+  all_time_ps = 0
+  all_count = 0
+  filtered_time_ps = 0
+  filtered_count = 0
   for line in plane.lines:
     if not line.name.startswith('XLA Modules'):
       continue
+    ts_ns = getattr(line, 'timestamp_ns', 0)
+    line_start_ps = (ts_ns if isinstance(ts_ns, int) else 0) * 1000
     for e in line.events:
-      device_time_ps += e.duration_ps
-      event_count += 1
-  return device_time_ps / 1e12, event_count
+      all_time_ps += e.duration_ps
+      all_count += 1
+      if step_windows_ps:
+        offset_ps = getattr(e, 'offset_ps', 0)
+        if isinstance(offset_ps, int):
+          ev_start_ps = line_start_ps + offset_ps
+          ev_end_ps = ev_start_ps + e.duration_ps
+          if _event_overlaps_windows(ev_start_ps, ev_end_ps, step_windows_ps):
+            filtered_time_ps += e.duration_ps
+            filtered_count += 1
+  if step_windows_ps:
+    return filtered_time_ps / 1e12, filtered_count
+  return all_time_ps / 1e12, all_count
 
 
 def get_total_device_time_from_xspace(
@@ -148,11 +223,14 @@ def get_total_device_time_from_xspace(
   try:
     max_device_time_s = 0.0
     has_any_device = False
+    step_windows_ps = _extract_step_windows_ps(xspace)
 
     for plane in xspace.planes:
       if not plane.name.startswith('/device:'):
         continue
-      device_time_s, event_count = _sum_xla_module_time_s(plane)
+      device_time_s, event_count = _sum_xla_module_time_s(
+          plane, step_windows_ps=step_windows_ps
+      )
       if event_count == 0:
         continue
       if expected_steps and event_count % expected_steps:

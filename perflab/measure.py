@@ -476,15 +476,27 @@ def _post_warmup_run(
 
   step_fn = stepper.get_step_fn()
 
-  def _run_single_step(expected_compile_count: int) -> float:
-    start_time = time.perf_counter()
-    out = step_fn()
-    device_ops.await_result(out)
-    elapsed = time.perf_counter() - start_time
+  def _run_single_step(
+      expected_compile_count: int,
+      *,
+      run_post_hook: bool = True,
+      trace_step_num: int | None = None,
+  ) -> float:
+    trace_ctx = (
+        xprof_adapter.TraceMe("post_warmup_step", step_num=trace_step_num)
+        if trace_step_num is not None
+        else contextlib.nullcontext()
+    )
+    with trace_ctx:
+      start_time = time.perf_counter()
+      out = step_fn()
+      device_ops.await_result(out)
+      elapsed = time.perf_counter() - start_time
     # Outside the timed region: fail instead of timing a failed step.
     device_ops.check_result(out)
     del out
-    stepper.post_warmup_hook()
+    if run_post_hook:
+      stepper.post_warmup_hook()
 
     step_compile_count = device_ops.compile_count()
     if step_compile_count != expected_compile_count:
@@ -535,13 +547,19 @@ def _post_warmup_run(
     )
   elif enable_xprof and XPROF_STEPS.value > 0:
     profiling_start_time = time.perf_counter()
-    with gc_disabled(), XprofContext(
-        name="post_warmup_run",
-        enable_xprof=enable_xprof,
-        trace_only_host=False,
-    ) as xprof_context:
-      for xprof_step in range(XPROF_STEPS.value):
-        xprof_timings[xprof_step] = _run_single_step(compile_count_before)
+    with gc_disabled():
+      with XprofContext(
+          name="post_warmup_run",
+          enable_xprof=enable_xprof,
+          trace_only_host=False,
+      ) as xprof_context:
+        for xprof_step in range(XPROF_STEPS.value):
+          xprof_timings[xprof_step] = _run_single_step(
+              compile_count_before,
+              run_post_hook=(xprof_step < XPROF_STEPS.value - 1),
+              trace_step_num=xprof_step,
+          )
+      stepper.post_warmup_hook()
     if profiling_time is not None:
       profiling_time.seconds += time.perf_counter() - profiling_start_time
 
@@ -602,7 +620,6 @@ def measure(
   )
 
   if _do_post_warmup():
-    stepper.post_warmup_hook()
     result_kwargs |= dataclasses.asdict(
         _post_warmup_run(
             stepper,

@@ -1877,6 +1877,106 @@ class StepperTypeTest(seed_test_utils.RepeatableTest):
     if hasattr(config, "allow_global_per_layer_attribute_access"):
       self.assertTrue(config.allow_global_per_layer_attribute_access)
 
+  def test_decode_stepper_pre_warmup_and_post_warmup_synchronize_device(self):
+    ops = self._ops()
+    config = transformers.LlamaConfig(
+        vocab_size=16,
+        hidden_size=8,
+        intermediate_size=16,
+        num_hidden_layers=1,
+        num_attention_heads=1,
+        num_key_value_heads=1,
+        max_position_embeddings=128,
+    )
+    if not hasattr(config, "head_dim"):
+      config.head_dim = config.hidden_size // config.num_attention_heads
+    model = transformers.LlamaForCausalLM(config).to(ops.device).eval()
+    x = torch.randint(0, 16, (1, 4), device=ops.device)
+
+    stepper = decode.decode(output_tokens=4, dynamism=False)
+    stepper.init_with_benchmark_args(model, (), {"input_ids": x})
+
+    with mock.patch.object(
+        torch.accelerator,
+        "synchronize",
+        wraps=torch.accelerator.synchronize,
+    ) as mock_sync:
+      stepper.pre_warmup_init()
+      mock_sync.assert_called_once()
+
+      step_fn = stepper.get_step_fn()
+      _ = step_fn()
+      mock_sync.reset_mock()
+
+      stepper.post_warmup_hook()
+      mock_sync.assert_called_once()
+
+  def test_decode_stepper_reuses_preallocated_position_tensors(self):
+    ops = self._ops()
+    config = transformers.LlamaConfig(
+        vocab_size=16,
+        hidden_size=8,
+        intermediate_size=16,
+        num_hidden_layers=1,
+        num_attention_heads=1,
+        num_key_value_heads=1,
+        max_position_embeddings=128,
+    )
+    if not hasattr(config, "head_dim"):
+      config.head_dim = config.hidden_size // config.num_attention_heads
+    model = transformers.LlamaForCausalLM(config).to(ops.device).eval()
+    prompt_len = 4
+    output_tokens = 4
+    x = torch.randint(0, 16, (2, prompt_len), device=ops.device)
+
+    stepper = decode.decode(output_tokens=output_tokens, dynamism=False)
+    stepper.init_with_benchmark_args(model, (), {"input_ids": x})
+    stepper.pre_warmup_init()
+
+    expected_positions = list(range(prompt_len, prompt_len + output_tokens))
+    self.assertCountEqual(
+        stepper._decode_cache_positions.keys(), expected_positions
+    )
+    self.assertCountEqual(
+        stepper._decode_position_ids.keys(), expected_positions
+    )
+
+    seen_cache_positions = []
+    seen_position_ids = []
+    orig_inner_stepper = stepper._inner_stepper
+
+    def recording_inner_stepper(m, next_token, step_kwargs, cache):
+      seen_cache_positions.append(step_kwargs["cache_position"])
+      seen_position_ids.append(step_kwargs["position_ids"])
+      return orig_inner_stepper(m, next_token, step_kwargs, cache)
+
+    stepper._inner_stepper = recording_inner_stepper
+    step_fn = stepper.get_step_fn()
+    _ = step_fn()
+
+    self.assertLen(seen_cache_positions, output_tokens)
+    self.assertLen(seen_position_ids, output_tokens)
+    for pos, got_cache_pos, got_pos_ids in zip(
+        expected_positions, seen_cache_positions, seen_position_ids
+    ):
+      self.assertIs(got_cache_pos, stepper._decode_cache_positions[pos])
+      self.assertIs(got_pos_ids, stepper._decode_position_ids[pos])
+
+    # Re-run after post_warmup_hook to verify position tensors continue to be
+    # reused across step resets.
+    seen_cache_positions.clear()
+    seen_position_ids.clear()
+    stepper.post_warmup_hook()
+    _ = step_fn()
+
+    self.assertLen(seen_cache_positions, output_tokens)
+    self.assertLen(seen_position_ids, output_tokens)
+    for pos, got_cache_pos, got_pos_ids in zip(
+        expected_positions, seen_cache_positions, seen_position_ids
+    ):
+      self.assertIs(got_cache_pos, stepper._decode_cache_positions[pos])
+      self.assertIs(got_pos_ids, stepper._decode_position_ids[pos])
+
 
 if __name__ == "__main__":
   absltest.main()

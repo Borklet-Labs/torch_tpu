@@ -502,6 +502,113 @@ class DeviceUtilsTest(seed_test_utils.RepeatableTest):
     test_utils.assert_close(tensors[0], torch.tensor([[0, 2]]))
     test_utils.assert_close(tensors[1], torch.tensor([1.0, 2.0]))
 
+  def test_get_total_device_time_from_xspace_filters_post_warmup_step_windows(
+      self,
+  ):
+    # Host plane has two `post_warmup_step` TraceMe events:
+    #   step 0: [1000, 3500]
+    #   step 1: [6000, 8500]
+    # Inter-step `post_warmup_hook` runs in [4000, 5500] and after step 1.
+    host_event_0 = mock.MagicMock(
+        metadata_id=1, offset_ps=1000, duration_ps=2500
+    )
+    host_event_1 = mock.MagicMock(
+        metadata_id=1, offset_ps=6000, duration_ps=2500
+    )
+    host_line = mock.MagicMock(
+        name='Thread 1',
+        timestamp_ns=100,
+        events=[host_event_0, host_event_1],
+    )
+    meta = mock.MagicMock()
+    meta.name = 'post_warmup_step'
+    meta.display_name = 'post_warmup_step#step_num=0#'
+    host_plane = mock.MagicMock()
+    host_plane.name = '/host:CPU'
+    host_plane.event_metadata = {1: meta}
+    host_plane.lines = [host_line]
+
+    # Device plane has:
+    #   - step 0 module (offset 1500, duration 1_000_000_000_000 ps = 1s)
+    #   - post_warmup_hook cache-reset module (offset 4500, duration 0.5s)
+    #   - step 1 module (offset 6500, duration 2_000_000_000_000 ps = 2s)
+    dev_events = []
+    for offset_ps, duration_ps in (
+        (1500, 1_000),
+        (4500, 500),
+        (6500, 2_000),
+    ):
+      ev = mock.MagicMock(offset_ps=offset_ps, duration_ps=duration_ps)
+      dev_events.append(ev)
+    dev_line = mock.MagicMock(
+        name='XLA Modules:...',
+        timestamp_ns=100,
+        events=dev_events,
+    )
+    dev_plane = mock.MagicMock()
+    dev_plane.name = '/device:TPU:0'
+    dev_plane.lines = [dev_line]
+
+    xspace = self._make_xspace([host_plane, dev_plane])
+    total = device_utils.get_total_device_time_from_xspace(
+        xspace, expected_steps=2
+    )
+    # Only step 0 (1000 ps) and step 1 (2000 ps) modules are summed; the
+    # interstep hook module (500 ps) is excluded.
+    self.assertAlmostEqual(total, 3_000 / 1e12, places=18)
+
+  def test_get_total_device_time_from_xspace_excludes_non_overlapping_plane(
+      self,
+  ):
+    host_event = mock.MagicMock(metadata_id=1, offset_ps=1000, duration_ps=2500)
+    host_line = mock.MagicMock(
+        name='Thread 1',
+        timestamp_ns=100,
+        events=[host_event],
+    )
+    meta = mock.MagicMock()
+    meta.name = 'post_warmup_step'
+    meta.display_name = 'post_warmup_step#step_num=0#'
+    host_plane = mock.MagicMock()
+    host_plane.name = '/host:CPU'
+    host_plane.event_metadata = {1: meta}
+    host_plane.lines = [host_line]
+
+    # Active device plane has a 1000 ps module in step window [1000, 3500].
+    active_event = mock.MagicMock(offset_ps=1500, duration_ps=1000)
+    active_line = mock.MagicMock(
+        name='XLA Modules:...',
+        timestamp_ns=100,
+        events=[active_event],
+    )
+    active_plane = mock.MagicMock()
+    active_plane.name = '/device:TPU:0'
+    active_plane.lines = [active_line]
+
+    # Auxiliary device plane has a longer 5000 ps module entirely outside the
+    # step window. It must not fall back to all module time and be selected as
+    # max device time.
+    aux_event = mock.MagicMock(offset_ps=5000, duration_ps=5000)
+    aux_line = mock.MagicMock(
+        name='XLA Modules:...',
+        timestamp_ns=100,
+        events=[aux_event],
+    )
+    aux_plane = mock.MagicMock()
+    aux_plane.name = '/device:TPU:1'
+    aux_plane.lines = [aux_line]
+
+    xspace = self._make_xspace([host_plane, active_plane, aux_plane])
+    total = device_utils.get_total_device_time_from_xspace(xspace)
+    self.assertAlmostEqual(total, 1_000 / 1e12, places=18)
+
+    # When no device plane overlaps the step window,
+    # get_total_device_time_from_xspace returns -1.0.
+    xspace_no_overlap = self._make_xspace([host_plane, aux_plane])
+    self.assertEqual(
+        device_utils.get_total_device_time_from_xspace(xspace_no_overlap), -1.0
+    )
+
 
 if __name__ == '__main__':
   absltest.main()

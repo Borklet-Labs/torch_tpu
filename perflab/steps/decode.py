@@ -474,9 +474,53 @@ class DecodeStepper(common.BaseStepper):
     self.current_pos = None
     self._decode_model = None
     self._decode_attention_mask = None
+    self._decode_cache_positions: dict[int, torch.Tensor] = {}
+    self._decode_position_ids: dict[int, torch.Tensor] = {}
     self._prefill_cache_snapshot = None
     self._prefill_linear_states = None
     self._prefill_module_states = None
+
+  def _synchronize_device(self) -> None:
+    """Synchronizes the accelerator device if available."""
+    if (
+        self.device is not None
+        and self.device.type not in ("cpu", "meta")
+        and hasattr(torch, "accelerator")
+        and torch.accelerator.is_available()
+    ):
+      torch.accelerator.synchronize()
+
+  def _preallocate_decode_positions(self) -> None:
+    """Pre-allocates cache_position and position_ids device tensors."""
+    if self.prompt_len is None or self.device is None:
+      return
+    count = self.output_tokens
+    if count is None or count <= 0:
+      return
+    if (
+        len(self._decode_cache_positions) == count
+        and self.prompt_len in self._decode_cache_positions
+        and next(iter(self._decode_cache_positions.values())).device
+        == self.device
+    ):
+      return
+    self._decode_cache_positions = {}
+    self._decode_position_ids = {}
+    with torch.no_grad():
+      for pos in range(self.prompt_len, self.prompt_len + count):
+        self._decode_cache_positions[pos] = torch.tensor(
+            [pos], dtype=torch.long, device=self.device
+        )
+        if (
+            self._decode_attention_mask is not None
+            and self.batch_size is not None
+        ):
+          self._decode_position_ids[pos] = torch.full(
+              (self.batch_size, 1),
+              pos,
+              dtype=torch.long,
+              device=self.device,
+          )
 
   def init_with_benchmark_args(
       self, model, input_args, input_kwargs, *args, **kwargs
@@ -605,6 +649,7 @@ class DecodeStepper(common.BaseStepper):
           dtype=torch.long,
           device=self.device,
       )
+    self._preallocate_decode_positions()
 
     self.next_token = None
     self.prefill_next_token = None
@@ -846,7 +891,9 @@ class DecodeStepper(common.BaseStepper):
     )
     self.prefill_next_token = self.next_token.clone()
     self.current_pos = self.prompt_len
+    self._preallocate_decode_positions()
     self._save_cache_snapshot()
+    self._synchronize_device()
 
   # In-place reset of cache to return it to its post-prefill state.
   # This is used to facilitate warmup decode runs to warm the compilation cache w/o post warmup recompilation.
@@ -878,6 +925,7 @@ class DecodeStepper(common.BaseStepper):
     _restore_module_recurrent_states(self._prefill_module_states)
 
     self.current_pos = self.prompt_len
+    self._synchronize_device()
 
   def get_cache(self):
     return self.cache
@@ -888,14 +936,29 @@ class DecodeStepper(common.BaseStepper):
       with torch.no_grad():
         decode_output = None
         for _ in range(self.output_tokens):
-          cache_position = torch.tensor([self.current_pos], device=self.device)
+          assert self.current_pos is not None
+          cache_position = self._decode_cache_positions.get(self.current_pos)
+          if cache_position is None or cache_position.device != self.device:
+            cache_position = torch.tensor(
+                [self.current_pos], dtype=torch.long, device=self.device
+            )
           step_kwargs = {"use_cache": True, "cache_position": cache_position}
           if self._decode_attention_mask is not None:
-            assert self.current_pos is not None and self.batch_size is not None
+            assert self.batch_size is not None
             step_kwargs["attention_mask"] = self._decode_attention_mask
-            step_kwargs["position_ids"] = torch.full(
-                (self.batch_size, 1), self.current_pos, device=self.device
-            )
+            position_ids = self._decode_position_ids.get(self.current_pos)
+            if (
+                position_ids is None
+                or position_ids.device != self.device
+                or position_ids.shape != (self.batch_size, 1)
+            ):
+              position_ids = torch.full(
+                  (self.batch_size, 1),
+                  self.current_pos,
+                  dtype=torch.long,
+                  device=self.device,
+              )
+            step_kwargs["position_ids"] = position_ids
           decode_output = self._inner_stepper(
               self._decode_model,
               self.next_token,
@@ -907,7 +970,6 @@ class DecodeStepper(common.BaseStepper):
           # pending view, which the next compiled forward must first build
           # with an extra eager as_strided program (compiled on first use).
           self.next_token = torch.argmax(logits[:, -1, :], dim=-1, keepdim=True)
-          assert self.current_pos is not None
           self.current_pos += 1
         return decode_output
 
