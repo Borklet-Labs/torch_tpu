@@ -716,8 +716,15 @@ def _(
     output_text = str(
         tokenizer.decode(output_tokens[0], skip_special_tokens=True)
     )
-    print(f"{prefix}Prompt: {PROMPT}", flush=True)
-    print(f"{prefix}Output: {output_text}", flush=True)
+    if USE_FULL_MODEL:
+      print(f"{prefix}Prompt: {PROMPT}", flush=True)
+      print(f"{prefix}Output: {output_text}", flush=True)
+    else:
+      print(
+          f"{prefix}Skipping generated text: only {config.num_layers} layers"
+          " are loaded.",
+          flush=True,
+      )
     return output_text
 
   torch.manual_seed(42)
@@ -882,7 +889,7 @@ def _(mo):
     Artificial intelligence has been around for decades, but it’s only in recent years that we’ve seen a significant increase in its use and development.
     ```
 
-    > **Note:** With `USE_FULL_MODEL = False` (see the top of the notebook), only the first 4 of the 52 decoder layers are loaded, so the generated text is not meaningful.
+    > **Note:** With `USE_FULL_MODEL = False` (see the top of the notebook), only the first 4 of the 52 decoder layers are loaded, so the notebook skips printing the generated text.
     """)
   return
 
