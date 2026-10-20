@@ -139,7 +139,9 @@ absl::StatusOr<at::Tensor> CreateDeviceRngStateTensor(c10::Device device,
   c10::DeviceGuard guard(device);
   TT_RET_CHECK(GetEagerMode() != EagerMode::kInternalCompileFxGraph,
                error::kFailedPrecondition)
-      << "cannot initialize an eager mode generator during an FX graph trace";
+      << "cannot initialize or seed a TPU generator inside "
+         "`set_eager_mode(EagerMode._INTERNAL_COMPILE_FX_GRAPH)`; move "
+         "generator creation or seeding outside this context";
   const uint64_t host_data[2] = {seed, offset};
   std::vector<uint8_t> host_data_bytes(
       reinterpret_cast<const uint8_t*>(host_data),

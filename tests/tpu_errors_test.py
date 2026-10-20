@@ -4896,7 +4896,7 @@ module {
   def test_eager_generator_seed_during_fx_trace(self):
     with et.assert_raises_message(
         RuntimeError,
-        tpu="""manual_seed_all(): cannot initialize an eager mode generator during an FX graph trace""",
+        tpu="""manual_seed_all(): cannot initialize or seed a TPU generator inside `set_eager_mode(EagerMode._INTERNAL_COMPILE_FX_GRAPH)`; move generator creation or seeding outside this context""",
     ):
       with execution_mode.set_eager_mode(EagerMode._INTERNAL_COMPILE_FX_GRAPH):
         torch.manual_seed(42)
