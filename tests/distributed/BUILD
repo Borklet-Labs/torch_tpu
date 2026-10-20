@@ -483,6 +483,7 @@ torch_tpu_py_test(
         "//shims/absl_py/testing:absltest",
         "//shims/torch:pytorch",
         "//src/torch_tpu",
+        "//src/torch_tpu/_internal:testing",
         "//src/torch_tpu/_internal/distributed:multiprocessing",
         "//src/torch_tpu/_internal/pallas",
         "//src/torch_tpu/_internal/utils:test_utils",
@@ -514,6 +515,7 @@ torch_tpu_py_test(
         "//shims/absl_py/testing:absltest",
         "//shims/torch:pytorch",
         "//src/torch_tpu",
+        "//src/torch_tpu/_internal:testing",
         "//src/torch_tpu/_internal/distributed:multiprocessing",
         "//src/torch_tpu/_internal/pallas",
         "//src/torch_tpu/_internal/utils:test_utils",
@@ -602,60 +604,6 @@ torch_tpu_py_test(
 )
 
 torch_tpu_py_test(
-    name = "all_gather_errors_test",
-    srcs = ["all_gather_errors_test.py"],
-    args = [
-        "--test_mode=tpu",
-    ],
-    env = {"TORCH_SHOW_CPP_STACKTRACES": "0"},
-    tags = if_oss(
-        ["exclusive"],
-        [],
-    ) + [
-        REQUIRES_V5_MULTI_DEVICE,
-        "nosan",  # *san builds are low-value for error tests.
-    ],
-    deps = [
-        ":continuous_test_utils",
-        ":distributed_utils",
-        "//shims/absl_py/testing:absltest",
-        "//shims/torch:pytorch",
-        "//src/torch_tpu",
-        "//src/torch_tpu/_internal:testing",
-        "//src/torch_tpu/_internal/distributed:multiprocessing",
-        "//tests:error_testing",
-    ],
-)
-
-torch_tpu_py_test(
-    name = "all_gather_errors_test_cov",
-    srcs = ["all_gather_errors_test.py"],
-    args = [
-        "--test_mode=cov",
-    ],
-    env = TEST_COV_ENV,
-    main = "all_gather_errors_test.py",
-    notap = "Run by error_coverage_test in the torch_tpu.error_coverage Guitar workflow.",
-    tags = if_oss(
-        ["exclusive"],
-        [],
-    ) + [
-        "nosan",  # *san builds are low-value for error tests.
-        "requires-tpu-v5lite:8",
-    ],
-    deps = [
-        ":continuous_test_utils",
-        ":distributed_utils",
-        "//shims/absl_py/testing:absltest",
-        "//shims/torch:pytorch",
-        "//src/torch_tpu",
-        "//src/torch_tpu/_internal:testing",
-        "//src/torch_tpu/_internal/distributed:multiprocessing",
-        "//tests:error_testing",
-    ],
-)
-
-torch_tpu_py_test(
     name = "scatter_test",
     srcs = ["scatter_test.py"],
     tags = if_oss(
@@ -675,61 +623,6 @@ torch_tpu_py_test(
         "//src/torch_tpu",
         "//src/torch_tpu/_internal/distributed:multiprocessing",
         "//src/torch_tpu/_internal/utils:test_utils",
-    ],
-)
-
-torch_tpu_py_test(
-    name = "scatter_errors_test",
-    srcs = ["scatter_errors_test.py"],
-    args = [
-        "--test_mode=tpu",
-    ],
-    env = {
-        # Disables addr2line C++ stack trace symbolization to prevent deadlocks/hangs during
-        # exception construction in multi-process distributed tests in OSS CI.
-        "TORCH_DISABLE_ADDR2LINE": "1",
-        "TORCH_SHOW_CPP_STACKTRACES": "0",
-    },
-    tags = if_oss(
-        ["exclusive"],
-        [],
-    ) + [
-        REQUIRES_V5_MULTI_DEVICE,
-        "nosan",  # *san builds are low-value for error tests.
-    ],
-    deps = [
-        ":distributed_utils",
-        "//shims/absl_py/testing:absltest",
-        "//shims/torch:pytorch",
-        "//src/torch_tpu",
-        "//src/torch_tpu/_internal/distributed:multiprocessing",
-        "//tests:error_testing",
-    ],
-)
-
-torch_tpu_py_test(
-    name = "scatter_errors_test_cov",
-    srcs = ["scatter_errors_test.py"],
-    args = [
-        "--test_mode=cov",
-    ],
-    env = TEST_COV_ENV,
-    main = "scatter_errors_test.py",
-    notap = "Run by error_coverage_test in the torch_tpu.error_coverage Guitar workflow.",
-    tags = if_oss(
-        ["exclusive"],
-        [],
-    ) + [
-        "nosan",  # *san builds are low-value for error tests.
-        "requires-tpu-v5lite:8",
-    ],
-    deps = [
-        ":distributed_utils",
-        "//shims/absl_py/testing:absltest",
-        "//shims/torch:pytorch",
-        "//src/torch_tpu",
-        "//src/torch_tpu/_internal/distributed:multiprocessing",
-        "//tests:error_testing",
     ],
 )
 
