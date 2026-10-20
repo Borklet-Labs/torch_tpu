@@ -14,25 +14,20 @@
 
 """Tests DTensor APIs."""
 
-import os
-
 from absl.testing import absltest
 import torch
 from torch import distributed as dist
 import torch.distributed.tensor as dt
-import torch.multiprocessing as mp
 from torch_tpu._internal import sync
 from torch_tpu._internal.utils import test_utils as utils
 from torch_tpu._internal.distributed import multiprocessing
-from tests import seed_test_utils
-from tests.distributed import distributed_utils
+from tests.distributed import continuous_test_utils
 
 
 def run_dtensor_1d_apply_op() -> None:
   """Operations can be applied to a DTensor."""
-  dist.init_process_group(backend="tpu_dist")
-  rank = int(os.environ["RANK"])
-  world_size = int(os.environ["WORLD_SIZE"])
+  rank = dist.get_rank()
+  world_size = dist.get_world_size()
   shard = torch.randn((1, world_size))
   device_mesh = dt.init_device_mesh("tpu", (world_size,))
   placements = [dt.Shard(0)]
@@ -52,9 +47,8 @@ def run_dtensor_1d_apply_op() -> None:
 
 def run_dtensor_1d_distribute_from_src() -> None:
   """DTensor can be initialized with data coming from only one process."""
-  dist.init_process_group(backend="tpu_dist")
-  rank = int(os.environ["RANK"])
-  world_size = int(os.environ["WORLD_SIZE"])
+  rank = dist.get_rank()
+  world_size = dist.get_world_size()
   device_mesh = dt.init_device_mesh("tpu", (world_size,))
   if rank == 0:
     full_tensor = torch.ones(world_size, dtype=torch.float32)
@@ -106,8 +100,7 @@ def _test_redistribute(
 
 def run_dtensor_1d_shard_to_replicate() -> None:
   """Redistributing from shard to replicate triggers all_gather."""
-  dist.init_process_group(backend="tpu_dist")
-  world_size = int(os.environ["WORLD_SIZE"])
+  world_size = dist.get_world_size()
   device_mesh = dt.init_device_mesh("tpu", (world_size,))
   dtensor = dt.distribute_tensor(
       _range_tensor_2d(world_size),
@@ -120,8 +113,7 @@ def run_dtensor_1d_shard_to_replicate() -> None:
 
 def run_dtensor_1d_replicate_to_shard() -> None:
   """Redistributing from replicate to shard triggers local chunking."""
-  dist.init_process_group(backend="tpu_dist")
-  world_size = int(os.environ["WORLD_SIZE"])
+  world_size = dist.get_world_size()
   device_mesh = dt.init_device_mesh("tpu", (world_size,))
   dtensor = dt.distribute_tensor(
       _range_tensor_2d(world_size),
@@ -134,8 +126,7 @@ def run_dtensor_1d_replicate_to_shard() -> None:
 
 def run_dtensor_1d_shard_to_shard() -> None:
   """Redistributing from shard to shard triggers all_to_all."""
-  dist.init_process_group(backend="tpu_dist")
-  world_size = int(os.environ["WORLD_SIZE"])
+  world_size = dist.get_world_size()
   device_mesh = dt.init_device_mesh("tpu", (world_size,))
   dtensor = dt.distribute_tensor(
       _range_tensor_2d(world_size),
@@ -148,8 +139,7 @@ def run_dtensor_1d_shard_to_shard() -> None:
 
 def run_dtensor_1d_partial_to_replicate() -> None:
   """Redistributing from partial to replicate triggers all_reduce."""
-  dist.init_process_group(backend="tpu_dist")
-  world_size = int(os.environ["WORLD_SIZE"])
+  world_size = dist.get_world_size()
   device_mesh = dt.init_device_mesh("tpu", (world_size,))
   dtensor = dt.DTensor.from_local(
       _range_tensor_2d(world_size).to("tpu"),
@@ -161,8 +151,7 @@ def run_dtensor_1d_partial_to_replicate() -> None:
 
 def run_dtensor_1d_partial_to_shard() -> None:
   """Redistributing from partial to shard triggers reduce_scatter."""
-  dist.init_process_group(backend="tpu_dist")
-  world_size = int(os.environ["WORLD_SIZE"])
+  world_size = dist.get_world_size()
   device_mesh = dt.init_device_mesh("tpu", (world_size,))
   dtensor = dt.DTensor.from_local(
       _range_tensor_2d(world_size).to("tpu"),
@@ -172,57 +161,35 @@ def run_dtensor_1d_partial_to_shard() -> None:
   _test_redistribute(dtensor, [dt.Shard(0)])
 
 
-class DTensor1DimTest(seed_test_utils.MultiProcessRepeatableTest):
+class DTensor1DimTest(continuous_test_utils.TpuMultiProcContinuousTest):
 
-  _world_size = distributed_utils.get_tpu_device_count()
+  world_size = 8
 
   def test_apply_op(self):
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=run_dtensor_1d_apply_op,
-    )
+    run_dtensor_1d_apply_op()
 
   def test_dtensor_1d_distribute_from_src(self):
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=run_dtensor_1d_distribute_from_src,
-    )
+    run_dtensor_1d_distribute_from_src()
 
   def test_shard_to_replicate(self):
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=run_dtensor_1d_shard_to_replicate,
-    )
+    run_dtensor_1d_shard_to_replicate()
 
   def test_replicate_to_shard(self):
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=run_dtensor_1d_replicate_to_shard,
-    )
+    run_dtensor_1d_replicate_to_shard()
 
   def test_shard_to_shard(self):
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=run_dtensor_1d_shard_to_shard,
-    )
+    run_dtensor_1d_shard_to_shard()
 
   def test_partial_to_replicate(self):
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=run_dtensor_1d_partial_to_replicate,
-    )
+    run_dtensor_1d_partial_to_replicate()
 
   def test_partial_to_shard(self):
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=run_dtensor_1d_partial_to_shard,
-    )
+    run_dtensor_1d_partial_to_shard()
 
 
 def run_dtensor_2d_shard_to_shard() -> None:
   """Redistributing from shard to shard triggers all_to_all."""
-  dist.init_process_group(backend="tpu_dist")
-  world_size = int(os.environ["WORLD_SIZE"])
+  world_size = dist.get_world_size()
   full_tensor = _range_tensor_2d(world_size)
   device_mesh = dt.init_device_mesh("tpu", (world_size // 2, 2))
   dtensor = dt.distribute_tensor(
@@ -234,22 +201,18 @@ def run_dtensor_2d_shard_to_shard() -> None:
   _test_redistribute(dtensor, [dt.Shard(1), dt.Shard(0)])
 
 
-class DTensor2DimTest(seed_test_utils.MultiProcessRepeatableTest):
+class DTensor2DimTest(continuous_test_utils.TpuMultiProcContinuousTest):
 
-  _world_size = distributed_utils.get_tpu_device_count()
+  world_size = 8
 
   def test_shard_to_shard(self):
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=run_dtensor_2d_shard_to_shard,
-    )
+    run_dtensor_2d_shard_to_shard()
 
 
 def run_sync_dtensor() -> None:
   """Syncing a DTensor materializes the underlying shard."""
-  dist.init_process_group(backend="tpu_dist")
-  rank = int(os.environ["RANK"])
-  world_size = int(os.environ["WORLD_SIZE"])
+  rank = dist.get_rank()
+  world_size = dist.get_world_size()
   device_mesh = dt.init_device_mesh("tpu", (world_size,))
   shard_cpu = torch.full((world_size,), fill_value=rank, device="cpu")
   shard = shard_cpu.to("tpu")
@@ -264,17 +227,13 @@ def run_sync_dtensor() -> None:
   utils.assert_close(updated_shard, shard_cpu + 1)
 
 
-class DTensorSyncTest(seed_test_utils.MultiProcessRepeatableTest):
+class DTensorSyncTest(continuous_test_utils.TpuMultiProcContinuousTest):
 
-  _world_size = distributed_utils.get_tpu_device_count()
+  world_size = 8
 
   def test_sync_dtensor(self):
-    distributed_utils.dist_run(
-        nproc_per_node=self._world_size,
-        fn=run_sync_dtensor,
-    )
+    run_sync_dtensor()
 
 
 if __name__ == "__main__":
-  mp.set_start_method("spawn")
   multiprocessing.handle_test_main(absltest.main)
