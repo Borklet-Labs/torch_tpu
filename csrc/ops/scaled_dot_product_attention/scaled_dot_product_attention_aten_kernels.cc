@@ -106,6 +106,13 @@ bool IsSupportedFlashAttentionShape(
   return has_batch && valid_head_dim;
 }
 
+// Returns true if both the query and key sequences are shorter than the minimum
+// tile size (128) that the flash attention kernel pads them to.
+bool AreBothSequencesShort(const at::Tensor& query, const at::Tensor& key) {
+  constexpr int64_t kMinFlashSeqLen = 128;
+  return query.size(-2) < kMinFlashSeqLen && key.size(-2) < kMinFlashSeqLen;
+}
+
 }  // namespace
 
 // Torch's extensibility is pretty gross here due to weird SDPA
@@ -142,6 +149,7 @@ int64_t AtenFusedSdpChoice(const at::Tensor& query, const at::Tensor& key,
         bool flash_enabled = ctx.userEnabledFlashSDP();
         bool math_enabled = ctx.userEnabledMathSDP();
         bool overrideable_enabled = ctx.userEnabledOverrideableSDP();
+        bool shlo_enabled = math_enabled || overrideable_enabled;
 
         bool consistent_ranks = query.ndimension() == key.ndimension() &&
                                 query.ndimension() == value.ndimension();
@@ -151,6 +159,9 @@ int64_t AtenFusedSdpChoice(const at::Tensor& query, const at::Tensor& key,
         bool mask_requires_grad =
             c10::GradMode::is_enabled() && attn_mask.has_value() &&
             attn_mask->defined() && attn_mask->requires_grad();
+        bool is_floating_type = c10::isFloatingType(query.scalar_type());
+        bool shlo_supported = consistent_ranks && has_batch && !has_dropout &&
+                              is_floating_type && !mask_requires_grad;
 
         if (flash_enabled) {
           bool supported_flash_dtype =
@@ -159,6 +170,12 @@ int64_t AtenFusedSdpChoice(const at::Tensor& query, const at::Tensor& key,
           if (supported_flash_dtype &&
               IsSupportedFlashAttentionShape(query, key, value, attn_mask) &&
               consistent_ranks && valid_flash_dropout && !mask_requires_grad) {
+            // The SHLO implementation is faster for short sequences. Prefer it
+            // unless SDPA is restricted to the flash backend.
+            if (shlo_enabled && shlo_supported &&
+                AreBothSequencesShort(query, key)) {
+              return static_cast<int64_t>(at::SDPBackend::overrideable);
+            }
             return static_cast<int64_t>(at::SDPBackend::cudnn_attention);
           } else {
             // Use c10::str rather than absl::StrCat as it will convert enums
@@ -196,10 +213,8 @@ int64_t AtenFusedSdpChoice(const at::Tensor& query, const at::Tensor& key,
 
         // We treat the SHLO implementation as an optimized version of MATH so
         // also try it when it is enabled.
-        if (math_enabled || overrideable_enabled) {
-          bool is_floating_type = c10::isFloatingType(query.scalar_type());
-          if (consistent_ranks && has_batch && !has_dropout &&
-              is_floating_type && !mask_requires_grad) {
+        if (shlo_enabled) {
+          if (shlo_supported) {
             return static_cast<int64_t>(at::SDPBackend::overrideable);
           } else {
             TT_WARN_ONCE(

@@ -724,6 +724,7 @@ TORCH_LIBRARY_IMPL(aten, PrivateUse1, m) {
   ImplStable<OpName::kFusedMovingAvgObsFqHelper>(m, FusedMovingAvgObsFqHelper);
   ImplStable<OpName::kFusedRmsNorm>(m, AtenFusedRmsNorm);
   ImplStable<OpName::kFusedRmsNormBackward>(m, AtenFusedRmsNormBackward);
+  ImplStable<OpName::kFusedSdpChoice>(m, AtenFusedSdpChoice);
   ImplStable<OpName::kFusedSgd>(m, AtenFusedSgd);
   ImplStable<OpName::kFusedSgdTensorLr>(m, AtenFusedSgdTensorLr);
   ImplStable<OpName::kGather>(m, AtenGather);
