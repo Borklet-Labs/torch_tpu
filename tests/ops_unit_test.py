@@ -53,7 +53,6 @@ from tests import op_testing
 from tests import ops_test_data
 from tests import oss_utils
 from tests import quantize_utils
-from tests import seed_test_utils
 
 # In this file, we use the following naming convention for variables:
 # - golden_*: a value for the device used for computing the golden results
@@ -21521,14 +21520,6 @@ class OpsGradUnitTest(TorchTpuVsCpuTestBase):
 class OpTestingFrameworkTest(op_testing.OpInfoTestBase):
   """Tests for the op_testing framework itself."""
 
-  def setUp(self) -> None:
-    # Unless a test overrides it, exercise the framework in the TorchTPU vs CPU
-    # mode, which computes the golden results on the fly.
-    self.enterContext(
-        flagsaver.flagsaver(test_mode=op_testing.TestMode.TORCH_TPU_VS_CPU)
-    )
-    super().setUp()
-
   def test_torch_tpu_vs_gpu_missing_golden_fails(self):
     op = next(op for op in op_db if op.name == "add")
     with (
@@ -21568,118 +21559,6 @@ class OpTestingFrameworkTest(op_testing.OpInfoTestBase):
           max_samples=1,
       )
       self.assertEqual(res, [fake_sample])
-
-  def test_accuracy_runs_use_different_seeds(self):
-    abs_op = next(op for op in op_db if op.name == "abs")
-
-    # 1. Verify uniqueness within a single run (loop)
-    # Seed once at the start of the "loop"
-    seed_test_utils.seed_rngs(1234)
-
-    pairs1 = self._get_golden_input_output_pairs(
-        op=abs_op,
-        dtype=torch.float32,
-        variant=op_testing.OpVariant.BASE,
-        max_samples=2,
-        verbose=False,
-        set_seed=False,  # match new loop behavior
-    )
-
-    # Run 2 continues from where Run 1 left off
-    pairs2 = self._get_golden_input_output_pairs(
-        op=abs_op,
-        dtype=torch.float32,
-        variant=op_testing.OpVariant.BASE,
-        max_samples=2,
-        verbose=False,
-        set_seed=False,  # match new loop behavior
-    )
-
-    inputs1 = [p[0].input_value for p in pairs1]
-    inputs2 = [p[0].input_value for p in pairs2]
-
-    all_equal = True
-    for t1, t2 in zip(inputs1, inputs2):
-      if not torch.allclose(t1, t2):
-        all_equal = False
-        break
-    self.assertFalse(all_equal, "Inputs within the loop were identical!")
-
-  def test_accuracy_runs_are_unique_across_runs(self):
-    abs_op = next(op for op in op_db if op.name == "abs")
-
-    # Run with base seed 1234
-    seed_test_utils.seed_rngs(1234)
-    pairs_1234 = self._get_golden_input_output_pairs(
-        op=abs_op,
-        dtype=torch.float32,
-        variant=op_testing.OpVariant.BASE,
-        max_samples=2,
-        verbose=False,
-        set_seed=False,
-    )
-
-    # Run with base seed 5678
-    seed_test_utils.seed_rngs(5678)
-    pairs_5678 = self._get_golden_input_output_pairs(
-        op=abs_op,
-        dtype=torch.float32,
-        variant=op_testing.OpVariant.BASE,
-        max_samples=2,
-        verbose=False,
-        set_seed=False,
-    )
-
-    inputs_1234 = [p[0].input_value for p in pairs_1234]
-    inputs_5678 = [p[0].input_value for p in pairs_5678]
-
-    all_equal = True
-    for t1, t2 in zip(inputs_1234, inputs_5678):
-      if not torch.allclose(t1, t2):
-        all_equal = False
-        break
-    self.assertFalse(
-        all_equal,
-        "Inputs across runs with different base seeds were identical!",
-    )
-
-  def test_accuracy_runs_are_deterministic_with_same_seed(self):
-    abs_op = next(op for op in op_db if op.name == "abs")
-
-    # Run 1 with base seed 1234
-    seed_test_utils.seed_rngs(1234)
-    pairs1 = self._get_golden_input_output_pairs(
-        op=abs_op,
-        dtype=torch.float32,
-        variant=op_testing.OpVariant.BASE,
-        max_samples=2,
-        verbose=False,
-        set_seed=False,
-    )
-
-    # Run 2 with same base seed 1234
-    seed_test_utils.seed_rngs(1234)
-    pairs2 = self._get_golden_input_output_pairs(
-        op=abs_op,
-        dtype=torch.float32,
-        variant=op_testing.OpVariant.BASE,
-        max_samples=2,
-        verbose=False,
-        set_seed=False,
-    )
-
-    inputs1 = [p[0].input_value for p in pairs1]
-    inputs2 = [p[0].input_value for p in pairs2]
-
-    all_equal = True
-    for t1, t2 in zip(inputs1, inputs2):
-      if not torch.allclose(t1, t2):
-        all_equal = False
-        break
-    self.assertTrue(
-        all_equal,
-        "Inputs across runs with same base seeds were different!",
-    )
 
   def test_searchsorted_scalar_float_in_int(self):
     def test_fn(device):
@@ -21762,13 +21641,15 @@ class OpTestingFrameworkTest(op_testing.OpInfoTestBase):
   )
   def test_sub_byte_sample_generation(self, dtype: torch.dtype):
     abs_op = next(op for op in op_db if op.name == "abs")
-    pairs = self._get_golden_input_output_pairs(
-        op=abs_op,
-        dtype=dtype,
-        variant=op_testing.OpVariant.BASE,
-        max_samples=2,
-        verbose=False,
-    )
+    # The perf mode generates sample inputs without computing golden outputs.
+    with flagsaver.flagsaver(test_mode=op_testing.TestMode.PERF):
+      pairs = self._get_golden_input_output_pairs(
+          op=abs_op,
+          dtype=dtype,
+          variant=op_testing.OpVariant.BASE,
+          max_samples=2,
+          verbose=False,
+      )
     self.assertNotEmpty(pairs)
     for golden_input, _ in pairs:
       self.assertEqual(golden_input.input_value.dtype, dtype)

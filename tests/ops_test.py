@@ -14,8 +14,8 @@
 
 """Fuzz tests for ops.
 
-For each op, we test that the result on TPU matches the result on the golden
-device (either CPU or GPU, depending on the test mode).
+For each op, we test that the result on TPU matches the golden result recorded
+on GPU.
 """
 
 import collections.abc
