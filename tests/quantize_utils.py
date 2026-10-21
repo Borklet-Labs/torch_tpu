@@ -33,6 +33,8 @@ QUANTIZED_NUMERIC_DTYPES: Final[Sequence[torch.dtype]] = (
     *SUB_BYTE_DTYPES,
 )
 
+# TODO: b/576283069 - Inline `torch.float8_e8m0fnu` once minimum OSS PyTorch is
+# >= 2.12.0.
 # torch.float8_e8m0fnu was added in PyTorch 2.12, and oss/pyproject.toml
 # declares `torch>=2.11.0`, so the attribute can legitimately be absent when
 # torch_tpu is built against the oldest supported release.

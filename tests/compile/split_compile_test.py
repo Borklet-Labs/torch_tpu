@@ -273,6 +273,7 @@ class SplitCompileHermeticTest(seed_test_utils.RepeatableTest):
     self.assertEqual(compiled_child.meta["compiler_annotation"], (1, 3))
     self.assertIsNot(compiled_child.meta, child.meta)
 
+  # TODO: b/576283069 - Remove once minimum OSS PyTorch is >= 2.12.0.
   def test_register_output_namedtuple_globals_without_codegen_repr_fn(self):
     out_type = collections.namedtuple("LocalPair", ["sum", "diff"])
     graph = torch.fx.Graph()

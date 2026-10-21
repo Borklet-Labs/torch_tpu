@@ -241,6 +241,7 @@ def _collect_namedtuple_types(arg: Any, seen: dict[type[Any], None]) -> None:
       _collect_namedtuple_types(elem, seen)
 
 
+# TODO: b/576283069 - Remove once minimum OSS PyTorch is >= 2.12.0.
 def _register_output_namedtuple_globals(gm: torch.fx.GraphModule) -> None:
   """Registers namedtuple output types in the FX graph's codegen globals.
 

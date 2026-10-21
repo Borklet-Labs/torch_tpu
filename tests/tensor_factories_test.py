@@ -137,6 +137,8 @@ class TensorFactoriesTest(seed_test_utils.RepeatableTest):
             cpu_proto.new_full(shape, fill_val),
         )
 
+    # TODO: b/576283069 - Remove hasattr check once minimum OSS PyTorch is
+    # >= 2.12.0.
     if hasattr(torch, "float8_e8m0fnu"):
       fp8_dtype = torch.float8_e8m0fnu
       with self.subTest(dtype=fp8_dtype):

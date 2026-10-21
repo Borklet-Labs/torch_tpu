@@ -133,6 +133,8 @@ class OpTestingTest(op_testing.OpInfoTestBase):
       test_utils.assert_close(restored, dense)
 
   def test_plistlib_float8_e8m0fnu_serialization(self):
+    # TODO: b/576283069 - Remove hasattr check once minimum OSS PyTorch is
+    # >= 2.12.0.
     if not hasattr(torch, "float8_e8m0fnu"):
       # For pytorch < 2.12
       self.skipTest("float8_e8m0fnu is not supported")

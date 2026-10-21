@@ -68,7 +68,7 @@
 // and safe dynamic loading on Torch < 2.12 runtimes (where symbols resolve to
 // null), enabling runtime dispatch without custom compile-time flags.
 //
-// TODO(b/499296481): Remove this weak-linking workaround and revert to
+// TODO: b/576283069 - Remove this weak-linking workaround and revert to
 // including the privateuse1_profiler.h header and using
 // REGISTER_PRIVATEUSE1_PROFILER(TpuProfiler) once PyTorch 2.12 is the minimum
 // required version.
