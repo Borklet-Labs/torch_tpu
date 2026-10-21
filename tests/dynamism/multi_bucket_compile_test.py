@@ -19,6 +19,7 @@ from absl.testing import absltest
 import torch
 from torch_tpu._internal import testing as tt_testing
 from torch_tpu._internal.compile import _backend
+from torch_tpu._internal.compile import torch_tpu_compiled_executable
 from torch_tpu._internal.utils import test_utils as utils
 from tests import seed_test_utils
 
@@ -37,7 +38,7 @@ class MultiBucketCompilationTest(seed_test_utils.RepeatableTest):
       return x + 1.0
 
     orig_static_call = _backend.compiler.StaticCompiler.__call__
-    orig_resolve = _backend.AsyncCompiledArtifact.resolve
+    orig_resolve = torch_tpu_compiled_executable.AsyncCompiledArtifact.resolve
     compiled_upper_bounds = []
     bounds_at_first_resolve = []
 
@@ -66,7 +67,7 @@ class MultiBucketCompilationTest(seed_test_utils.RepeatableTest):
             side_effect=wrapped_static_call,
         ) as mock_static_call,
         mock.patch.object(
-            _backend.AsyncCompiledArtifact,
+            torch_tpu_compiled_executable.AsyncCompiledArtifact,
             "resolve",
             autospec=True,
             side_effect=wrapped_resolve,
