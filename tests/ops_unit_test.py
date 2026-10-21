@@ -4480,6 +4480,82 @@ class OpsUnitTest(TorchTpuVsCpuTestBase):
     utils.assert_close(actual_tpu, expected)
     utils.assert_close(actual_cpu, expected)
 
+  def test_copy_non_contiguous_non_blocking(self):
+    tpu_device = torch.device("tpu")
+    cpu_source = torch.randn(400, device="cpu")
+    tpu_buffers = []
+    for i in range(100):
+      cpu_noncontiguous_slice = cpu_source[i : i + 4].view(2, 2).t()
+      tpu_buffers.append(
+          cpu_noncontiguous_slice.to(
+              device=tpu_device,
+              non_blocking=True,
+              memory_format=torch.contiguous_format,
+          )
+      )
+    torch.accelerator.synchronize()
+    results = []
+    for i in range(100):
+      results.append(
+          tpu_buffers[i].to(
+              device="cpu",
+              non_blocking=True,
+              memory_format=torch.contiguous_format,
+          )
+      )
+    torch.accelerator.synchronize()
+    for i in range(100):
+      utils.assert_close(results[i], cpu_source[i : i + 4].view(2, 2).t())
+
+  def test_copy_different_dtype_non_blocking(self):
+    tpu_device = torch.device("tpu")
+    cpu_source = torch.randn(100, dtype=torch.float32, device="cpu")
+    tpu_buffers = []
+    for i in range(100):
+      cpu_noncontiguous_slice = cpu_source[i].view(1)
+      tpu_target = torch.empty(1, dtype=torch.bfloat16, device=tpu_device)
+      tpu_target.copy_(cpu_noncontiguous_slice, non_blocking=True)
+      tpu_buffers.append(tpu_target)
+    torch.accelerator.synchronize()
+    results = []
+    for i in range(100):
+      results.append(
+          tpu_buffers[i].to(
+              device="cpu",
+              non_blocking=True,
+              memory_format=torch.contiguous_format,
+          )
+      )
+    torch.accelerator.synchronize()
+    for i in range(100):
+      utils.assert_close(results[i], cpu_source[i].view(1).to(torch.bfloat16))
+
+  def test_copy_zero_sized_non_blocking(self):
+    tpu_device = torch.device("tpu")
+    cpu_source = torch.tensor([], device="cpu")
+    tpu_buffers = []
+    for _ in range(100):
+      tpu_buffers.append(
+          cpu_source.to(
+              device=tpu_device,
+              non_blocking=True,
+              memory_format=torch.contiguous_format,
+          )
+      )
+    torch.accelerator.synchronize()
+    results = []
+    for i in range(100):
+      results.append(
+          tpu_buffers[i].to(
+              device="cpu",
+              non_blocking=True,
+              memory_format=torch.contiguous_format,
+          )
+      )
+    torch.accelerator.synchronize()
+    for i in range(100):
+      self.assertEqual(results[i], cpu_source)
+
   def test_histc_dynamic_bounds(self):
     """Test cases that cause the min and max computation the input data.
 

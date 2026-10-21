@@ -609,17 +609,21 @@ class AcceleratorMemoryTest(seed_test_utils.RepeatableTest):
 
     # Allocating a materialized tensor decreases free memory while total remains
     # constant.
+    gc.collect()
+    torch.accelerator.synchronize()
     free_before, total_before = get_memory_info_fn()
     size_in_bytes = 4 * 1024 * 1024
     t = torch.randn(size_in_bytes // 4, device="cpu").to(
         torch.accelerator.current_accelerator()
     )
+    torch.accelerator.synchronize()
     free_during, total_during = get_memory_info_fn()
     self.assertEqual(total_during, total_before)
     self.assertLessEqual(free_during, free_before - size_in_bytes)
 
     del t
     gc.collect()
+    torch.accelerator.synchronize()
     free_after, total_after = get_memory_info_fn()
     self.assertEqual(total_after, total_before)
     self.assertGreater(free_after, free_during)

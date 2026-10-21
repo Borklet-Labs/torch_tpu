@@ -17,71 +17,58 @@
 #include "csrc/ops/copy_from/cpu_to_tpu.h"
 
 #include <optional>
-#include <utility>
 
+#include "ATen/core/ATen_fwd.h"
 #include "ATen/core/TensorBody.h"
 #include "absl/log/absl_log.h"
 #include "absl/status/status.h"
-#include "absl/status/statusor.h"
-#include "csrc/common/dimension_types.h"
+#include "c10/core/TensorOptions.h"
 #include "csrc/common/error_utils.h"
 #include "csrc/common/layout_utils.h"
 #include "csrc/common/to_string.h"
 #include "csrc/eager/device_buffer.h"
-#include "csrc/eager/device_buffer_utils.h"
 #include "csrc/eager/tensor_to_buffer.h"
 #include "csrc/pjrt/pjrt_transfer.h"
+#include "torch/headeronly/core/MemoryFormat.h"
 #include "xla/xla_data.pb.h"
 
 namespace torch_tpu {
-
-namespace {
-// Copies the value out of the source CPU tensor to a materialized
-// DeviceBufferRef.
-absl::StatusOr<DeviceBufferRef> CopyCpuToTpuBuffer(const at::Tensor& src,
-                                                   bool non_blocking) {
-  at::Tensor contiguous_src_for_tpu = src.contiguous();
-  ABSL_VLOG(1) << "[AtenCopyFrom] CPU -> TPU: Ensured CPU tensor is "
-                  "contiguous with dtype "
-               << ToString(src.scalar_type()) << ". Tensor: " << ToString(src);
-
-  TT_ASSIGN_OR_RETURN(TpuLayout tpu_layout,
-                      ResolveTpuLayout(contiguous_src_for_tpu));
-
-  if (contiguous_src_for_tpu.numel() == 0) {
-    // If there's no data to actually copy, then we can just create a zero-sized
-    // buffer directly and avoid blocking on host/device synchronization.
-    return CreateZeroSizeDeviceBufferRef(std::move(tpu_layout.sizes),
-                                         tpu_layout.element_type);
-  }
-
-  // NOTE: we are intentionally using Tensor::data_ptr() here,
-  // and **not** Tensor::storage().data_ptr().get().
-  // On CPU, Tensor::data_ptr() will account for the storage offset, while
-  // Tensor::storage().data_ptr().get() will not.
-  return TpuMallocAndMemcpyHtoD(contiguous_src_for_tpu.data_ptr(),
-                                tpu_layout.element_type, tpu_layout.sizes,
-                                non_blocking);
-}
-}  // namespace
 
 absl::Status CopyCpuToTpu(const at::Tensor& src, const at::Tensor& dest,
                           bool non_blocking) {
   ABSL_VLOG(1) << "[AtenCopyFrom] CPU -> TPU copy path for "
                << ToString(src, "src");
-  at::Tensor src_with_dest_dtype = src;
-  if (src.scalar_type() != dest.scalar_type()) {
-    ABSL_VLOG(1) << "[AtenCopyFrom] CPU -> TPU: Converting CPU tensor "
-                    "dtype from "
-                 << ToString(src.scalar_type()) << " to "
-                 << ToString(dest.scalar_type());
-    // Do the type conversion on the host before transfer.
-    src_with_dest_dtype = src.to(dest.scalar_type());
+  if (src.numel() == 0) {
+    // Copying nothing is a no-op.
+    return absl::OkStatus();
   }
 
-  TT_ASSIGN_OR_RETURN(DeviceBufferRef tpu_buf,
-                      CopyCpuToTpuBuffer(src_with_dest_dtype, non_blocking),
-                      _.SetPrepend() << "failed to transfer to 'tpu' device: ");
+  // Ensure the source tensor has the correct dtype and is contiguous.
+  at::Tensor effective_src = src;
+  if (src.scalar_type() != dest.scalar_type() || !src.is_contiguous()) {
+    effective_src = src.to(at::TensorOptions()
+                               .dtype(dest.scalar_type())
+                               .memory_format(at::MemoryFormat::Contiguous),
+                           /*non_blocking=*/false, /*copy=*/true);
+  }
+  if (non_blocking && effective_src.data_ptr() != src.data_ptr()) {
+    // If to() created a copy, then effective_src will be
+    // dropped at the end of this function, invalidating the non-blocking
+    // copy. We must do a blocking copy to avoid this.
+    // TODO(bawilson): implement a non-blocking copy using a CPU->TPU->TPU path
+    non_blocking = false;
+  }
+
+  TT_ASSIGN_OR_RETURN(TpuLayout tpu_layout, ResolveTpuLayout(effective_src));
+
+  // NOTE: we are intentionally using Tensor::data_ptr() here,
+  // and **not** Tensor::storage().data_ptr().get().
+  // On CPU, Tensor::data_ptr() will account for the storage offset, while
+  // Tensor::storage().data_ptr().get() will not.
+  TT_ASSIGN_OR_RETURN(
+      DeviceBufferRef tpu_buf,
+      TpuMallocAndMemcpyHtoD(effective_src.data_ptr(), tpu_layout.element_type,
+                             tpu_layout.sizes, non_blocking));
   TT_RETURN_IF_ERROR(AssignBufferToAtTensor(tpu_buf, dest));
   return absl::OkStatus();
 }
