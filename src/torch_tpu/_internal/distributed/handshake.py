@@ -18,7 +18,7 @@ import abc
 import asyncio
 import atexit
 import collections.abc
-from collections.abc import Collection
+from collections.abc import Collection, Sequence
 import concurrent.futures
 import contextlib
 import dataclasses
@@ -666,7 +666,7 @@ class _CollectiveHandshakeConsensus:
   async def get_from_ranks(
       self, ranks: Collection[int]
   ) -> list[_CollectiveHandshakeRequestZMQEnvelope]:
-    """Concurrently awaits and returns requests from the specified ranks.
+    """Awaits and returns requests from all specified ranks.
 
     Args:
       ranks: A collection of unique rank indices to await requests from. Each
@@ -691,7 +691,7 @@ class _CollectiveHandshakeConsensus:
             f"rank ({r}) in ranks must be in range [0,"
             f" {len(self._request_queues)})."
         )
-    return await asyncio.gather(*[self._request_queues[r].get() for r in ranks])
+    return [await self._request_queues[r].get() for r in ranks]
 
 
 class _LoopRunner:
@@ -883,11 +883,12 @@ class _ZMQServer:
   Example usage:
     # Coordinator server (async):
     server = _ZMQServer(port=12345)
-    envelope = await server.recv_request()
-    # Process envelope.request...
-    await server.send_reply(
-        envelope.client_id, CollectiveHandshakeResponse(success=True)
-    )
+    envelopes = await server.recv_requests_batch()
+    # Process envelopes...
+    for env in envelopes:
+      await server.send_reply(
+          env.client_id, CollectiveHandshakeResponse(success=True)
+      )
 
     # Client (synchronous):
     client = _ZMQClient(port=12345, routing_id=b"rank-1")
@@ -948,17 +949,10 @@ class _ZMQServer:
     self._socket.setsockopt(zmq.IPV6, 1)
     self._socket.bind(f"tcp://*:{self._port}")
 
-  async def recv_request(self) -> _CollectiveHandshakeRequestZMQEnvelope | None:
-    """Receives a raw PyZMQ request and returns a _CollectiveHandshakeRequestZMQEnvelope.
-
-    Returns:
-      The received envelope, or None if the received message is malformed and
-      was dropped.
-    """
-    with _log_zmq_duration_if_exception(
-        "ZMQServer.recv_request", self._recv_timeout_s
-    ):
-      frames = await self._socket.recv_multipart()
+  def _decode_frames(
+      self, frames: Sequence[bytes]
+  ) -> _CollectiveHandshakeRequestZMQEnvelope | None:
+    """Validates and decodes a 2-frame [client_id, payload] ZMQ message."""
     if len(frames) != 2:
       logging.warning(
           "ZMQServer expected 2 frames [client_id, payload], got %d frames."
@@ -968,9 +962,8 @@ class _ZMQServer:
       )
       return None
     client_id = frames[0]
-    payload = frames[1]
     try:
-      req = CollectiveHandshakeRequest.from_bytes(payload)
+      req = CollectiveHandshakeRequest.from_bytes(frames[1])
     except (
         UnicodeDecodeError,
         json.JSONDecodeError,
@@ -988,6 +981,39 @@ class _ZMQServer:
         client_id=client_id, request=req
     )
 
+  async def recv_requests_batch(
+      self,
+  ) -> list[_CollectiveHandshakeRequestZMQEnvelope]:
+    """Awaits one request, then non-blockingly drains any additional ready messages.
+
+    Returns:
+      A list of decoded `_CollectiveHandshakeRequestZMQEnvelope` instances.
+    """
+    with _log_zmq_duration_if_exception(
+        "ZMQServer.recv_requests_batch", self._recv_timeout_s
+    ):
+      # Await the first message asynchronously so the event loop yields while
+      # idle when no messages have arrived yet.
+      raw_messages = [await self._socket.recv_multipart()]
+      # Drain any additional complete messages already buffered in the ZMQ
+      # socket without yielding to the event loop. With `NOBLOCK`, `zmq.asyncio`
+      # receives synchronously and returns an already-resolved Future. This is a
+      # common drain pattern in zmq.
+      while True:
+        try:
+          raw_messages.append(
+              await self._socket.recv_multipart(flags=zmq.NOBLOCK)
+          )
+        except error.Again:
+          break
+
+    envelopes: list[_CollectiveHandshakeRequestZMQEnvelope] = []
+    for frames in raw_messages:
+      envelope = self._decode_frames(frames)
+      if envelope is not None:
+        envelopes.append(envelope)
+    return envelopes
+
   async def send_reply(
       self, client_id: bytes, response: CollectiveHandshakeResponse
   ) -> None:
@@ -1001,8 +1027,9 @@ class _ZMQServer:
     """Closes the server socket and terminates the ZMQ context.
 
     Calling `close` multiple times is idempotent and safe (subsequent calls are
-    no-ops). Calling network operations (`recv_request`, `send_reply`) after
-    `close` will raise a `zmq.ZMQError` because the underlying socket is closed.
+    no-ops). Calling network operations (`recv_requests_batch`, `send_reply`)
+    after `close` will raise a `zmq.ZMQError` because the underlying socket is
+    closed.
     """
     if not self._socket.closed:
       # We linger until all replies have been sent out to avoid clients not
@@ -1117,26 +1144,25 @@ class _HandshakeServer(_HandshakeBackend):
   # LINT.ThenChange(handshake.py:server_loop_tasks)
 
   async def _listen_loop(self) -> None:
-    """Continuously receives requests and passes them to the consensus queues.
+    """Continuously receives requests in batches and passes them to consensus.
 
     Raises:
       ZMQError: If socket encounters an error while server is active.
     """
     while True:
       try:
-        envelope = await self._zmq_server.recv_request()
-        if envelope is None:
-          continue
-        try:
-          await self._handshake_consensus.put_request(
-              envelope.request.rank, envelope
-          )
-        except (ValueError, TypeError) as e:
-          logging.warning(
-              "_HandshakeServer dropping request from client %r: %r",
-              envelope.client_id,
-              e,
-          )
+        envelopes = await self._zmq_server.recv_requests_batch()
+        for envelope in envelopes:
+          try:
+            await self._handshake_consensus.put_request(
+                envelope.request.rank, envelope
+            )
+          except (ValueError, TypeError) as e:
+            logging.warning(
+                "_HandshakeServer dropping request from client %r: %r",
+                envelope.client_id,
+                e,
+            )
       except asyncio.CancelledError:
         logging.info("_HandshakeServer _listen_loop cancelled.")
         raise

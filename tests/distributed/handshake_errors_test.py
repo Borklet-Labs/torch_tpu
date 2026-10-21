@@ -299,7 +299,7 @@ class ZMQServerClientTest(seed_test_utils.RepeatableTest):
 
     async def _test() -> None:
       with self.assertRaises(zmq.ZMQError):
-        await server.recv_request()
+        await server.recv_requests_batch()
       with self.assertRaises(zmq.ZMQError):
         await server.send_reply(
             b"c0", CollectiveHandshakeResponse(success=True)

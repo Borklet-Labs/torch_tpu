@@ -16,6 +16,7 @@
 
 import asyncio
 import os
+import select
 import threading
 import time
 from typing import Any, Callable
@@ -628,9 +629,9 @@ class ZMQServerClientTest(seed_test_utils.RepeatableTest):
     )
 
     async def _server_flow() -> None:
-      envelope = await server.recv_request()
-      self.assertIsNotNone(envelope)
-      assert envelope is not None
+      envelopes = await server.recv_requests_batch()
+      self.assertLen(envelopes, 1)
+      envelope = envelopes[0]
       self.assertTrue(_msg_eq(envelope.request, msg))
       await server.send_reply(
           envelope.client_id, CollectiveHandshakeResponse(success=True)
@@ -651,6 +652,46 @@ class ZMQServerClientTest(seed_test_utils.RepeatableTest):
       client.close()
       server.close()
 
+  def test_zmq_server_client_batch_send_recv(self) -> None:
+    """Tests batched recv of multiple clients through the server."""
+    port = portpicker.pick_unused_port()
+    server = _ZMQServer(port=port)
+    clients = [
+        _ZMQClient(port=port, routing_id=f"rank-{r}".encode())
+        for r in range(1, 4)
+    ]
+    msgs = [
+        _make_request(
+            rank=r, participating_ranks=[0, 1, 2, 3], fingerprint="fp_batch"
+        )
+        for r in range(1, 4)
+    ]
+
+    async def _run() -> None:
+      for client, msg in zip(clients, msgs):
+        client.send(msg)
+
+      # Messages may arrive across multiple drains depending on connection
+      # timing, so keep draining until all 3 have been received.
+      received = []
+      while len(received) < len(clients):
+        received.extend(await server.recv_requests_batch())
+      self.assertCountEqual([env.request.rank for env in received], [1, 2, 3])
+      for envelope in received:
+        await server.send_reply(
+            envelope.client_id,
+            CollectiveHandshakeResponse(success=True),
+        )
+      for client in clients:
+        self.assertTrue(client.recv().success)
+
+    try:
+      asyncio.run(_run())
+    finally:
+      for client in clients:
+        client.close()
+      server.close()
+
   def test_zmq_server_client_reconnect_before_reply(self) -> None:
     port = portpicker.pick_unused_port()
     server = _ZMQServer(port=port)
@@ -663,9 +704,9 @@ class ZMQServerClientTest(seed_test_utils.RepeatableTest):
     async def _run() -> None:
       nonlocal client
       client.send(msg)
-      envelope = await server.recv_request()
-      self.assertIsNotNone(envelope)
-      assert envelope is not None
+      envelopes = await server.recv_requests_batch()
+      self.assertLen(envelopes, 1)
+      envelope = envelopes[0]
       self.assertEqual(envelope.client_id, b"rank-1")
 
       # Simulate client connection drop and recreation before server replies.
@@ -689,6 +730,48 @@ class ZMQServerClientTest(seed_test_utils.RepeatableTest):
       )
       reply = client.recv()
       self.assertTrue(reply.success)
+
+    try:
+      asyncio.run(_run())
+    finally:
+      client.close()
+      server.close()
+
+  def test_send_reply_does_not_swallow_concurrent_recv_wakeup(
+      self,
+  ) -> None:
+    """Tests that send_reply does not lose a pending recv_multipart wakeup."""
+    port = portpicker.pick_unused_port()
+    server = _ZMQServer(port=port)
+    client = _ZMQClient(port=port, routing_id=b"rank-1")
+    msg = _make_request(rank=1, participating_ranks=[0, 1])
+
+    async def _run() -> None:
+      # Establish the ZMQ connection with an initial request.
+      client.send(msg)
+      envelopes = await server.recv_requests_batch()
+      self.assertLen(envelopes, 1)
+
+      # Park a new `recv_requests_batch()` call on `await recv_multipart()`.
+      recv_task = asyncio.create_task(server.recv_requests_batch())
+      await asyncio.sleep(0)
+
+      # A new message arrives from a client and signals the edge-triggered
+      # ZMQ_FD before the asyncio loop polls it, while `send_reply`
+      # runs synchronously on the event-loop thread.
+      client.send(msg)
+      readable, _, _ = select.select([server._socket._fd], [], [], 2.0)
+      self.assertNotEmpty(readable)
+
+      await server.send_reply(
+          b"rank-1", CollectiveHandshakeResponse(success=True)
+      )
+      self.assertTrue(client.recv().success)
+
+      # `recv_task` must still wake up and return the buffered message.
+      envelopes = await asyncio.wait_for(recv_task, timeout=1.0)
+      self.assertLen(envelopes, 1)
+      self.assertEqual(envelopes[0].request.rank, 1)
 
     try:
       asyncio.run(_run())
@@ -795,9 +878,10 @@ class HandshakeServerClientBackendTest(seed_test_utils.RepeatableTest):
     req = _make_request(rank=1, participating_ranks=[0, 1])
     client.send(req)
 
-    async def server_roundtrip():
-      envelope = await server.recv_request()
-      self.assertIsNotNone(envelope)
+    async def server_roundtrip() -> None:
+      envelopes = await server.recv_requests_batch()
+      self.assertLen(envelopes, 1)
+      envelope = envelopes[0]
       self.assertEqual(envelope.request.rank, 1)
       await server.send_reply(
           envelope.client_id, CollectiveHandshakeResponse(success=True)
