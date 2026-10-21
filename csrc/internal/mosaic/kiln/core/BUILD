@@ -67,20 +67,6 @@ torch_tpu_cc_library(
 )
 
 torch_tpu_cc_library(
-    name = "cond",
-    srcs = ["cond.cc"],
-    hdrs = ["cond.h"],
-    deps = [
-        ":context",
-        ":dtype",
-        ":value_base",
-        "@com_google_absl//absl/log:absl_check",
-        "@llvm-project//mlir:ArithDialect",
-        "@llvm-project//mlir:IR",
-    ],
-)
-
-torch_tpu_cc_library(
     name = "elementwise",
     hdrs = ["elementwise.h"],
     deps = [":dtype"],
@@ -112,7 +98,6 @@ torch_tpu_cc_library(
     srcs = ["scalar.cc"],
     hdrs = ["scalar.h"],
     deps = [
-        ":cond",
         ":context",
         ":dtype",
         ":elementwise",
@@ -122,6 +107,7 @@ torch_tpu_cc_library(
         "@com_google_absl//absl/log:absl_check",
         "@llvm-project//mlir:ArithDialect",
         "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Support",
         "@xla//xla/mosaic:tpu_dialect",
     ],
 )
@@ -157,7 +143,6 @@ torch_tpu_cc_library(
     srcs = ["control_flow.cc"],
     hdrs = ["control_flow.h"],
     deps = [
-        ":cond",
         ":context",
         ":dtype",
         ":index_arg",

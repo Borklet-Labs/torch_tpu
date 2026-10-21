@@ -365,6 +365,6 @@ Tile Dot(Tile lhs, Tile rhs, const DotOptions& options) {
       result_dtype);
 }
 
-template struct internal::ElementwiseOps<Tile, Tile>;
+template struct internal::ElementwiseOps<Tile>;
 
 }  // namespace torch_tpu::kiln

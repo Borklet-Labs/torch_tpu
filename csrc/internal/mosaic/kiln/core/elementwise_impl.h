@@ -17,7 +17,7 @@
 // Definitions of `internal::ElementwiseOps` (see elementwise.h). Include this
 // from the .cc of a handle type and explicitly instantiate the struct, e.g.
 //
-//   template struct internal::ElementwiseOps<Tile, Tile>;
+//   template struct internal::ElementwiseOps<Tile>;
 
 #ifndef TORCH_TPU_CSRC_INTERNAL_MOSAIC_KILN_CORE_ELEMENTWISE_IMPL_H_
 #define TORCH_TPU_CSRC_INTERNAL_MOSAIC_KILN_CORE_ELEMENTWISE_IMPL_H_
@@ -55,9 +55,9 @@ void CheckSameDType(T lhs, T rhs, std::string_view what) {
 }
 
 template <typename T>
-void CheckIntOrFloat(T v, std::string_view what) {
-  ABSL_CHECK(v.dtype().IsIntOrFloat())  // CRASH_OK
-      << what << " requires integer or floating-point operands";
+void CheckNotBool(T v, std::string_view what) {
+  ABSL_CHECK(!v.dtype().IsBool())  // CRASH_OK
+      << what << " requires non-bool operands";
 }
 
 // Aligns the operand shapes and emits the binary `Op`. Callers validate the
@@ -76,7 +76,8 @@ template <typename FloatOp, typename SIntOp, typename UIntOp = SIntOp,
           typename T>
 T Arith(T lhs, T rhs, std::string_view what) {
   CheckSameDType(lhs, rhs, what);
-  CheckIntOrFloat(lhs, what);
+  // i1 type not supported by Mosaic arith lowerings.
+  CheckNotBool(lhs, what);
   if (lhs.dtype().IsFloat()) {
     return EmitBinary<FloatOp>(lhs, rhs);
   }
@@ -95,29 +96,39 @@ T Bitwise(T lhs, T rhs, std::string_view what) {
   return EmitBinary<Op>(lhs, rhs);
 }
 
-template <typename CmpResult, typename T>
-CmpResult Compare(T lhs, T rhs, mlir::arith::CmpFPredicate fpred,
-                  mlir::arith::CmpIPredicate ipred) {
+// Binary op on integer or bool (mask) operands.
+template <typename Op, typename T>
+T Shift(T lhs, T rhs, std::string_view what) {
+  CheckSameDType(lhs, rhs, what);
+  CheckNotBool(lhs, what);
+  ABSL_CHECK(lhs.dtype().IsInt())  // CRASH_OK
+      << what << " requires integer operands";
+  return EmitBinary<Op>(lhs, rhs);
+}
+
+template <typename T>
+T Compare(T lhs, T rhs, mlir::arith::CmpFPredicate fpred,
+          mlir::arith::CmpIPredicate ipred) {
   CheckSameDType(lhs, rhs, "Comparison");
-  CheckIntOrFloat(lhs, "Comparison");
   mlir::Value values[] = {unwrap(lhs), unwrap(rhs)};
   AlignShapes(values);
   mlir::ImplicitLocOpBuilder& b = CurrentBuilder();
   if (lhs.dtype().IsFloat()) {
-    return wrap<CmpResult>(
-        mlir::arith::CmpFOp::create(b, fpred, values[0], values[1]), bool_);
+    return wrap<T>(mlir::arith::CmpFOp::create(b, fpred, values[0], values[1]),
+                   bool_);
   }
-  return wrap<CmpResult>(
-      mlir::arith::CmpIOp::create(b, ipred, values[0], values[1]), bool_);
+  return wrap<T>(mlir::arith::CmpIOp::create(b, ipred, values[0], values[1]),
+                 bool_);
 }
 
-template <typename CmpResult, typename T>
-CmpResult Compare(T lhs, T rhs, mlir::arith::CmpFPredicate fpred,
-                  mlir::arith::CmpIPredicate signed_ipred,
-                  mlir::arith::CmpIPredicate unsigned_ipred) {
-  return Compare<CmpResult>(
-      lhs, rhs, fpred,
-      lhs.dtype().IsUnsigned() ? unsigned_ipred : signed_ipred);
+template <typename T>
+T Compare(T lhs, T rhs, mlir::arith::CmpFPredicate fpred,
+          mlir::arith::CmpIPredicate signed_ipred,
+          mlir::arith::CmpIPredicate unsigned_ipred) {
+  return Compare(lhs, rhs, fpred,
+                 lhs.dtype().IsUnsigned() || lhs.dtype().IsBool()
+                     ? unsigned_ipred
+                     : signed_ipred);
 }
 
 template <typename Op, typename T>
@@ -127,19 +138,19 @@ T UnaryFloat(T v, std::string_view what) {
   return wrap<T>(Op::create(CurrentBuilder(), unwrap(v)), v.dtype());
 }
 
-template <typename T, typename CmpResult>
-T ElementwiseOps<T, CmpResult>::AsType(T v, DType target) {
+template <typename T>
+T ElementwiseOps<T>::AsType(T v, DType target) {
   return wrap<T>(EmitCast(unwrap(v), v.dtype(), target), target);
 }
 
-template <typename T, typename CmpResult>
-T ElementwiseOps<T, CmpResult>::Bitcast(T v, DType target) {
+template <typename T>
+T ElementwiseOps<T>::Bitcast(T v, DType target) {
   return wrap<T>(EmitBitcast(unwrap(v), v.dtype(), target), target);
 }
 
-template <typename T, typename CmpResult>
-T ElementwiseOps<T, CmpResult>::Neg(T v) {
-  CheckIntOrFloat(v, "Unary -");
+template <typename T>
+T ElementwiseOps<T>::Neg(T v) {
+  CheckNotBool(v, "Unary -");
   if (v.dtype().IsFloat()) {
     return wrap<T>(mlir::arith::NegFOp::create(CurrentBuilder(), unwrap(v)),
                    v.dtype());
@@ -147,29 +158,29 @@ T ElementwiseOps<T, CmpResult>::Neg(T v) {
   return v.MakeConstant(0) - v;
 }
 
-template <typename T, typename CmpResult>
-T ElementwiseOps<T, CmpResult>::Add(T lhs, T rhs) {
+template <typename T>
+T ElementwiseOps<T>::Add(T lhs, T rhs) {
   return Arith<mlir::arith::AddFOp, mlir::arith::AddIOp>(lhs, rhs, "+");
 }
 
-template <typename T, typename CmpResult>
-T ElementwiseOps<T, CmpResult>::Sub(T lhs, T rhs) {
+template <typename T>
+T ElementwiseOps<T>::Sub(T lhs, T rhs) {
   return Arith<mlir::arith::SubFOp, mlir::arith::SubIOp>(lhs, rhs, "-");
 }
 
-template <typename T, typename CmpResult>
-T ElementwiseOps<T, CmpResult>::Mul(T lhs, T rhs) {
+template <typename T>
+T ElementwiseOps<T>::Mul(T lhs, T rhs) {
   return Arith<mlir::arith::MulFOp, mlir::arith::MulIOp>(lhs, rhs, "*");
 }
 
-template <typename T, typename CmpResult>
-T ElementwiseOps<T, CmpResult>::Div(T lhs, T rhs) {
+template <typename T>
+T ElementwiseOps<T>::Div(T lhs, T rhs) {
   return Arith<mlir::arith::DivFOp, mlir::arith::DivSIOp, mlir::arith::DivUIOp>(
       lhs, rhs, "/");
 }
 
-template <typename T, typename CmpResult>
-T ElementwiseOps<T, CmpResult>::Rem(T lhs, T rhs) {
+template <typename T>
+T ElementwiseOps<T>::Rem(T lhs, T rhs) {
   CheckSameDType(lhs, rhs, "%");
   ABSL_CHECK(lhs.dtype().IsInt()) << "% requires integer operands";  // CRASH_OK
   if (lhs.dtype().IsUnsigned()) {
@@ -178,8 +189,8 @@ T ElementwiseOps<T, CmpResult>::Rem(T lhs, T rhs) {
   return EmitBinary<mlir::arith::RemSIOp>(lhs, rhs);
 }
 
-template <typename T, typename CmpResult>
-T ElementwiseOps<T, CmpResult>::Min(T lhs, T rhs) {
+template <typename T>
+T ElementwiseOps<T>::Min(T lhs, T rhs) {
   if (lhs.dtype().IsBool() && rhs.dtype().IsBool()) {
     return lhs & rhs;
   }
@@ -187,8 +198,8 @@ T ElementwiseOps<T, CmpResult>::Min(T lhs, T rhs) {
                mlir::arith::MinUIOp>(lhs, rhs, "Min()");
 }
 
-template <typename T, typename CmpResult>
-T ElementwiseOps<T, CmpResult>::Max(T lhs, T rhs) {
+template <typename T>
+T ElementwiseOps<T>::Max(T lhs, T rhs) {
   if (lhs.dtype().IsBool() && rhs.dtype().IsBool()) {
     return lhs | rhs;
   }
@@ -196,76 +207,82 @@ T ElementwiseOps<T, CmpResult>::Max(T lhs, T rhs) {
                mlir::arith::MaxUIOp>(lhs, rhs, "Max()");
 }
 
-template <typename T, typename CmpResult>
-T ElementwiseOps<T, CmpResult>::And(T lhs, T rhs) {
+template <typename T>
+T ElementwiseOps<T>::And(T lhs, T rhs) {
   return Bitwise<mlir::arith::AndIOp>(lhs, rhs, "&");
 }
 
-template <typename T, typename CmpResult>
-T ElementwiseOps<T, CmpResult>::Or(T lhs, T rhs) {
+template <typename T>
+T ElementwiseOps<T>::Or(T lhs, T rhs) {
   return Bitwise<mlir::arith::OrIOp>(lhs, rhs, "|");
 }
 
-template <typename T, typename CmpResult>
-T ElementwiseOps<T, CmpResult>::Xor(T lhs, T rhs) {
+template <typename T>
+T ElementwiseOps<T>::Xor(T lhs, T rhs) {
   return Bitwise<mlir::arith::XOrIOp>(lhs, rhs, "^");
 }
 
-template <typename T, typename CmpResult>
-T ElementwiseOps<T, CmpResult>::ShiftLeft(T lhs, T rhs) {
-  return Bitwise<mlir::arith::ShLIOp>(lhs, rhs, "<<");
+template <typename T>
+T ElementwiseOps<T>::ShiftLeft(T lhs, T rhs) {
+  return Shift<mlir::arith::ShLIOp>(lhs, rhs, "<<");
 }
 
-template <typename T, typename CmpResult>
-T ElementwiseOps<T, CmpResult>::ShiftRight(T lhs, T rhs) {
+template <typename T>
+T ElementwiseOps<T>::ShiftRight(T lhs, T rhs) {
   if (lhs.dtype().IsUnsigned()) {
-    return Bitwise<mlir::arith::ShRUIOp>(lhs, rhs, ">>");
+    return Shift<mlir::arith::ShRUIOp>(lhs, rhs, ">>");
   }
-  return Bitwise<mlir::arith::ShRSIOp>(lhs, rhs, ">>");
+  return Shift<mlir::arith::ShRSIOp>(lhs, rhs, ">>");
 }
 
-template <typename T, typename CmpResult>
-CmpResult ElementwiseOps<T, CmpResult>::Eq(T lhs, T rhs) {
-  return Compare<CmpResult>(lhs, rhs, mlir::arith::CmpFPredicate::OEQ,
-                            mlir::arith::CmpIPredicate::eq);
+template <typename T>
+T ElementwiseOps<T>::LogicalNot(T v) {
+  ABSL_CHECK(v.dtype().IsBool()) << "! requires a bool operand";  // CRASH_OK
+  return v ^ v.MakeConstant(true);
 }
 
-template <typename T, typename CmpResult>
-CmpResult ElementwiseOps<T, CmpResult>::Ne(T lhs, T rhs) {
-  return Compare<CmpResult>(lhs, rhs, mlir::arith::CmpFPredicate::ONE,
-                            mlir::arith::CmpIPredicate::ne);
+template <typename T>
+T ElementwiseOps<T>::Eq(T lhs, T rhs) {
+  return Compare(lhs, rhs, mlir::arith::CmpFPredicate::OEQ,
+                 mlir::arith::CmpIPredicate::eq);
 }
 
-template <typename T, typename CmpResult>
-CmpResult ElementwiseOps<T, CmpResult>::Lt(T lhs, T rhs) {
-  return Compare<CmpResult>(lhs, rhs, mlir::arith::CmpFPredicate::OLT,
-                            mlir::arith::CmpIPredicate::slt,
-                            mlir::arith::CmpIPredicate::ult);
+template <typename T>
+T ElementwiseOps<T>::Ne(T lhs, T rhs) {
+  return Compare(lhs, rhs, mlir::arith::CmpFPredicate::ONE,
+                 mlir::arith::CmpIPredicate::ne);
 }
 
-template <typename T, typename CmpResult>
-CmpResult ElementwiseOps<T, CmpResult>::Le(T lhs, T rhs) {
-  return Compare<CmpResult>(lhs, rhs, mlir::arith::CmpFPredicate::OLE,
-                            mlir::arith::CmpIPredicate::sle,
-                            mlir::arith::CmpIPredicate::ule);
+template <typename T>
+T ElementwiseOps<T>::Lt(T lhs, T rhs) {
+  return Compare(lhs, rhs, mlir::arith::CmpFPredicate::OLT,
+                 mlir::arith::CmpIPredicate::slt,
+                 mlir::arith::CmpIPredicate::ult);
 }
 
-template <typename T, typename CmpResult>
-CmpResult ElementwiseOps<T, CmpResult>::Gt(T lhs, T rhs) {
-  return Compare<CmpResult>(lhs, rhs, mlir::arith::CmpFPredicate::OGT,
-                            mlir::arith::CmpIPredicate::sgt,
-                            mlir::arith::CmpIPredicate::ugt);
+template <typename T>
+T ElementwiseOps<T>::Le(T lhs, T rhs) {
+  return Compare(lhs, rhs, mlir::arith::CmpFPredicate::OLE,
+                 mlir::arith::CmpIPredicate::sle,
+                 mlir::arith::CmpIPredicate::ule);
 }
 
-template <typename T, typename CmpResult>
-CmpResult ElementwiseOps<T, CmpResult>::Ge(T lhs, T rhs) {
-  return Compare<CmpResult>(lhs, rhs, mlir::arith::CmpFPredicate::OGE,
-                            mlir::arith::CmpIPredicate::sge,
-                            mlir::arith::CmpIPredicate::uge);
+template <typename T>
+T ElementwiseOps<T>::Gt(T lhs, T rhs) {
+  return Compare(lhs, rhs, mlir::arith::CmpFPredicate::OGT,
+                 mlir::arith::CmpIPredicate::sgt,
+                 mlir::arith::CmpIPredicate::ugt);
 }
 
-template <typename T, typename CmpResult>
-T ElementwiseOps<T, CmpResult>::Select(CmpResult mask, T if_true, T if_false) {
+template <typename T>
+T ElementwiseOps<T>::Ge(T lhs, T rhs) {
+  return Compare(lhs, rhs, mlir::arith::CmpFPredicate::OGE,
+                 mlir::arith::CmpIPredicate::sge,
+                 mlir::arith::CmpIPredicate::uge);
+}
+
+template <typename T>
+T ElementwiseOps<T>::Select(T mask, T if_true, T if_false) {
   CheckSameDType(if_true, if_false, "Select() branches");
   mlir::Value values[] = {unwrap(mask), unwrap(if_true), unwrap(if_false)};
   ABSL_CHECK(mlir::getElementTypeOrSelf(values[0]).isInteger(1))  // CRASH_OK
@@ -276,44 +293,44 @@ T ElementwiseOps<T, CmpResult>::Select(CmpResult mask, T if_true, T if_false) {
                  if_true.dtype());
 }
 
-template <typename T, typename CmpResult>
-T ElementwiseOps<T, CmpResult>::Exp(T v) {
+template <typename T>
+T ElementwiseOps<T>::Exp(T v) {
   return UnaryFloat<mlir::math::ExpOp>(v, "Exp()");
 }
 
-template <typename T, typename CmpResult>
-T ElementwiseOps<T, CmpResult>::Exp2(T v) {
+template <typename T>
+T ElementwiseOps<T>::Exp2(T v) {
   return UnaryFloat<mlir::math::Exp2Op>(v, "Exp2()");
 }
 
-template <typename T, typename CmpResult>
-T ElementwiseOps<T, CmpResult>::Log(T v) {
+template <typename T>
+T ElementwiseOps<T>::Log(T v) {
   return UnaryFloat<mlir::math::LogOp>(v, "Log()");
 }
 
-template <typename T, typename CmpResult>
-T ElementwiseOps<T, CmpResult>::Log2(T v) {
+template <typename T>
+T ElementwiseOps<T>::Log2(T v) {
   return UnaryFloat<mlir::math::Log2Op>(v, "Log2()");
 }
 
-template <typename T, typename CmpResult>
-T ElementwiseOps<T, CmpResult>::Sqrt(T v) {
+template <typename T>
+T ElementwiseOps<T>::Sqrt(T v) {
   return UnaryFloat<mlir::math::SqrtOp>(v, "Sqrt()");
 }
 
-template <typename T, typename CmpResult>
-T ElementwiseOps<T, CmpResult>::Rsqrt(T v) {
+template <typename T>
+T ElementwiseOps<T>::Rsqrt(T v) {
   return UnaryFloat<mlir::math::RsqrtOp>(v, "Rsqrt()");
 }
 
-template <typename T, typename CmpResult>
-T ElementwiseOps<T, CmpResult>::Tanh(T v) {
+template <typename T>
+T ElementwiseOps<T>::Tanh(T v) {
   return UnaryFloat<mlir::math::TanhOp>(v, "Tanh()");
 }
 
-template <typename T, typename CmpResult>
-T ElementwiseOps<T, CmpResult>::Abs(T v) {
-  CheckIntOrFloat(v, "Abs()");
+template <typename T>
+T ElementwiseOps<T>::Abs(T v) {
+  CheckNotBool(v, "Abs()");
   if (v.dtype().IsUnsigned()) {
     return v;
   }

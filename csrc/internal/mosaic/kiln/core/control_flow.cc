@@ -18,7 +18,6 @@
 
 #include "absl/functional/function_ref.h"
 #include "absl/log/absl_check.h"
-#include "csrc/internal/mosaic/kiln/core/cond.h"
 #include "csrc/internal/mosaic/kiln/core/context.h"
 #include "csrc/internal/mosaic/kiln/core/dtype.h"
 #include "csrc/internal/mosaic/kiln/core/index_arg.h"
@@ -70,7 +69,9 @@ void ValidateLoopStep(const IndexArg& step) {
 
 }  // namespace
 
-void If(Cond cond, absl::FunctionRef<void()> then_body) {
+void If(Scalar cond, absl::FunctionRef<void()> then_body) {
+  ABSL_CHECK(cond.dtype().IsBool())  // CRASH_OK
+      << "If() condition must be a bool scalar";
   mlir::ImplicitLocOpBuilder& b = internal::CurrentBuilder();
   auto if_op = mlir::scf::IfOp::create(b, internal::unwrap(cond),
                                        /*withElseRegion=*/false);
@@ -79,8 +80,10 @@ void If(Cond cond, absl::FunctionRef<void()> then_body) {
   then_body();
 }
 
-void If(Cond cond, absl::FunctionRef<void()> then_body,
+void If(Scalar cond, absl::FunctionRef<void()> then_body,
         absl::FunctionRef<void()> else_body) {
+  ABSL_CHECK(cond.dtype().IsBool())  // CRASH_OK
+      << "If() condition must be a bool scalar";
   mlir::ImplicitLocOpBuilder& b = internal::CurrentBuilder();
   auto if_op = mlir::scf::IfOp::create(b, internal::unwrap(cond),
                                        /*withElseRegion=*/true);

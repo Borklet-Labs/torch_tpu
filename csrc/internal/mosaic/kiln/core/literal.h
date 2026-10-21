@@ -55,7 +55,7 @@ class Literal {
 // CRTP mixin providing (Derived, Literal) and (Literal, Derived) binary
 // operator overloads. Derived must provide `Derived MakeConstant(Literal)
 // const`.
-template <typename Derived, typename CmpResult = Derived>
+template <typename Derived>
 class WithLiteralOps {
  public:
   // Arithmetic
@@ -125,38 +125,38 @@ class WithLiteralOps {
   friend Derived Max(Literal lhs, Derived rhs) {
     return Max(rhs.MakeConstant(lhs), rhs);
   }
-  friend Derived Select(CmpResult cond, Derived if_true, Literal if_false) {
+  friend Derived Select(Derived cond, Derived if_true, Literal if_false) {
     return Select(cond, if_true, if_true.MakeConstant(if_false));
   }
-  friend Derived Select(CmpResult cond, Literal if_true, Derived if_false) {
+  friend Derived Select(Derived cond, Literal if_true, Derived if_false) {
     return Select(cond, if_false.MakeConstant(if_true), if_false);
   }
 
   // Comparisons
-  friend CmpResult operator==(Derived lhs, Literal rhs) {
+  friend Derived operator==(Derived lhs, Literal rhs) {
     return lhs == lhs.MakeConstant(rhs);
   }
-  friend CmpResult operator==(Literal lhs, Derived rhs) { return rhs == lhs; }
-  friend CmpResult operator!=(Derived lhs, Literal rhs) {
+  friend Derived operator==(Literal lhs, Derived rhs) { return rhs == lhs; }
+  friend Derived operator!=(Derived lhs, Literal rhs) {
     return lhs != lhs.MakeConstant(rhs);
   }
-  friend CmpResult operator!=(Literal lhs, Derived rhs) { return rhs != lhs; }
-  friend CmpResult operator<(Derived lhs, Literal rhs) {
+  friend Derived operator!=(Literal lhs, Derived rhs) { return rhs != lhs; }
+  friend Derived operator<(Derived lhs, Literal rhs) {
     return lhs < lhs.MakeConstant(rhs);
   }
-  friend CmpResult operator<(Literal lhs, Derived rhs) { return rhs > lhs; }
-  friend CmpResult operator<=(Derived lhs, Literal rhs) {
+  friend Derived operator<(Literal lhs, Derived rhs) { return rhs > lhs; }
+  friend Derived operator<=(Derived lhs, Literal rhs) {
     return lhs <= lhs.MakeConstant(rhs);
   }
-  friend CmpResult operator<=(Literal lhs, Derived rhs) { return rhs >= lhs; }
-  friend CmpResult operator>(Derived lhs, Literal rhs) {
+  friend Derived operator<=(Literal lhs, Derived rhs) { return rhs >= lhs; }
+  friend Derived operator>(Derived lhs, Literal rhs) {
     return lhs > lhs.MakeConstant(rhs);
   }
-  friend CmpResult operator>(Literal lhs, Derived rhs) { return rhs < lhs; }
-  friend CmpResult operator>=(Derived lhs, Literal rhs) {
+  friend Derived operator>(Literal lhs, Derived rhs) { return rhs < lhs; }
+  friend Derived operator>=(Derived lhs, Literal rhs) {
     return lhs >= lhs.MakeConstant(rhs);
   }
-  friend CmpResult operator>=(Literal lhs, Derived rhs) { return rhs <= lhs; }
+  friend Derived operator>=(Literal lhs, Derived rhs) { return rhs <= lhs; }
 };
 
 }  // namespace torch_tpu::kiln

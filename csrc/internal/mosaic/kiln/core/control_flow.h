@@ -18,15 +18,14 @@
 #define TORCH_TPU_CSRC_INTERNAL_MOSAIC_KILN_CORE_CONTROL_FLOW_H_
 
 #include "absl/functional/function_ref.h"
-#include "csrc/internal/mosaic/kiln/core/cond.h"
 #include "csrc/internal/mosaic/kiln/core/index_arg.h"
 #include "csrc/internal/mosaic/kiln/core/scalar.h"
 
 namespace torch_tpu::kiln {
 
 // Structured control flow inside a kernel body.
-void If(Cond cond, absl::FunctionRef<void()> then_body);
-void If(Cond cond, absl::FunctionRef<void()> then_body,
+void If(Scalar cond, absl::FunctionRef<void()> then_body);
+void If(Scalar cond, absl::FunctionRef<void()> then_body,
         absl::FunctionRef<void()> else_body);
 
 // Loops from `lower` to `upper` (exclusive) by positive `step`, passing the

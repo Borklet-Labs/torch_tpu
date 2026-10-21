@@ -125,7 +125,7 @@ kiln::Scalar ExtractLane(kiln::Tile values, kiln::Scalar lane) {
 }
 
 // Classify one logical lane using the predicate specified in the header.
-kiln::Cond IsNonzero(kiln::Tile values, kiln::Scalar lane) {
+kiln::Scalar IsNonzero(kiln::Tile values, kiln::Scalar lane) {
   // TPU scalar arithmetic is integer-only. Compare float magnitude bits:
   // any set bit is nonzero, which excludes only +0.0 and -0.0.
   kiln::Scalar bits = Bitcast(ExtractLane(values, lane), kiln::i32);

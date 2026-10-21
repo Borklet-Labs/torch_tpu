@@ -232,17 +232,15 @@ TEST_F(KilnTest, LiteralOverloads) {
                      Tile i_cmp = i == 0;
                      Tile i_combined = Select(i_cmp, i_add_int, 0);
 
-                     // Scalar with int and float literal + Cond <-> Scalar
+                     // Scalar with int and float literal + bool Scalar
                      Scalar s = ProgramId(0);
                      Scalar s_plus = s + 1;
-                     Cond c = s_plus == 1;
-                     Scalar s_bool = c;
+                     Scalar s_bool = s_plus == 1;
                      EXPECT_TRUE(s_bool.dtype().IsBool());
                      EXPECT_FALSE(s_bool.dtype().IsIntOrFloat());
-                     Cond c_roundtrip = static_cast<Cond>(s_bool);
 
                      If(
-                         c_roundtrip,
+                         s_bool,
                          [&] {
                            out = f_add_int + f_sub_float + f_scale + f_clamp +
                                  f_mask + i_combined.ToF32();
@@ -272,7 +270,7 @@ TEST_F(KilnTest, LiteralOverloads) {
     CHECK:         %[[I_EQ:.*]] = arith.cmpi eq, %[[I]], %{{.*}} : vector<32x128xi32>
     CHECK:         %[[I_SEL:.*]] = arith.select %[[I_EQ]], %[[I_ADD]], %{{.*}} : vector<32x128xi1>, vector<32x128xi32>
 
-    // Cond -> Scalar -> Cond round trip still yields a plain i1 for scf.if.
+    // Bool Scalar yields a plain i1 for scf.if.
     CHECK:         %[[S_PLUS:.*]] = arith.addi %[[PID]], %{{.*}} : i32
     CHECK:         %[[COND:.*]] = arith.cmpi eq, %[[S_PLUS]], %{{.*}} : i32
     CHECK:         scf.if %[[COND]] {
@@ -621,6 +619,10 @@ TEST_F(KilnTest, ScalarMismatchedTypesFail) {
         Scalar s_f = F32(1.0);
         EXPECT_DEATH(s_i + s_f, "\\+ requires operands of the same dtype");
         EXPECT_DEATH(s_i + s_u, "\\+ requires operands of the same dtype");
+        EXPECT_DEATH(!s_i, "! requires a bool operand");
+        EXPECT_DEATH(If(s_i, [&] {}),
+                     "If\\(\\) condition must be a bool scalar");
+        EXPECT_DEATH(Select(s_i, s_i, s_i), "Select\\(\\) mask must be bool");
         EXPECT_DEATH(For(s_f, [&](Scalar) {}),
                      "IndexArg requires an integer scalar");
 
@@ -634,6 +636,7 @@ TEST_F(KilnTest, ScalarMismatchedTypesFail) {
         EXPECT_DEATH(Min(t_i, t_u),
                      "Min\\(\\) requires operands of the same dtype");
         EXPECT_DEATH(t_f & t_f, "& requires integer or bool operands");
+        EXPECT_DEATH(!t_i, "! requires a bool operand");
 
         EXPECT_DEATH(f_in(0, 0, 0), "Too many slice indices");
         EXPECT_DEATH(f_in(0, Slice(0, 0)), "Slice size must be positive");
@@ -815,11 +818,18 @@ TEST_F(KilnTest, SimplifiedOverloadsAndBounds) {
         EXPECT_EQ(max2.dtype(), i32);
 
         // Select with literals.
-        Cond cond = shift_val == 2;
+        Scalar cond = shift_val == 2;
         Scalar sel1 = Select(cond, shift_val, 0);
         Scalar sel2 = Select(cond, 0, shift_val);
         EXPECT_EQ(sel1.dtype(), i32);
         EXPECT_EQ(sel2.dtype(), i32);
+
+        // Logical ops with literals and on tiles.
+        Scalar s_logic = (cond & true) | (false | !cond);
+        EXPECT_EQ(s_logic.dtype(), bool_);
+        Tile t_cond = Tile(in) > 0.0;
+        Tile t_logic = (t_cond & true) | (false | !t_cond);
+        EXPECT_EQ(t_logic.dtype(), bool_);
 
         // Slicing with IndexArg and 0-arg operator().
         Ref in_full = in();
@@ -869,6 +879,15 @@ TEST_F(KilnTest, SimplifiedOverloadsAndBounds) {
     CHECK:         %[[COND:.*]] = arith.cmpi eq, %[[TWO]], %{{.*}} : i32
     CHECK:         arith.select %[[COND]], %[[TWO]], %{{.*}} : i32
     CHECK:         arith.select %[[COND]], %{{.*}}, %[[TWO]] : i32
+
+    // Logical ops with literals and on tiles.
+    CHECK:         arith.andi %[[COND]], %{{.*}} : i1
+    CHECK:         arith.xori %[[COND]], %{{.*}} : i1
+    CHECK:         arith.ori %{{.*}}, %{{.*}} : i1
+    CHECK:         %[[T_COND:.*]] = arith.cmpf ogt
+    CHECK:         arith.andi %[[T_COND]], %{{.*}} : vector<32x128xi1>
+    CHECK:         arith.xori %[[T_COND]], %{{.*}} : vector<32x128xi1>
+    CHECK:         arith.ori %{{.*}}, %{{.*}} : vector<32x128xi1>
 
     // Ref slicing with an IndexArg (dynamic index / dynamic slice start).
     CHECK:         %[[ROW:.*]] = tpu.memref_slice %[[IN]][%[[ZERO]], %{{.*}}] : memref<32x128xf32, #tpu.memory_space<vmem>> -> memref<1x128xf32, #tpu.memory_space<vmem>>
@@ -933,7 +952,7 @@ TEST_F(KilnTest, UnsignedOperations) {
         Scalar s_div = s_u / U32(2);
         Scalar s_rem = s_u % U32(5);
         Scalar s_shr = s_u >> U32(1);
-        Cond s_lt = s_u < U32(100);
+        Scalar s_lt = s_u < U32(100);
 
         Tile s_tile = Splat(s_div + s_rem + s_shr, {32, 128});
         If(s_lt, [&] {

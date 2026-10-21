@@ -19,7 +19,6 @@
 #include <cstdint>
 
 #include "absl/log/absl_check.h"
-#include "csrc/internal/mosaic/kiln/core/cond.h"
 #include "csrc/internal/mosaic/kiln/core/context.h"
 #include "csrc/internal/mosaic/kiln/core/dtype.h"
 #include "csrc/internal/mosaic/kiln/core/elementwise.h"
@@ -28,8 +27,10 @@
 #include "csrc/internal/mosaic/kiln/core/value_base.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/Types.h"
 #include "mlir/IR/Value.h"
+#include "mlir/Support/LLVM.h"
 #include "xla/mosaic/dialect/tpu/tpu_dialect.h"
 
 namespace torch_tpu::kiln {
@@ -50,16 +51,8 @@ Scalar::Scalar(const void* impl, DType dtype) : ValueBase(impl, dtype) {
   mlir::Value value = internal::unwrap(*this);
   ABSL_CHECK(!value.getType().isIndex())  // CRASH_OK
       << "Scalar must not hold an index";
-  ABSL_CHECK(value.getType().isIntOrFloat())  // CRASH_OK
-      << "Scalar must be an integer or floating-point value";
-}
-
-Scalar::Scalar(Cond cond)
-    : Scalar(internal::unwrap(cond).getAsOpaquePointer(), bool_) {}
-
-Scalar::operator Cond() const {
-  ABSL_CHECK(dtype().IsBool()) << "Cond requires a bool scalar";  // CRASH_OK
-  return internal::wrap<Cond>(internal::unwrap(*this), bool_);
+  ABSL_CHECK(!mlir::isa<mlir::ShapedType>(value.getType()))  // CRASH_OK
+      << "Scalar should not be a shaped type";
 }
 
 Scalar MultipleOf(Scalar value, int32_t multiple) {
@@ -81,6 +74,6 @@ Scalar I32(Literal value) { return MakeScalarConstant(i32, value); }
 Scalar U32(Literal value) { return MakeScalarConstant(u32, value); }
 Scalar F32(Literal value) { return MakeScalarConstant(f32, value); }
 
-template struct internal::ElementwiseOps<Scalar, Cond>;
+template struct internal::ElementwiseOps<Scalar>;
 
 }  // namespace torch_tpu::kiln

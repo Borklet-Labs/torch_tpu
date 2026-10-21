@@ -31,13 +31,12 @@ namespace internal {
 // operands are broadcast numpy-style to a common shape, while scalar operands
 // have no shape and are left untouched (see `AlignShapes`).
 //
-// `T` is the handle type (`Scalar` or `Tile`) and `CmpResult` the type produced
-// by comparisons (`Cond` for scalars, an i1 mask `Tile` for tiles). `T` must
-// provide `DType dtype() const` and `T MakeConstant(Literal) const`.
+// `T` is the handle type (`Scalar` or `Tile`). `T` must provide
+// `DType dtype() const` and `T MakeConstant(Literal) const`.
 //
 // The members are defined in elementwise_impl.h and explicitly instantiated in
 // scalar.cc and tile.cc, which keeps MLIR out of the public headers.
-template <typename T, typename CmpResult>
+template <typename T>
 struct ElementwiseOps {
   // Type conversion.
   static T AsType(T v, DType target);
@@ -59,16 +58,17 @@ struct ElementwiseOps {
   static T Xor(T lhs, T rhs);
   static T ShiftLeft(T lhs, T rhs);
   static T ShiftRight(T lhs, T rhs);
+  static T LogicalNot(T v);
 
   // Comparison.
-  static CmpResult Eq(T lhs, T rhs);
-  static CmpResult Ne(T lhs, T rhs);
-  static CmpResult Lt(T lhs, T rhs);
-  static CmpResult Le(T lhs, T rhs);
-  static CmpResult Gt(T lhs, T rhs);
-  static CmpResult Ge(T lhs, T rhs);
+  static T Eq(T lhs, T rhs);
+  static T Ne(T lhs, T rhs);
+  static T Lt(T lhs, T rhs);
+  static T Le(T lhs, T rhs);
+  static T Gt(T lhs, T rhs);
+  static T Ge(T lhs, T rhs);
 
-  static T Select(CmpResult mask, T if_true, T if_false);
+  static T Select(T mask, T if_true, T if_false);
 
   // Unary math.
   static T Exp(T v);
@@ -88,10 +88,10 @@ struct ElementwiseOps {
 //
 // Multi-operand ops require operands of the same dtype; element types are
 // never promoted implicitly (use `AsType`). For tiles, operands are broadcast
-// numpy-style to a common shape first. Comparisons produce a `CmpResult`.
-template <typename Derived, typename CmpResult = Derived>
+// numpy-style to a common shape first. Comparisons produce a bool `Derived`.
+template <typename Derived>
 class WithElementwiseOps {
-  using Ops = internal::ElementwiseOps<Derived, CmpResult>;
+  using Ops = internal::ElementwiseOps<Derived>;
 
  public:
   // Element type conversion (float<->float, int<->float, int widths).
@@ -101,6 +101,7 @@ class WithElementwiseOps {
   Derived Bitcast(DType target) const {
     return Ops::Bitcast(derived(), target);
   }
+  Derived ToBool() const { return AsType(bool_); }
   Derived ToI32() const { return AsType(i32); }
   Derived ToU8() const { return AsType(u8); }
   Derived ToU16() const { return AsType(u16); }
@@ -145,24 +146,25 @@ class WithElementwiseOps {
   friend Derived operator>>(Derived lhs, Derived rhs) {
     return Ops::ShiftRight(lhs, rhs);
   }
+  friend Derived operator!(Derived v) { return Ops::LogicalNot(v); }
 
-  // Comparisons on integer or floating-point operands.
-  friend CmpResult operator==(Derived lhs, Derived rhs) {
+  // Comparisons on bool, integer, or floating-point operands.
+  friend Derived operator==(Derived lhs, Derived rhs) {
     return Ops::Eq(lhs, rhs);
   }
-  friend CmpResult operator!=(Derived lhs, Derived rhs) {
+  friend Derived operator!=(Derived lhs, Derived rhs) {
     return Ops::Ne(lhs, rhs);
   }
-  friend CmpResult operator<(Derived lhs, Derived rhs) {
+  friend Derived operator<(Derived lhs, Derived rhs) {
     return Ops::Lt(lhs, rhs);
   }
-  friend CmpResult operator<=(Derived lhs, Derived rhs) {
+  friend Derived operator<=(Derived lhs, Derived rhs) {
     return Ops::Le(lhs, rhs);
   }
-  friend CmpResult operator>(Derived lhs, Derived rhs) {
+  friend Derived operator>(Derived lhs, Derived rhs) {
     return Ops::Gt(lhs, rhs);
   }
-  friend CmpResult operator>=(Derived lhs, Derived rhs) {
+  friend Derived operator>=(Derived lhs, Derived rhs) {
     return Ops::Ge(lhs, rhs);
   }
 
@@ -170,7 +172,7 @@ class WithElementwiseOps {
   // logical and / or.
   friend Derived Min(Derived lhs, Derived rhs) { return Ops::Min(lhs, rhs); }
   friend Derived Max(Derived lhs, Derived rhs) { return Ops::Max(lhs, rhs); }
-  friend Derived Select(CmpResult mask, Derived if_true, Derived if_false) {
+  friend Derived Select(Derived mask, Derived if_true, Derived if_false) {
     return Ops::Select(mask, if_true, if_false);
   }
 

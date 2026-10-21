@@ -19,7 +19,6 @@
 
 #include <cstdint>
 
-#include "csrc/internal/mosaic/kiln/core/cond.h"
 #include "csrc/internal/mosaic/kiln/core/dtype.h"
 #include "csrc/internal/mosaic/kiln/core/elementwise.h"
 #include "csrc/internal/mosaic/kiln/core/literal.h"
@@ -31,16 +30,13 @@ namespace torch_tpu::kiln {
 // loop induction variables, SMEM scalar values, constants, and scalar
 // statistics are Scalars.
 //
-// Arithmetic, bitwise, comparison (yielding a `Cond`), min / max / select and
-// unary math operators come from `WithElementwiseOps`; overloads taking a
-// `Literal` on either side come from `WithLiteralOps`.
+// Arithmetic, bitwise, comparison (yielding a bool `Scalar`), min / max /
+// select and unary math operators come from `WithElementwiseOps`; overloads
+// taking a `Literal` on either side come from `WithLiteralOps`.
 class Scalar : public ValueBase,
-               public WithElementwiseOps<Scalar, Cond>,
-               public WithLiteralOps<Scalar, Cond> {
+               public WithElementwiseOps<Scalar>,
+               public WithLiteralOps<Scalar> {
  public:
-  /* implicit */ Scalar(Cond cond);  // NOLINT(google-explicit-constructor)
-  explicit operator Cond() const;
-
   Scalar MakeConstant(Literal value) const;
 
  private:

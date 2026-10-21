@@ -40,8 +40,8 @@ namespace torch_tpu::kiln {
 // side which is splatted in the tile's dtype. Element types are never promoted
 // implicitly; use `AsType`.
 class Tile : public ValueBase,
-             public WithElementwiseOps<Tile, Tile>,
-             public WithLiteralOps<Tile, Tile> {
+             public WithElementwiseOps<Tile>,
+             public WithLiteralOps<Tile> {
  public:
   // Construct a 0-D tile from a scalar.
   /* implicit */ Tile(Scalar scalar);  // NOLINT(google-explicit-constructor)
