@@ -46,6 +46,7 @@ from torch.testing._internal import common_methods_invocations
 from torch_tpu._internal import dynamism
 from torch_tpu._internal import execution_mode
 from torch_tpu._internal import sync
+from torch_tpu._internal.compile import flex_attention_redirect
 from torch_tpu._internal.compile import tpu_torch_compile
 from torch_tpu._internal.utils import test_utils as utils
 from tests import op_testing
@@ -19847,6 +19848,98 @@ class OpsGradUnitTest(TorchTpuVsCpuTestBase):
         q, k, v, attn_mask=mask_2d
     )
     utils.assert_close(out, expected)
+
+  def test_flex_attention_packed_documents(self):
+    # Equal-length packed documents are folded into the batch dimension and
+    # attended with the mask shared by all documents.
+    # Converting that per-document mask to SDPA arguments is
+    # covered by the causal and sliding window tests above.
+    docs, doc_len, heads = 4, 512, 2
+    seq = docs * doc_len
+    q, k, v = (
+        torch.randn(1, heads, seq, 128, device="tpu", dtype=torch.bfloat16)
+        for _ in range(3)
+    )
+
+    def mask_mod(b, h, q_i, kv_i):
+      del b, h
+      # First part: token i belongs to document i // doc_len, so this checks
+      # both tokens are from the same document. Second part: makes it causal.
+      return (q_i // doc_len == kv_i // doc_len) & (q_i >= kv_i)
+
+    bm = flex_attention.create_block_mask(
+        mask_mod, None, None, seq, seq, device="tpu"
+    )
+
+    with mock.patch.object(
+        torch.nn.functional,
+        "scaled_dot_product_attention",
+        wraps=torch.nn.functional.scaled_dot_product_attention,
+    ) as sdpa_mock:
+      out = flex_attention.flex_attention(q, k, v, block_mask=bm)
+
+    for folded in sdpa_mock.call_args.args[:3]:
+      self.assertEqual(folded.shape, (docs, heads, doc_len, 128))
+
+    self.assertEqual(out.shape, (1, heads, seq, 128))
+    mask_2d = flex_attention.create_mask(mask_mod, 1, 1, seq, seq, device="tpu")
+    expected = torch.nn.functional.scaled_dot_product_attention(
+        q, k, v, attn_mask=mask_2d
+    )
+    utils.assert_close(out, expected)
+
+  @staticmethod
+  def _causal_mask(n: int) -> torch.Tensor:
+    return torch.ones(n, n, dtype=torch.bool).tril()
+
+  @staticmethod
+  def _sliding_window_mask(n: int, window: int) -> torch.Tensor:
+    # Causal band: True where 0 <= row - col < window.
+    return torch.ones(n, n, dtype=torch.bool).tril().triu(1 - window)
+
+  def test_equal_square_tile_size_equal_causal_documents(self):
+    mask = torch.block_diag(*[self._causal_mask(4)] * 4)
+    self.assertEqual(flex_attention_redirect.equal_square_tile_size(mask), 4)
+
+  def test_equal_square_tile_size_equal_sliding_window_documents(self):
+    mask = torch.block_diag(*[self._sliding_window_mask(4, 2)] * 4)
+    self.assertEqual(flex_attention_redirect.equal_square_tile_size(mask), 4)
+
+  def test_equal_square_tile_size_tile_not_power_of_two(self):
+    mask = torch.block_diag(*[self._causal_mask(3)] * 4)
+    self.assertEqual(flex_attention_redirect.equal_square_tile_size(mask), 3)
+
+  def test_equal_square_tile_size_single_document(self):
+    mask = self._causal_mask(16)
+    self.assertIsNone(flex_attention_redirect.equal_square_tile_size(mask))
+
+  def test_equal_square_tile_size_full_attention(self):
+    mask = torch.ones(16, 16, dtype=torch.bool)
+    self.assertIsNone(flex_attention_redirect.equal_square_tile_size(mask))
+
+  def test_equal_square_tile_size_unequal_documents(self):
+    mask = torch.block_diag(self._causal_mask(6), self._causal_mask(10))
+    self.assertIsNone(flex_attention_redirect.equal_square_tile_size(mask))
+
+  def test_equal_square_tile_size_documents_with_different_masks(self):
+    # The second document's mask differs from the others (token 3 can't see
+    # token 1), so the tiles are not identical.
+    causal_with_gap = self._causal_mask(4)
+    causal_with_gap[3, 1] = False
+    mask = torch.block_diag(
+        self._causal_mask(4),
+        causal_with_gap,
+        self._causal_mask(4),
+        self._causal_mask(4),
+    )
+    self.assertIsNone(flex_attention_redirect.equal_square_tile_size(mask))
+
+  def test_equal_square_tile_size_cross_document_attention(self):
+    # Four equal causal documents, but token 5 (document 1) attends to token 2
+    # (document 0), so the mask is not block-diagonal.
+    mask = torch.block_diag(*[self._causal_mask(4)] * 4)
+    mask[5, 2] = True
+    self.assertIsNone(flex_attention_redirect.equal_square_tile_size(mask))
 
   @parameterized.product(
       window_size=[128, 160],

@@ -32,6 +32,29 @@ from torch.nn.attention import flex_attention
 import torch.nn.functional as F
 
 
+def equal_square_tile_size(mask: torch.Tensor) -> int | None:
+  """Returns d if `mask` is T // d identical d x d tiles along its diagonal.
+
+  Such a [T, T] bool mask is T // d equal-length documents that share one
+  within-document mask and never see each other.
+  """
+  size = mask.shape[0]
+  # Entry i of the sub-diagonal is mask[i + 1, i]: False where token i + 1
+  # can't see token i, i.e. where a new document starts.
+  doc_starts = (~mask.diagonal(offset=-1)).nonzero()
+  if doc_starts.numel() == 0:
+    return None
+  doc_len = int(doc_starts[0]) + 1
+  if size % doc_len:
+    return None
+  # Accept only if the first document's mask, repeated along the diagonal,
+  # reproduces the whole mask.
+  first_doc = mask[:doc_len, :doc_len]
+  num_docs = size // doc_len
+  tiled = torch.block_diag(*[first_doc] * num_docs)
+  return doc_len if torch.equal(tiled, mask) else None
+
+
 def patch() -> None:
   """Patches PyTorch flex_attention to support TPU tensors."""
   original_validate = flex_attention._validate_device
@@ -51,6 +74,41 @@ def patch() -> None:
       return original_bwd(query, key, value, *args, **kwargs)
 
   original_flex_attention = flex_attention.flex_attention
+
+  _doc_len_cache = weakref.WeakKeyDictionary()
+
+  @torch.compiler.assume_constant_result
+  def _get_doc_len(
+      block_mask: flex_attention.BlockMask,
+      q_len: int,
+      kv_len: int,
+      device: torch.device,
+  ) -> int | None:
+    """Returns the document length if `block_mask` is equal-length documents."""
+    cache = _doc_len_cache.setdefault(block_mask, {})
+    key = (q_len, kv_len)
+    if key in cache:
+      return cache[key]
+
+    b_mask, h_mask = block_mask.kv_num_blocks.shape[:2]
+    doc_len = None
+    if (
+        q_len == kv_len
+        and b_mask == 1
+        and h_mask == 1
+        # Sliced BlockMasks carry an error-raising mask_mod stub.
+        and block_mask.mask_mod
+        not in (
+            flex_attention.noop_mask,
+            getattr(flex_attention, "_sliced_mask_mod_error", None),
+        )
+    ):
+      with torch.no_grad():
+        mask = flex_attention.create_mask(
+            block_mask.mask_mod, 1, 1, q_len, kv_len, device=device
+        )
+      doc_len = equal_square_tile_size(mask[0, 0])
+    return cache.setdefault(key, doc_len)
 
   _causal_mask_cache = weakref.WeakKeyDictionary()
 
@@ -179,20 +237,13 @@ def patch() -> None:
     ):
       q_len = query.shape[-2]
       kv_len = key.shape[-2]
-      # TODO(b/561865555): `_tpu_doc_len` is set by the Muse Glimmer benchmark on
-      # masks that are block-diagonal over equal-length documents, so attention
-      # can run per document. Replace with a general mechanism (e.g. deriving the
-      # document layout from the BlockMask's block sparsity) if other models need
-      # it.
-      doc_len = getattr(block_mask, "_tpu_doc_len", None)
+      # Equal-length packed documents (a block-diagonal mask with identical
+      # tiles) attend per document, with the documents folded into the batch.
       num_docs = 1
-      if doc_len and query.shape[0] == 1:
-        if q_len != kv_len or q_len % doc_len:
-          raise ValueError(
-              f"_tpu_doc_len={doc_len} must divide q_len=kv_len"
-              f" ({q_len}, {kv_len})."
-          )
-        num_docs = q_len // doc_len
+      if block_mask is not None and query.shape[0] == 1:
+        doc_len = _get_doc_len(block_mask, q_len, kv_len, query.device)
+        if doc_len:
+          num_docs = q_len // doc_len
 
       mask_args = _block_mask_to_sdpa_args(
           block_mask,
@@ -207,7 +258,7 @@ def patch() -> None:
             tensor: torch.Tensor,
         ) -> torch.Tensor:  # [1,H,T,D] -> [N,H,T/N,D]
           return tensor.reshape(
-              tensor.shape[1], num_docs, doc_len, -1
+              tensor.shape[1], num_docs, q_len // num_docs, -1
           ).transpose(0, 1)
 
         query, key, value = fold(query), fold(key), fold(value)
