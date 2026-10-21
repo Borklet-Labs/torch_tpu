@@ -175,10 +175,11 @@ _IGNORE_ACCURACY_OVERRIDES: Final[flags.FlagHolder[bool]] = flags.DEFINE_bool(
 _CHECK_DYNAMISM_USING_SEED: Final[flags.FlagHolder[int]] = flags.DEFINE_integer(
     "check_dynamism_using_seed",
     0,
-    "If non-zero, marks a random dimension as bounded dynamic and runs the ops"
-    " test, comparing bounded XLA result with PyTorch CPU result. Only picks"
-    " dimensions with size >=2, and bounds for size+10. Allows for explicitly"
-    " setting the seed value for reproducibility, or -1 for random seed.",
+    "If non-zero, marks a random dimension as bounded dynamic and runs the ops "
+    "test, comparing the bounded TorchTPU result with the golden result. "
+    "Only picks dimensions with size >=2, "
+    "and bounds for size+10. Allows for explicitly setting the seed value for "
+    "reproducibility, or -1 for random seed.",
 )
 
 _OPT_LEVEL: Final[flags.FlagHolder[str]] = flags.DEFINE_string(
