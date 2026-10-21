@@ -15,8 +15,29 @@
 name: Nightly Benchmarks
 
 on:
-  # Allow manual runs from the Actions tab for testing
+  # Allow manual runs from the Actions tab and MLCompass autobisect dispatches.
   workflow_dispatch:
+    inputs:
+      benchmark_filter:
+        description: "Regex to filter by benchmark name (e.g., 'torch_benchmarks_shard_00_of_16')."
+        required: false
+        type: string
+        default: ""
+      environment_filter:
+        description: "Regex to filter by environment configuration ID (must contain 'tpu' or 'gpu' and target only one of them, e.g., 'tpu-v7.*' or 'gpu-b200')."
+        required: false
+        type: string
+        default: ""
+      custom_metadata:
+        description: "JSON string of metadata to append to the benchmark result. Overwrites static metadata from the registry but is overwritten by dynamic metadata from the workload."
+        required: false
+        type: string
+        default: "{}"
+      experiment_ref:
+        description: "Git ref (SHA, branch, or tag) of the user repository to run benchmarks against."
+        required: false
+        type: string
+        default: ""
 
   schedule:
     - cron: "0 0 * * *"           # Daily 00:00 UTC: full TPU + GPU baseline
@@ -37,11 +58,18 @@ jobs:
       contents: read
     outputs:
       gcs_wheel_path: ${{ steps.build.outputs.gcs_wheel_path }}
+      resolved_sha: ${{ steps.resolve.outputs.sha }}
     steps:
       - name: Checkout TorchTPU
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
-          ref: ${{ github.ref_name }}
+          ref: ${{ inputs.experiment_ref || github.ref_name }}
+      - name: Resolve commit SHA
+        id: resolve
+        shell: bash
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - name: Build and upload wheel
         id: build
         uses: ./.github/actions/build-wheel
@@ -51,6 +79,7 @@ jobs:
   run_tpu_benchmarks:
     name: Run TorchTPU TPU benchmarks
     needs: [build_wheel]
+    if: ${{ !inputs.environment_filter || contains(inputs.environment_filter, 'tpu') }}
     permissions:
       contents: read
       pull-requests: write
@@ -58,7 +87,10 @@ jobs:
     with:
       registry_file: "perflab/benchmark_registry.pbtxt"
       bap_ref: "ff212b97420bf479bd492d64e4b549534c22cd91"
-      environment_filter: "tpu-v7"
+      benchmark_filter: ${{ inputs.benchmark_filter }}
+      environment_filter: ${{ inputs.environment_filter || 'tpu-v7' }}
+      custom_metadata: ${{ inputs.custom_metadata || '{}' }}
+      experiment_ref: ${{ needs.build_wheel.outputs.resolved_sha }}
       publish_metrics: true
       pub_sub_gcp_project_id: "ml-oss-benchmarking-production"
       pub_sub_gcp_topic_id: "private-torch-tpu-prod"
@@ -68,7 +100,7 @@ jobs:
       custom_env_vars: |
         TORCH_TPU_WHEEL=${{ needs.build_wheel.outputs.gcs_wheel_path }}
         TORCH_TPU_PYTHON_VERSION=3.12
-        TORCH_TPU_BENCHMARK_ORDER_SEED=${{ github.sha }}
+        TORCH_TPU_BENCHMARK_ORDER_SEED=${{ needs.build_wheel.outputs.resolved_sha }}
         TEST_RANDOMIZE_ORDERING_SEED=${{ github.run_id }}
         TESTBRIDGE_TEST_ONLY=${{ (github.event_name == 'schedule' && github.event.schedule != '0 0 * * *') && '*_compiled' || '' }}
 
@@ -76,7 +108,7 @@ jobs:
     name: Run GPU baseline benchmarks
     # The GPU benchmarks also import torch_tpu, so they need the wheel too.
     needs: [build_wheel]
-    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 0 * * *'
+    if: ${{ (github.event_name == 'workflow_dispatch' && (!inputs.environment_filter || contains(inputs.environment_filter, 'gpu'))) || github.event.schedule == '0 0 * * *' }}
     permissions:
       contents: read
       pull-requests: write
@@ -84,7 +116,10 @@ jobs:
     with:
       registry_file: "perflab/benchmark_registry.pbtxt"
       bap_ref: "ff212b97420bf479bd492d64e4b549534c22cd91"
-      environment_filter: "gpu-b200"
+      benchmark_filter: ${{ inputs.benchmark_filter }}
+      environment_filter: ${{ inputs.environment_filter || 'gpu-b200' }}
+      custom_metadata: ${{ inputs.custom_metadata || '{}' }}
+      experiment_ref: ${{ needs.build_wheel.outputs.resolved_sha }}
       publish_metrics: true
       pub_sub_gcp_project_id: "ml-oss-benchmarking-production"
       pub_sub_gcp_topic_id: "private-torch-tpu-prod"
@@ -94,5 +129,5 @@ jobs:
       custom_env_vars: |
         TORCH_TPU_WHEEL=${{ needs.build_wheel.outputs.gcs_wheel_path }}
         TORCH_TPU_PYTHON_VERSION=3.12
-        TORCH_TPU_BENCHMARK_ORDER_SEED=${{ github.sha }}
+        TORCH_TPU_BENCHMARK_ORDER_SEED=${{ needs.build_wheel.outputs.resolved_sha }}
         TEST_RANDOMIZE_ORDERING_SEED=${{ github.run_id }}
