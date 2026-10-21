@@ -1263,7 +1263,6 @@ torch_tpu_py_test(
     name = "ops_unit_test",
     timeout = "long",  # Needed for asan.
     srcs = ["ops_unit_test.py"],
-    args = ["--test_mode=torch_tpu_vs_cpu"],
     main = "ops_unit_test.py",
     run_on_accelerators = [
         "requires-tpu-v6e",
@@ -1420,7 +1419,6 @@ torch_tpu_py_test(
     name = "ops_unit_test_tier3_cache",
     timeout = "long",  # Needed for asan.
     srcs = ["ops_unit_test.py"],
-    args = ["--test_mode=torch_tpu_vs_cpu"],
     env = {
         "TORCH_TPU_TIER3_COMPILATION_CACHE_ROOT": "/tmp/my_cache",
     },
@@ -1460,7 +1458,6 @@ torch_tpu_py_test(
     name = "ops_unit_test_tier3_cache_no_backup",
     timeout = "long",  # Needed for asan.
     srcs = ["ops_unit_test.py"],
-    args = ["--test_mode=torch_tpu_vs_cpu"],
     env = {
         "TORCH_TPU_INTERNAL_TIER3_COMPILATION_CACHE_LOCAL_BACKUP_TASK": "0",
         "TORCH_TPU_TIER3_COMPILATION_CACHE_ROOT": "/tmp/my_cache",
@@ -1520,7 +1517,6 @@ torch_tpu_py_test(
 torch_tpu_py_test(
     name = "index_put_op_test",
     srcs = ["index_put_op_unit_test.py"],
-    args = ["--test_mode=torch_tpu_vs_cpu"],
     main = "index_put_op_unit_test.py",
     oss_presubmit_tpu_generation = tpu_gen(
         "v7",

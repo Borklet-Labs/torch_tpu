@@ -21521,6 +21521,14 @@ class OpsGradUnitTest(TorchTpuVsCpuTestBase):
 class OpTestingFrameworkTest(op_testing.OpInfoTestBase):
   """Tests for the op_testing framework itself."""
 
+  def setUp(self) -> None:
+    # Unless a test overrides it, exercise the framework in the TorchTPU vs CPU
+    # mode, which computes the golden results on the fly.
+    self.enterContext(
+        flagsaver.flagsaver(test_mode=op_testing.TestMode.TORCH_TPU_VS_CPU)
+    )
+    super().setUp()
+
   def test_torch_tpu_vs_gpu_missing_golden_fails(self):
     op = next(op for op in op_db if op.name == "add")
     with (

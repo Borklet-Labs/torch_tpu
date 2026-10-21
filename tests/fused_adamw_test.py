@@ -543,6 +543,9 @@ class FusedAdamWTest(TorchTpuVsCpuTestBase):
 
   def test_fused_adamw_buffer_donation(self):
     """Tests MLIR buffer donation annotations and runtime buffer invalidation."""
+    # TODO: b/576318333 - Re-enable once torch.compile of _fused_adamw_ passes
+    # functionalization.
+    self.skipTest("b/576318333: functionalization fails for _fused_adamw_.")
     debugs: list[tpu_compile.TpuCompileDebug] = []
 
     @torch.compile(
@@ -567,11 +570,11 @@ class FusedAdamWTest(TorchTpuVsCpuTestBase):
           maximize=False,
       )
 
-    p = torch.tensor([1.0, 2.0], dtype=torch.float32, device=self.device)
-    g = torch.tensor([0.1, 0.2], dtype=torch.float32, device=self.device)
-    ea = torch.tensor([0.01, 0.02], dtype=torch.float32, device=self.device)
-    eas = torch.tensor([0.001, 0.002], dtype=torch.float32, device=self.device)
-    step = torch.tensor([1], dtype=torch.int64, device=self.device)
+    p = torch.tensor([1.0, 2.0], dtype=torch.float32, device="tpu")
+    g = torch.tensor([0.1, 0.2], dtype=torch.float32, device="tpu")
+    ea = torch.tensor([0.01, 0.02], dtype=torch.float32, device="tpu")
+    eas = torch.tensor([0.001, 0.002], dtype=torch.float32, device="tpu")
+    step = torch.tensor([1], dtype=torch.int64, device="tpu")
 
     old_p_view = p.view_as(p)
 

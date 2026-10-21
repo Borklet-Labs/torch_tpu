@@ -4548,11 +4548,6 @@ class TorchTpuTestBase(seed_test_utils.RepeatableTest, common_utils.TestCase):
       return  # pyrefly: ignore[bad-return]
     super().skipTest(reason)
 
-  def skip_unless_torch_tpu_vs_cpu(self) -> None:
-    """Skips the test unless it is running in the TorchTPU vs CPU mode."""
-    if not _torch_tpu_vs_cpu_mode():
-      self.skipTest("This test is only relevant for the TorchTPU vs CPU mode.")
-
   def golden_device_name(self) -> str:
     """Returns the name of the golden device for logging purposes."""
     return self.golden_device_type.upper()
@@ -5936,11 +5931,16 @@ class OpInfoTestBase(
 
 
 class TorchTpuVsCpuTestBase(TorchTpuTestBase):
-  """Base class for tests that don't need to compare with GPU results."""
+  """Base class for tests that compare TorchTPU results with CPU results.
+
+  These tests always compute the golden results on CPU, regardless of
+  --test_mode, since they have no recorded GPU goldens.
+  """
 
   def setUp(self) -> None:
     super().setUp()
-    self.skip_unless_torch_tpu_vs_cpu()
+    self.golden_device = torch.device("cpu")
+    self.golden_device_type = "cpu"
 
 
 def _golden_file_prefix() -> str:
