@@ -108,8 +108,8 @@ void Append(kiln::Scalar row, kiln::Scalar col, kiln::Ref count,
             kiln::Ref output, kiln::Semaphore sem) {
   kiln::Scalar n = kiln::Scalar(count);
   kiln::Tile mask = position == (n & 127);
-  stage_rows.Store(row, mask);
-  stage_cols.Store(col, mask);
+  stage_rows.Store(kiln::Splat(row, stage_rows.dims()), mask);
+  stage_cols.Store(kiln::Splat(col, stage_cols.dims()), mask);
   kiln::Scalar next = n + 1;
   count = next;
   kiln::If((next & 127) == 0,

@@ -110,8 +110,6 @@ Tile::Tile(const void* impl, DType dtype) : ValueBase(impl, dtype) {
       << "Tile must be a vector value";
 }
 
-Tile::Tile(Scalar scalar) : Tile(Splat(scalar, {})) {}
-
 llvm::ArrayRef<int64_t> Tile::dims() const {
   return VectorTypeOf(*this).getShape();
 }
@@ -210,9 +208,6 @@ Tile Tile::Gather(Tile indices, llvm::ArrayRef<int32_t> dimensions) const {
   ABSL_CHECK(  // CRASH_OK
       indices.dtype().IsInt())
       << "Gather() indices must have an integer dtype";
-  if (indices.rank() == 0) {
-    indices = indices.BroadcastTo(dims());
-  }
   ABSL_CHECK_EQ(rank(), indices.rank())  // CRASH_OK
       << "Gather() source and indices must have the same rank";
   for (int32_t d : dimensions) {
@@ -243,7 +238,11 @@ Scalar Tile::Extract(llvm::ArrayRef<int64_t> indices) const {
 }
 
 Tile Tile::Full(Literal value) const {
-  return ::torch_tpu::kiln::Full(shape(), value);
+  return torch_tpu::kiln::Full(shape(), value);
+}
+
+Tile Tile::Splat(Scalar scalar) const {
+  return torch_tpu::kiln::Splat(scalar, dims());
 }
 
 Tile Zeros(const Shape& shape) { return Full(shape, /*value=*/0.0); }

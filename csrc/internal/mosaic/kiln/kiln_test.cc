@@ -400,8 +400,7 @@ TEST_F(KilnTest, BitwiseOperations) {
 
     // Tile hash: the Scalar is splat once, then the same op sequence follows.
     CHECK:         %[[T:.*]] = vector.load %[[IN]]
-    CHECK:         %[[S_0D:.*]] = vector.broadcast %[[SHIFTED]] : i32 to vector<i32>
-    CHECK:         %[[S:.*]] = vector.broadcast %[[S_0D]] : vector<i32> to vector<32x128xi32>
+    CHECK:         %[[S:.*]] = vector.broadcast %[[SHIFTED]] : i32 to vector<32x128xi32>
     CHECK:         %[[TX:.*]] = arith.xori %[[T]], %[[S]] : vector<32x128xi32>
     CHECK:         arith.shrui %[[TX]], %{{.*}} : vector<32x128xi32>
     CHECK:         arith.muli %{{.*}}, %{{.*}} : vector<32x128xi32>
@@ -417,97 +416,188 @@ TEST_F(KilnTest, BitwiseOperations) {
   )");
 }
 
-TEST_F(KilnTest, TileScalarOperations) {
-  absl::StatusOr<Kernel> kernel =
-      CreateKernel(GridSpec{.name = "tile_scalar_ops", .grid = {2}},
-                   InSpec{f32(32, 128)}, InSpec{i32(32, 128)},
-                   OutSpec{f32(32, 128)}, [&](Ref f_in, Ref i_in, Ref out) {
-                     Tile f(f_in);
-                     Tile i(i_in);
+TEST_F(KilnTest, TileScalarSplat) {
+  absl::StatusOr<Kernel> kernel = CreateKernel(
+      GridSpec{.name = "tile_scalar_splat", .grid = {1}}, InSpec{f32(32, 128)},
+      OutSpec{i32(32, 128)}, [&](Ref float_in, Ref out) {
+        Tile float_tile(float_in);
+        Scalar int_scalar = I32(42);
 
-                     Scalar s_idx = ProgramId(0);
-                     Scalar s_f = F32(1.5);
-                     Scalar s_i = I32(42);
+        // Verify 0-D tile properties when splatted from a scalar.
+        Tile zero_dim_tile = Splat(int_scalar, {});
+        EXPECT_EQ(zero_dim_tile.rank(), 0);
+        EXPECT_THAT(zero_dim_tile.dims(), IsEmpty());
+        EXPECT_EQ(zero_dim_tile.dtype(), i32);
+        EXPECT_EQ(zero_dim_tile.shape(), i32());
 
-                     // Verify 0-D tile properties when constructed from a
-                     // scalar.
-                     Tile t_scalar(s_i);
-                     EXPECT_EQ(t_scalar.rank(), 0);
-                     EXPECT_THAT(t_scalar.dims(), IsEmpty());
-                     EXPECT_EQ(t_scalar.dtype(), i32);
-                     EXPECT_EQ(t_scalar.shape(), i32());
+        // Verify Tile::Splat broadcasts to the tile's dimensions while
+        // preserving the scalar's dtype.
+        Tile splatted_int_tile = float_tile.Splat(int_scalar);
+        EXPECT_EQ(splatted_int_tile.shape(), i32(32, 128));
 
-                     // Arithmetic: Tile & Scalar (both LHS and RHS)
-                     Tile f_add = f + s_f;
-                     Tile f_sub = s_f - f;
-                     Tile f_mul = f * s_idx.ToF32();
-                     Tile f_div = s_f / f;
-
-                     // Bitwise: Tile & Scalar
-                     Tile i_xor = i ^ s_i;
-                     Tile i_or = s_i | i;
-                     Tile i_and = i & s_i;
-                     Tile i_shl = i << s_i;
-                     Tile i_shr = i >> s_i;
-
-                     // Comparisons: produce mask tile
-                     Tile cmp1 = f > s_f;
-                     Tile cmp2 = s_f <= f;
-                     Tile cmp3 = i == s_i;
-                     Tile cmp4 = s_i != i;
-
-                     // Select with Scalar operands
-                     Tile w1 = Select(cmp1, f, s_f);
-                     Tile w2 = Select(cmp2, s_f, f);
-                     Tile w3 = Select(cmp3, s_f, 0.0);
-                     Tile w4 = Select(cmp4, s_f, s_f * 2.0);
-
-                     // Min/Max with Scalar
-                     Tile max_f = Max(f, s_f);
-                     Tile min_f = Min(s_f, f);
-
-                     out = f_add + f_sub + f_mul + f_div + i_xor.ToF32() +
-                           i_or.ToF32() + i_and.ToF32() + i_shl.ToF32() +
-                           i_shr.ToF32() + w1 + w2 + w3 + w4 + max_f + min_f;
-                   });
+        out = splatted_int_tile;
+      });
   ASSERT_THAT(kernel, IsOk());
   ExpectKernelMatches(std::move(*kernel), R"(
-    CHECK-LABEL: func.func @tile_scalar_ops(
-    CHECK-SAME:    %[[PID:arg[0-9]+]]: i32, %[[F_IN:arg[0-9]+]]: memref<32x128xf32, #tpu.memory_space<vmem>>, %[[I_IN:arg[0-9]+]]: memref<32x128xi32, #tpu.memory_space<vmem>>, %[[OUT:arg[0-9]+]]: memref<32x128xf32, #tpu.memory_space<vmem>>)
+    CHECK-LABEL: func.func @tile_scalar_splat(
+    CHECK-SAME:    %{{.*}}: i32, %[[FLOAT_IN:arg[0-9]+]]: memref<32x128xf32, #tpu.memory_space<vmem>>, %[[OUT:arg[0-9]+]]: memref<32x128xi32, #tpu.memory_space<vmem>>)
+    CHECK:         %[[INT_SCALAR:.*]] = arith.constant 42 : i32
+    CHECK:         vector.broadcast %[[INT_SCALAR]] : i32 to vector<i32>
+    CHECK:         %[[SPLATTED:.*]] = vector.broadcast %[[INT_SCALAR]] : i32 to vector<32x128xi32>
+    CHECK:         tpu.vector_store %[[OUT]][%{{.*}}, %{{.*}}], %[[SPLATTED]]
+  )");
+}
+
+TEST_F(KilnTest, TileScalarArithmetic) {
+  absl::StatusOr<Kernel> kernel = CreateKernel(
+      GridSpec{.name = "tile_scalar_arith", .grid = {2}}, InSpec{f32(32, 128)},
+      InSpec{i32(32, 128)}, OutSpec{f32(32, 128)},
+      [&](Ref float_in, Ref int_in, Ref out) {
+        Tile float_tile(float_in);
+        Tile int_tile(int_in);
+
+        Scalar program_id = ProgramId(0);
+        Scalar float_scalar = F32(1.5);
+        Scalar int_scalar = I32(42);
+
+        Tile sum = float_tile + float_scalar;
+        Tile diff = float_scalar - float_tile;
+        Tile product = float_tile * program_id.ToF32();
+        Tile quotient = float_scalar / float_tile;
+        Tile max_tile = Max(float_tile, float_scalar);
+        Tile min_tile = Min(float_scalar, float_tile);
+
+        Tile tile_mod_scalar = int_tile % int_scalar;
+        Tile scalar_mod_tile = int_scalar % int_tile;
+
+        out = sum + diff + product + quotient + max_tile + min_tile +
+              tile_mod_scalar.ToF32() + scalar_mod_tile.ToF32();
+      });
+  ASSERT_THAT(kernel, IsOk());
+  ExpectKernelMatches(std::move(*kernel), R"(
+    CHECK-LABEL: func.func @tile_scalar_arith(
+    CHECK-SAME:    %[[PID:arg[0-9]+]]: i32, %[[FLOAT_IN:arg[0-9]+]]: memref<32x128xf32, #tpu.memory_space<vmem>>, %[[INT_IN:arg[0-9]+]]: memref<32x128xi32, #tpu.memory_space<vmem>>, %[[OUT:arg[0-9]+]]: memref<32x128xf32, #tpu.memory_space<vmem>>)
     CHECK-SAME:    iteration_bounds = array<i64: 2>
-    CHECK:         %[[F:.*]] = vector.load %[[F_IN]]
-    CHECK:         %[[I:.*]] = vector.load %[[I_IN]]
-    CHECK:         %[[S_F:.*]] = arith.constant 1.500000e+00 : f32
-    CHECK:         %[[S_I:.*]] = arith.constant 42 : i32
+    CHECK:         %[[FLOAT_TILE:.*]] = vector.load %[[FLOAT_IN]]
+    CHECK:         %[[INT_TILE:.*]] = vector.load %[[INT_IN]]
+    CHECK:         %[[FLOAT_SCALAR:.*]] = arith.constant 1.500000e+00 : f32
+    CHECK:         %[[INT_SCALAR:.*]] = arith.constant 42 : i32
+    CHECK:         %[[FLOAT_SPLAT:.*]] = vector.broadcast %[[FLOAT_SCALAR]] : f32 to vector<32x128xf32>
+    CHECK:         arith.addf %[[FLOAT_TILE]], %[[FLOAT_SPLAT]] : vector<32x128xf32>
+    CHECK:         arith.subf %{{.*}}, %[[FLOAT_TILE]] : vector<32x128xf32>
+    CHECK:         %[[PID_F32:.*]] = arith.sitofp %[[PID]] : i32 to f32
+    CHECK:         %[[PID_SPLAT:.*]] = vector.broadcast %[[PID_F32]] : f32 to vector<32x128xf32>
+    CHECK:         arith.mulf %[[FLOAT_TILE]], %[[PID_SPLAT]] : vector<32x128xf32>
+    CHECK:         arith.divf %{{.*}}, %[[FLOAT_TILE]] : vector<32x128xf32>
+    CHECK:         arith.maximumf %[[FLOAT_TILE]], %{{.*}} : vector<32x128xf32>
+    CHECK:         arith.minimumf %{{.*}}, %[[FLOAT_TILE]] : vector<32x128xf32>
+    CHECK:         %[[INT_SPLAT_RHS:.*]] = vector.broadcast %[[INT_SCALAR]] : i32 to vector<32x128xi32>
+    CHECK:         arith.remsi %[[INT_TILE]], %[[INT_SPLAT_RHS]] : vector<32x128xi32>
+    CHECK:         %[[INT_SPLAT_LHS:.*]] = vector.broadcast %[[INT_SCALAR]] : i32 to vector<32x128xi32>
+    CHECK:         arith.remsi %[[INT_SPLAT_LHS]], %[[INT_TILE]] : vector<32x128xi32>
+    CHECK:         tpu.vector_store %[[OUT]]
+  )");
+}
 
-    // Tile(scalar) is a 0-D vector.
-    CHECK:         vector.broadcast %[[S_I]] : i32 to vector<i32>
+TEST_F(KilnTest, TileScalarBitwise) {
+  absl::StatusOr<Kernel> kernel = CreateKernel(
+      GridSpec{.name = "tile_scalar_bitwise", .grid = {1}},
+      InSpec{i32(32, 128)}, OutSpec{i32(32, 128)}, [&](Ref int_in, Ref out) {
+        Tile int_tile(int_in);
+        Scalar int_scalar = I32(42);
 
-    // Tile <op> Scalar splats the scalar through a 0-D vector and keeps operand
-    // order.
-    CHECK:         %[[S_F_0D:.*]] = vector.broadcast %[[S_F]] : f32 to vector<f32>
-    CHECK:         %[[S_F_V:.*]] = vector.broadcast %[[S_F_0D]] : vector<f32> to vector<32x128xf32>
-    CHECK:         arith.addf %[[F]], %[[S_F_V]] : vector<32x128xf32>
-    CHECK:         arith.subf %{{.*}}, %[[F]] : vector<32x128xf32>
-    CHECK:         %[[PID_F:.*]] = arith.sitofp %[[PID]] : i32 to f32
-    CHECK:         vector.broadcast %[[PID_F]] : f32 to vector<f32>
-    CHECK:         arith.mulf %[[F]], %{{.*}} : vector<32x128xf32>
-    CHECK:         arith.divf %{{.*}}, %[[F]] : vector<32x128xf32>
-    CHECK:         arith.xori %[[I]], %{{.*}} : vector<32x128xi32>
-    CHECK:         arith.ori %{{.*}}, %[[I]] : vector<32x128xi32>
-    CHECK:         arith.andi %[[I]], %{{.*}} : vector<32x128xi32>
-    CHECK:         arith.shli %[[I]], %{{.*}} : vector<32x128xi32>
-    CHECK:         arith.shrsi %[[I]], %{{.*}} : vector<32x128xi32>
-    CHECK:         %[[CMP1:.*]] = arith.cmpf ogt, %[[F]], %{{.*}} : vector<32x128xf32>
-    CHECK:         %[[CMP2:.*]] = arith.cmpf ole, %{{.*}}, %[[F]] : vector<32x128xf32>
-    CHECK:         %[[CMP3:.*]] = arith.cmpi eq, %[[I]], %{{.*}} : vector<32x128xi32>
-    CHECK:         %[[CMP4:.*]] = arith.cmpi ne, %{{.*}}, %[[I]] : vector<32x128xi32>
-    CHECK:         arith.select %[[CMP1]], %[[F]], %{{.*}} : vector<32x128xi1>, vector<32x128xf32>
-    CHECK:         arith.select %[[CMP2]], %{{.*}}, %[[F]] : vector<32x128xi1>, vector<32x128xf32>
-    CHECK:         arith.select %[[CMP3]], %{{.*}}, %{{.*}} : vector<32x128xi1>, vector<32x128xf32>
-    CHECK:         arith.select %[[CMP4]], %{{.*}}, %{{.*}} : vector<32x128xi1>, vector<32x128xf32>
-    CHECK:         arith.maximumf %[[F]], %{{.*}} : vector<32x128xf32>
-    CHECK:         arith.minimumf %{{.*}}, %[[F]] : vector<32x128xf32>
+        Tile bitwise_xor = int_tile ^ int_scalar;
+        Tile bitwise_or = int_scalar | int_tile;
+        Tile bitwise_and = int_tile & int_scalar;
+        Tile tile_shl_scalar = int_tile << int_scalar;
+        Tile scalar_shl_tile = int_scalar << int_tile;
+        Tile tile_shr_scalar = int_tile >> int_scalar;
+        Tile scalar_shr_tile = int_scalar >> int_tile;
+
+        out = bitwise_xor + bitwise_or + bitwise_and + tile_shl_scalar +
+              scalar_shl_tile + tile_shr_scalar + scalar_shr_tile;
+      });
+  ASSERT_THAT(kernel, IsOk());
+  ExpectKernelMatches(std::move(*kernel), R"(
+    CHECK-LABEL: func.func @tile_scalar_bitwise(
+    CHECK-SAME:    %{{.*}}: i32, %[[INT_IN:arg[0-9]+]]: memref<32x128xi32, #tpu.memory_space<vmem>>, %[[OUT:arg[0-9]+]]: memref<32x128xi32, #tpu.memory_space<vmem>>)
+    CHECK:         %[[INT_TILE:.*]] = vector.load %[[INT_IN]]
+    CHECK:         %[[INT_SCALAR:.*]] = arith.constant 42 : i32
+    CHECK:         %[[XOR_SPLAT:.*]] = vector.broadcast %[[INT_SCALAR]] : i32 to vector<32x128xi32>
+    CHECK:         arith.xori %[[INT_TILE]], %[[XOR_SPLAT]] : vector<32x128xi32>
+    CHECK:         %[[OR_SPLAT:.*]] = vector.broadcast %[[INT_SCALAR]] : i32 to vector<32x128xi32>
+    CHECK:         arith.ori %[[INT_TILE]], %[[OR_SPLAT]] : vector<32x128xi32>
+    CHECK:         %[[AND_SPLAT:.*]] = vector.broadcast %[[INT_SCALAR]] : i32 to vector<32x128xi32>
+    CHECK:         arith.andi %[[INT_TILE]], %[[AND_SPLAT]] : vector<32x128xi32>
+    CHECK:         %[[SHL_RHS_SPLAT:.*]] = vector.broadcast %[[INT_SCALAR]] : i32 to vector<32x128xi32>
+    CHECK:         arith.shli %[[INT_TILE]], %[[SHL_RHS_SPLAT]] : vector<32x128xi32>
+    CHECK:         %[[SHL_LHS_SPLAT:.*]] = vector.broadcast %[[INT_SCALAR]] : i32 to vector<32x128xi32>
+    CHECK:         arith.shli %[[SHL_LHS_SPLAT]], %[[INT_TILE]] : vector<32x128xi32>
+    CHECK:         %[[SHR_RHS_SPLAT:.*]] = vector.broadcast %[[INT_SCALAR]] : i32 to vector<32x128xi32>
+    CHECK:         arith.shrsi %[[INT_TILE]], %[[SHR_RHS_SPLAT]] : vector<32x128xi32>
+    CHECK:         %[[SHR_LHS_SPLAT:.*]] = vector.broadcast %[[INT_SCALAR]] : i32 to vector<32x128xi32>
+    CHECK:         arith.shrsi %[[SHR_LHS_SPLAT]], %[[INT_TILE]] : vector<32x128xi32>
+    CHECK:         tpu.vector_store %[[OUT]]
+  )");
+}
+
+TEST_F(KilnTest, TileScalarComparisonAndSelect) {
+  absl::StatusOr<Kernel> kernel = CreateKernel(
+      GridSpec{.name = "tile_scalar_cmp_select", .grid = {1}},
+      InSpec{f32(32, 128)}, InSpec{i32(32, 128)}, OutSpec{f32(32, 128)},
+      [&](Ref float_in, Ref int_in, Ref out) {
+        Tile float_tile(float_in);
+        Tile int_tile(int_in);
+
+        Scalar float_scalar = F32(1.5);
+        Scalar int_scalar = I32(42);
+
+        Tile gt_mask = float_tile > float_scalar;
+        Tile le_mask = float_scalar <= float_tile;
+        Tile eq_mask = int_tile == int_scalar;
+        Tile ne_mask = int_scalar != int_tile;
+
+        Tile select_tile_scalar = Select(gt_mask, float_tile, float_scalar);
+        Tile select_scalar_tile = Select(le_mask, float_scalar, float_tile);
+        Tile select_scalar_literal = Select(eq_mask, float_scalar, 0.0);
+        Tile select_scalar_scalar =
+            Select(ne_mask, float_scalar, float_scalar * 2.0);
+        Tile select_literal_scalar = Select(eq_mask, 0.0, float_scalar);
+
+        out = select_tile_scalar + select_scalar_tile + select_scalar_literal +
+              select_scalar_scalar + select_literal_scalar;
+      });
+  ASSERT_THAT(kernel, IsOk());
+  ExpectKernelMatches(std::move(*kernel), R"(
+    CHECK-LABEL: func.func @tile_scalar_cmp_select(
+    CHECK-SAME:    %{{.*}}: i32, %[[FLOAT_IN:arg[0-9]+]]: memref<32x128xf32, #tpu.memory_space<vmem>>, %[[INT_IN:arg[0-9]+]]: memref<32x128xi32, #tpu.memory_space<vmem>>, %[[OUT:arg[0-9]+]]: memref<32x128xf32, #tpu.memory_space<vmem>>)
+    CHECK:         %[[FLOAT_TILE:.*]] = vector.load %[[FLOAT_IN]]
+    CHECK:         %[[INT_TILE:.*]] = vector.load %[[INT_IN]]
+    CHECK:         %[[FLOAT_SCALAR:.*]] = arith.constant 1.500000e+00 : f32
+    CHECK:         %[[INT_SCALAR:.*]] = arith.constant 42 : i32
+    CHECK:         %[[GT_SPLAT:.*]] = vector.broadcast %[[FLOAT_SCALAR]] : f32 to vector<32x128xf32>
+    CHECK:         %[[GT_MASK:.*]] = arith.cmpf ogt, %[[FLOAT_TILE]], %[[GT_SPLAT]] : vector<32x128xf32>
+    CHECK:         %[[LE_SPLAT:.*]] = vector.broadcast %[[FLOAT_SCALAR]] : f32 to vector<32x128xf32>
+    CHECK:         %[[LE_MASK:.*]] = arith.cmpf oge, %[[FLOAT_TILE]], %[[LE_SPLAT]] : vector<32x128xf32>
+    CHECK:         %[[EQ_SPLAT:.*]] = vector.broadcast %[[INT_SCALAR]] : i32 to vector<32x128xi32>
+    CHECK:         %[[EQ_MASK:.*]] = arith.cmpi eq, %[[INT_TILE]], %[[EQ_SPLAT]] : vector<32x128xi32>
+    CHECK:         %[[NE_SPLAT:.*]] = vector.broadcast %[[INT_SCALAR]] : i32 to vector<32x128xi32>
+    CHECK:         %[[NE_MASK:.*]] = arith.cmpi ne, %[[INT_TILE]], %[[NE_SPLAT]] : vector<32x128xi32>
+    CHECK:         %[[SEL_TS_SPLAT:.*]] = vector.broadcast %[[FLOAT_SCALAR]] : f32 to vector<32x128xf32>
+    CHECK:         arith.select %[[GT_MASK]], %[[FLOAT_TILE]], %[[SEL_TS_SPLAT]] : vector<32x128xi1>, vector<32x128xf32>
+    CHECK:         %[[SEL_ST_SPLAT:.*]] = vector.broadcast %[[FLOAT_SCALAR]] : f32 to vector<32x128xf32>
+    CHECK:         arith.select %[[LE_MASK]], %[[SEL_ST_SPLAT]], %[[FLOAT_TILE]] : vector<32x128xi1>, vector<32x128xf32>
+    CHECK:         %[[SEL_SL_SPLAT:.*]] = vector.broadcast %[[FLOAT_SCALAR]] : f32 to vector<32x128xf32>
+    CHECK:         %[[ZERO_SL:.*]] = arith.constant dense<0.000000e+00> : vector<32x128xf32>
+    CHECK:         arith.select %[[EQ_MASK]], %[[SEL_SL_SPLAT]], %[[ZERO_SL]] : vector<32x128xi1>, vector<32x128xf32>
+    CHECK:         %[[TWO:.*]] = arith.constant 2.000000e+00 : f32
+    CHECK:         %[[SCALED_SCALAR:.*]] = arith.mulf %[[FLOAT_SCALAR]], %[[TWO]] : f32
+    CHECK:         %[[SEL_SS_TRUE:.*]] = vector.broadcast %[[FLOAT_SCALAR]] : f32 to vector<32x128xf32>
+    CHECK:         %[[SEL_SS_FALSE:.*]] = vector.broadcast %[[SCALED_SCALAR]] : f32 to vector<32x128xf32>
+    CHECK:         arith.select %[[NE_MASK]], %[[SEL_SS_TRUE]], %[[SEL_SS_FALSE]] : vector<32x128xi1>, vector<32x128xf32>
+    CHECK:         %[[SEL_LS_SPLAT:.*]] = vector.broadcast %[[FLOAT_SCALAR]] : f32 to vector<32x128xf32>
+    CHECK:         %[[ZERO_LS:.*]] = arith.constant dense<0.000000e+00> : vector<32x128xf32>
+    CHECK:         arith.select %[[EQ_MASK]], %[[ZERO_LS]], %[[SEL_LS_SPLAT]] : vector<32x128xi1>, vector<32x128xf32>
     CHECK:         tpu.vector_store %[[OUT]]
   )");
 }
@@ -545,11 +635,9 @@ TEST_F(KilnTest, RotateGatherExtractBitcastAndMaskedStore) {
     CHECK:         %[[IOTA:.*]] = tpu.iota {dimensions = array<i32: 1>} : vector<1x128xi32>
     CHECK:         %[[C127:.*]] = arith.constant 127 : i32
     CHECK:         %[[LANE_ID:.*]] = arith.andi %[[STEP]], %[[C127]] : i32
-    CHECK:         %[[LANE_ID_0D:.*]] = vector.broadcast %[[LANE_ID]] : i32 to vector<i32>
-    CHECK:         %[[LANE_ID_V:.*]] = vector.broadcast %[[LANE_ID_0D]] : vector<i32> to vector<1x128xi32>
+    CHECK:         %[[LANE_ID_V:.*]] = vector.broadcast %[[LANE_ID]] : i32 to vector<1x128xi32>
     CHECK:         %[[MASK:.*]] = arith.cmpi eq, %[[IOTA]], %[[LANE_ID_V]] : vector<1x128xi32>
-    CHECK:         %[[LANE_BITS_0D:.*]] = vector.broadcast %[[LANE_BITS]] : i32 to vector<i32>
-    CHECK:         %[[LANE_BITS_V:.*]] = vector.broadcast %[[LANE_BITS_0D]] : vector<i32> to vector<1x128xi32>
+    CHECK:         %[[LANE_BITS_V:.*]] = vector.broadcast %[[LANE_BITS]] : i32 to vector<1x128xi32>
     CHECK:         %[[SUM:.*]] = arith.addi %[[ROW_BITS]], %[[LANE_BITS_V]] : vector<1x128xi32>
     CHECK:         tpu.vector_store %[[OUT]][%{{.*}}, %{{.*}}], %[[SUM]] masked %[[MASK]]
   )");

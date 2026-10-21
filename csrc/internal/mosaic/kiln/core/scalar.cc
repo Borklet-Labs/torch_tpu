@@ -66,7 +66,7 @@ Scalar MultipleOf(Scalar value, int32_t multiple) {
       value.dtype());
 }
 
-Scalar Scalar::MakeConstant(Literal value) const {
+Scalar Scalar::Coerce(Literal value) const {
   return MakeScalarConstant(dtype(), value);
 }
 

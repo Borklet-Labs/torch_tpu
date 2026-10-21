@@ -36,18 +36,14 @@ namespace torch_tpu::kiln {
 // Arithmetic, bitwise, comparison (yielding an i1 mask tile), min / max /
 // select and unary math operators come from `WithElementwiseOps`. Their
 // operands broadcast numpy-style (size-1 dims and lower ranks are broadcast,
-// e.g. `(qt, kt) - (qt, 1)`), and accept a `Literal` or `Scalar` on either
-// side which is splatted in the tile's dtype. Element types are never promoted
-// implicitly; use `AsType`.
+// e.g. `(qt, kt) - (qt, 1)`), and accept a `Literal` (splatted in the tile's
+// dtype) or `Scalar` (broadcast to the tile's dimensions) on either side.
+// Element types are never promoted implicitly; use `AsType`.
 class Tile : public ValueBase,
              public WithElementwiseOps<Tile>,
-             public WithLiteralOps<Tile> {
+             public WithOperandOps<Tile, Literal>,
+             public WithOperandOps<Tile, Scalar> {
  public:
-  // Construct a 0-D tile from a scalar.
-  /* implicit */ Tile(Scalar scalar);  // NOLINT(google-explicit-constructor)
-
-  Tile MakeConstant(Literal value) const { return Full(value); }
-
   llvm::ArrayRef<int64_t> dims() const;
   Shape shape() const { return Shape(dims(), dtype()); }
   int64_t rank() const;
@@ -79,10 +75,34 @@ class Tile : public ValueBase,
   Scalar Extract(llvm::ArrayRef<int64_t> indices) const;
   // A splat constant with the same shape and dtype as this tile.
   Tile Full(Literal value) const;
+  // Broadcasts `scalar` to the dimensions of this tile, preserving
+  // `scalar.dtype()`.
+  Tile Splat(Scalar scalar) const;
+
+  // Elementwise selection using a boolean `mask` tile when neither branch is a
+  // `Tile`. These cannot live on `WithOperandOps` because `mask` provides the
+  // shape while the `Scalar` branch(es) provide the result element type (for
+  // the same reason, `Select(Tile, Literal, Literal)` is omitted because the
+  // result dtype would be ambiguous).
+  friend Tile Select(Tile mask, Scalar if_true, Scalar if_false) {
+    return Select(mask, mask.Splat(if_true), mask.Splat(if_false));
+  }
+  friend Tile Select(Tile mask, Scalar if_true, Literal if_false) {
+    return Select(mask, mask.Splat(if_true), if_false);
+  }
+  friend Tile Select(Tile mask, Literal if_true, Scalar if_false) {
+    return Select(mask, if_true, mask.Splat(if_false));
+  }
 
  private:
   friend struct internal::ValueAccess;
+  friend class WithOperandOps<Tile, Literal>;
+  friend class WithOperandOps<Tile, Scalar>;
+
   Tile(const void* impl, DType dtype);
+
+  Tile Coerce(Literal value) const { return Full(value); }
+  Tile Coerce(Scalar scalar) const { return Splat(scalar); }
 };
 
 // Tile constructors.

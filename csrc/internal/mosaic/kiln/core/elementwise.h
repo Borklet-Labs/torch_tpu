@@ -32,7 +32,7 @@ namespace internal {
 // have no shape and are left untouched (see `AlignShapes`).
 //
 // `T` is the handle type (`Scalar` or `Tile`). `T` must provide
-// `DType dtype() const` and `T MakeConstant(Literal) const`.
+// `DType dtype() const` and support `Literal` operands.
 //
 // The members are defined in elementwise_impl.h and explicitly instantiated in
 // scalar.cc and tile.cc, which keeps MLIR out of the public headers.

@@ -155,7 +155,7 @@ T ElementwiseOps<T>::Neg(T v) {
     return wrap<T>(mlir::arith::NegFOp::create(CurrentBuilder(), unwrap(v)),
                    v.dtype());
   }
-  return v.MakeConstant(0) - v;
+  return 0 - v;
 }
 
 template <typename T>
@@ -238,7 +238,7 @@ T ElementwiseOps<T>::ShiftRight(T lhs, T rhs) {
 template <typename T>
 T ElementwiseOps<T>::LogicalNot(T v) {
   ABSL_CHECK(v.dtype().IsBool()) << "! requires a bool operand";  // CRASH_OK
-  return v ^ v.MakeConstant(true);
+  return v ^ true;
 }
 
 template <typename T>

@@ -32,16 +32,17 @@ namespace torch_tpu::kiln {
 //
 // Arithmetic, bitwise, comparison (yielding a bool `Scalar`), min / max /
 // select and unary math operators come from `WithElementwiseOps`; overloads
-// taking a `Literal` on either side come from `WithLiteralOps`.
+// taking a `Literal` on either side come from `WithOperandOps`.
 class Scalar : public ValueBase,
                public WithElementwiseOps<Scalar>,
-               public WithLiteralOps<Scalar> {
- public:
-  Scalar MakeConstant(Literal value) const;
-
+               public WithOperandOps<Scalar, Literal> {
  private:
   friend struct internal::ValueAccess;
+  friend class WithOperandOps<Scalar, Literal>;
+
   Scalar(const void* impl, DType dtype);
+
+  Scalar Coerce(Literal value) const;
 };
 
 Scalar I32(Literal value);
