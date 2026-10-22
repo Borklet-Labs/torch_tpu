@@ -886,6 +886,8 @@ torch_tpu_py_test(
         # Forge has more resources, allowing a larger sample size.
         ["--max_samples_per_op_dtype=10"],
     ),
+    # The perf mode measures the ops on the GPU golden inputs.
+    data = _GPU_GOLDENS_DATA,
     main = "ops_test.py",
     nolocal = "slow test",
     nopresubmit = "Benchmark.",

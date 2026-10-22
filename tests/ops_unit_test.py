@@ -21641,18 +21641,10 @@ class OpTestingFrameworkTest(op_testing.OpInfoTestBase):
   )
   def test_sub_byte_sample_generation(self, dtype: torch.dtype):
     abs_op = next(op for op in op_db if op.name == "abs")
-    # The perf mode generates sample inputs without computing golden outputs.
-    with flagsaver.flagsaver(test_mode=op_testing.TestMode.PERF):
-      pairs = self._get_golden_input_output_pairs(
-          op=abs_op,
-          dtype=dtype,
-          variant=op_testing.OpVariant.BASE,
-          max_samples=2,
-          verbose=False,
-      )
-    self.assertNotEmpty(pairs)
-    for golden_input, _ in pairs:
-      self.assertEqual(golden_input.input_value.dtype, dtype)
+    samples = op_testing._sample_inputs(abs_op, torch.device("cpu"), dtype)
+    self.assertNotEmpty(samples)
+    for sample in samples:
+      self.assertEqual(op_testing.OpInput(sample).input_value.dtype, dtype)
 
   def test_plistlib_sub_byte_tensor_serialization(self):
     for dtype in quantize_utils.SUB_BYTE_DTYPES:
@@ -21665,9 +21657,23 @@ class OpTestingFrameworkTest(op_testing.OpInfoTestBase):
         self.assertEqual(decoded.shape, tensor.shape)
         utils.assert_close(decoded.view(torch.uint8), raw)
 
-  def test_perf_mode_skips_cpu_golden_execution(self):
+  def test_perf_mode_reads_gpu_golden_inputs(self):
     abs_op = next(op for op in op_db if op.name == "abs")
-    with flagsaver.flagsaver(test_mode=op_testing.TestMode.PERF):
+    fake_input = op_testing.OpInput(FakeSample("s", torch.zeros(1), (), {}))
+    fake_output = op_testing.OpOutput(torch.zeros(1))
+    with (
+        flagsaver.flagsaver(test_mode=op_testing.TestMode.PERF),
+        mock.patch.object(
+            op_testing, "_GOLDEN_GPU_DATA", op_testing.GoldenGpuData()
+        ),
+    ):
+      op_testing._GOLDEN_GPU_DATA.add(
+          self._testMethodName,
+          op_testing.OpVariant.BASE,
+          torch.float32,
+          fake_input,
+          fake_output,
+      )
       pairs = self._get_golden_input_output_pairs(
           op=abs_op,
           dtype=torch.float32,
@@ -21675,9 +21681,7 @@ class OpTestingFrameworkTest(op_testing.OpInfoTestBase):
           max_samples=2,
           verbose=False,
       )
-      self.assertNotEmpty(pairs)
-      for _, golden_output in pairs:
-        self.assertIsNone(golden_output.output_value)
+    self.assertEqual(pairs, [(fake_input, fake_output)])
 
   def test_plistlib_enum_serialization(self):
     enum_val = getattr(

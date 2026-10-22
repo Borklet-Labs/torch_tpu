@@ -99,7 +99,7 @@ def _has_test_filter() -> bool:
 
 # In this file, we use the following naming convention for variables:
 # - golden_*: a value for the device used for computing the golden results
-#   (either CPU or GPU)
+#   (GPU)
 # - tpu_*: a value for the TPU device
 
 COMPLEX_DTYPES = op_testing.COMPLEX_DTYPES

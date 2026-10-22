@@ -4439,27 +4439,10 @@ class TorchTpuTestBase(seed_test_utils.RepeatableTest, common_utils.TestCase):
 
     # Device used for computing the golden results, or None if the golden
     # results are read from the golden file.
-    self.golden_device = {
-        # go/keep-sorted start
-        TestMode.DUMP_DTYPE_EXCLUSIONS: None,
-        TestMode.GEN_GPU_GOLDEN: torch.device("cuda"),
-        TestMode.PERF: torch.device("cpu"),
-        TestMode.TORCH_TPU_VS_GPU: None,
-        # go/keep-sorted end
-    }[_TEST_MODE.value]
-
-    if _TEST_MODE.value in (
-        TestMode.PERF,
-        TestMode.DUMP_DTYPE_EXCLUSIONS,
-    ):
-      self.golden_device_type = "cpu"
-    elif _TEST_MODE.value in (
-        TestMode.GEN_GPU_GOLDEN,
-        TestMode.TORCH_TPU_VS_GPU,
-    ):
-      self.golden_device_type = "gpu"
-    else:
-      self.fail(f"Unknown test mode: {_TEST_MODE.value}")
+    self.golden_device = (
+        torch.device("cuda") if _gen_gpu_golden_mode() else None
+    )
+    self.golden_device_type = "gpu"
 
   def set_accuracy_overrides(
       self,
@@ -4721,12 +4704,11 @@ class OpInfoTestBase(TorchTpuTestBase):
   ) -> Sequence[tuple[OpInput, OpOutput]]:
     """Returns a list of (input, output) pairs for the op.
 
-    In the gen_gpu_golden and perf modes, the inputs are generated randomly
-    using op.sample_inputs(). In the gen_gpu_golden mode, the outputs are
-    computed on GPU; in the perf mode, they are not computed.
+    In the gen_gpu_golden mode, the inputs are generated randomly using
+    op.sample_inputs(), and the outputs are computed on GPU.
 
-    In the torch_tpu_vs_gpu mode, the input-output pairs are read from the GPU
-    golden file.
+    In the other modes, the input-output pairs are read from the GPU golden
+    file.
 
     Args:
       op: The op to test.
@@ -4753,7 +4735,7 @@ class OpInfoTestBase(TorchTpuTestBase):
           flush=True,
       )
 
-    if _torch_tpu_vs_gpu_mode():
+    if not _gen_gpu_golden_mode():
       samples = _GOLDEN_GPU_DATA.get_samples(
           self._testMethodName,
           variant,
@@ -4806,30 +4788,24 @@ class OpInfoTestBase(TorchTpuTestBase):
         golden_sample.kwargs.update({"dropout_p": 0.0})
 
       golden_input = OpInput(golden_sample)
-      if _perf_mode():
-        # In perf mode, our sole purpose is to measure execution performance on
-        # TPU. Skip generating golden results on CPU to avoid running the CPU
-        # code path of the operator.
-        golden_result = None
-      else:
-        golden_result = self._run_op(
-            op=op,
-            variant=variant,
-            dtype=dtype,
-            op_input=golden_input,
-            compute_grad=compute_grad,
-            use_compiled=use_compiled,
-            device=self.golden_device,
-            subtest_name="golden",
-            # When generating golden results, we should trust the op's output
-            # to be correct and not check the device. E.g. even in the
-            # gen_gpu_golden mode, torch.arange(5) should return a tensor on
-            # CPU instead of GPU.
-            check_device=False,
-            # No need to mark inputs as dynamic when computing golden results.
-            check_dynamism=False,
-            out_dtype_override=out_dtype_override,
-        )
+      golden_result = self._run_op(
+          op=op,
+          variant=variant,
+          dtype=dtype,
+          op_input=golden_input,
+          compute_grad=compute_grad,
+          use_compiled=use_compiled,
+          device=self.golden_device,
+          subtest_name="golden",
+          # When generating golden results, we should trust the op's output
+          # to be correct and not check the device. E.g. even in the
+          # gen_gpu_golden mode, torch.arange(5) should return a tensor on
+          # CPU instead of GPU.
+          check_device=False,
+          # No need to mark inputs as dynamic when computing golden results.
+          check_dynamism=False,
+          out_dtype_override=out_dtype_override,
+      )
       golden_output = OpOutput(golden_result)
       pairs.append((golden_input, golden_output))
       if _gen_gpu_golden_mode():
@@ -5126,9 +5102,7 @@ class OpInfoTestBase(TorchTpuTestBase):
       # on TorchTPU. Hence the following call is is done inside _run_op(), and
       # any exception it raises is attributed to the op.
       result = to(result, "cpu")
-      # Don't measure performance for the golden device. We are only interested
-      # in the TPU performance.
-      if _perf_mode() and measure_perf and device != self.golden_device:
+      if _perf_mode() and measure_perf:
         # We must measure the time after the .to("cpu") call because that's the
         # time when the compilation and execution of the op is guaranteed to be
         # done.
@@ -5372,7 +5346,7 @@ class OpInfoTestBase(TorchTpuTestBase):
     if _perf_mode():
       # In perf mode, performance measurement is completed during self._run_op
       # on TPU above. Return early to avoid running behavioral and failure
-      # consistency comparisons against CPU.
+      # consistency comparisons against the golden results.
       return
     golden_thrown = isinstance(golden_result, Exception)
     torch_tpu_thrown = isinstance(torch_tpu_result, Exception)
@@ -5662,9 +5636,9 @@ class OpInfoTestBase(TorchTpuTestBase):
       if _gen_gpu_golden_mode():
         # Include quantized numeric dtypes during GPU golden data generation.
         dtypes_to_test.extend(quantize_utils.QUANTIZED_NUMERIC_DTYPES)
-      elif _torch_tpu_vs_gpu_mode():
-        # In GPU golden comparison mode, include quantized numeric dtypes if the
-        # op explicitly declares support for them in its OpInfo.
+      elif _torch_tpu_vs_gpu_mode() or _perf_mode():
+        # When reading GPU goldens, include quantized numeric dtypes if the op
+        # explicitly declares support for them in its OpInfo.
         dtypes_to_test.extend([
             d
             for d in getattr(op, "dtypes", ())
@@ -6154,6 +6128,8 @@ def set_up_test_module() -> None:
       # Run an op to warm up the XLA compiler, so that we can measure
       # the compilation time of ops fairly in the inividual tests.
       torch.ones(1, dtype=torch.float32, device="tpu").to("cpu")
+      # Measure the ops on the same inputs as the accuracy tests.
+      _load_golden_files()
 
   # Operators that sort or select values and can have non-deterministic
   # tie-breaking, leading to flaky gradient tests when inputs have duplicates.
