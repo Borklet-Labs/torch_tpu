@@ -21717,27 +21717,6 @@ class OpTestingFrameworkTest(op_testing.OpInfoTestBase):
     self.assertEqual(type(restored.output_value).__name__, "ValueError")
     self.assertEqual(str(restored.output_value), "bad value: 42")
 
-  def test_get_dtype_exclusions_with_iterable_returns_exclusions_tuple(self):
-    self.assertEqual(
-        op_testing._get_dtype_exclusions((torch.float32,), "gpu"),
-        (torch.float32,),
-    )
-
-  def test_get_dtype_exclusions_with_device_dict_returns_device_exclusions(
-      self,
-  ):
-    exclusions_by_device = {"cpu": (torch.float32,), "gpu": (torch.float64,)}
-    self.assertEqual(
-        op_testing._get_dtype_exclusions(exclusions_by_device, "gpu"),
-        (torch.float64,),
-    )
-
-  def test_get_dtype_exclusions_with_invalid_device_key_raises_value_error(
-      self,
-  ):
-    with self.assertRaisesRegex(ValueError, "Expected only 'cpu' and 'gpu'"):
-      op_testing._get_dtype_exclusions({"xpu": (torch.float32,)}, "xpu")
-
   @mock.patch.dict(op_testing._DTYPE_EXCLUSIONS, clear=True)
   def test_record_gpu_dtype_exclusions_multiple_calls_intersects_exclusions(
       self,

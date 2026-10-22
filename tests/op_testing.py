@@ -5415,7 +5415,7 @@ class OpInfoTestBase(TorchTpuTestBase):
       check_dynamism: bool,
       check_op_failures: bool,
       skip_output_indices: Sequence[int],
-      skip_if: Callable[[str, OpVariant, OpInput], bool] | None,
+      skip_if: Callable[[OpVariant, OpInput], bool] | None,
       max_samples_per_op_dtype: int | None,
       out_dtype_override: torch.dtype | None = None,
   ) -> None:
@@ -5442,7 +5442,7 @@ class OpInfoTestBase(TorchTpuTestBase):
         fails on the golden device.
       skip_output_indices: The indices of the output to skip checking.
       skip_if: A function that returns True if a test case should be skipped,
-        given the golden device, the op variant, and the op input.
+        given the op variant and the op input.
       max_samples_per_op_dtype: The maximum number of samples to test for each
         (op variant, dtype) combination. If None, the number is determined by
         the --max_samples_per_op_dtype flag.
@@ -5497,7 +5497,7 @@ class OpInfoTestBase(TorchTpuTestBase):
       if _gen_gpu_golden_mode():
         continue
 
-      if skip_if and skip_if(self.golden_device_type, variant, golden_input):
+      if skip_if and skip_if(variant, golden_input):
         print(
             f"Skipping test sample for {op_name}() with dtype {dtype} on"
             " TorchTPU as filtered by the skip_if function.\n"
@@ -5537,9 +5537,7 @@ class OpInfoTestBase(TorchTpuTestBase):
 
   def _resolve_exclude_dtypes(
       self,
-      exclude_dtypes: (
-          Iterable[torch.dtype] | Mapping[str, Iterable[torch.dtype]] | None
-      ),
+      exclude_dtypes: Iterable[torch.dtype] | None,
   ) -> Sequence[torch.dtype]:
     """Resolves the exclude_dtypes argument."""
     if _gen_gpu_golden_mode():
@@ -5550,18 +5548,14 @@ class OpInfoTestBase(TorchTpuTestBase):
       # exceptions during sample generation.
       return ()
 
-    return _get_dtype_exclusions(exclude_dtypes, self.golden_device_type)
+    return tuple(exclude_dtypes or ())
 
   def do_test_op(
       self,
       op_name: str,
       *,
-      exclude_dtypes: (
-          Iterable[torch.dtype] | Mapping[str, Iterable[torch.dtype]] | None
-      ) = None,
-      exclude_inplace_dtypes: (
-          Iterable[torch.dtype] | Mapping[str, Iterable[torch.dtype]] | None
-      ) = None,
+      exclude_dtypes: Iterable[torch.dtype] | None = None,
+      exclude_inplace_dtypes: Iterable[torch.dtype] | None = None,
       check_out_variant: bool = True,
       check_grad: bool = True,
       check_device: bool = True,
@@ -5571,7 +5565,7 @@ class OpInfoTestBase(TorchTpuTestBase):
       check_op_failures: bool = True,
       check_inplace_op_failures: bool = True,
       skip_output_indices: Sequence[int] | None = None,
-      skip_if: Callable[[str, OpVariant, OpInput], bool] | None = None,
+      skip_if: Callable[[OpVariant, OpInput], bool] | None = None,
       max_samples_per_op_dtype: int | None = None,
       variant_test_name: str | None = None,
   ) -> None:
@@ -5579,10 +5573,8 @@ class OpInfoTestBase(TorchTpuTestBase):
 
     Args:
       op_name: The name of the op to test.
-      exclude_dtypes: A list of input dtypes to exclude from testing, or a
-        dictionary mapping device type ("cpu" or "gpu") to such a list (useful
-        when different dtypes should be excluded for different golden devices).
-        If None, no dtypes will be excluded.
+      exclude_dtypes: A list of input dtypes to exclude from testing. If None,
+        no dtypes will be excluded.
       exclude_inplace_dtypes: Similar to exclude_dtypes, but for the inplace
         variant of the op.
       check_out_variant: Whether to check the out variant of the op.
@@ -5608,7 +5600,7 @@ class OpInfoTestBase(TorchTpuTestBase):
       skip_output_indices: A list of output indices to skip when checking the
         values of the outputs when the op has multiple outputs.
       skip_if: A function that returns True if a test case should be skipped,
-        given the golden device, the op variant, and the op input.
+        given the op variant and the op input.
       max_samples_per_op_dtype: The maximum number of samples to test for a
         given (op_variant, dtype) combination. If None, the number is determined
         by the --max_samples_per_op_dtype flag.
@@ -5667,19 +5659,17 @@ class OpInfoTestBase(TorchTpuTestBase):
       """
       op = _get_op(op_name, variant_test_name=variant_test_name)
       dtypes_to_test = list(UNQUANTIZED_NUMERIC_DTYPES)
-      if self.golden_device_type == "gpu":
-        if _gen_gpu_golden_mode():
-          # Include quantized numeric dtypes during GPU golden data generation.
-          # CPU kernel coverage for them is too sparse to serve as a golden device.
-          dtypes_to_test.extend(quantize_utils.QUANTIZED_NUMERIC_DTYPES)
-        elif _torch_tpu_vs_gpu_mode():
-          # In GPU golden comparison mode, include quantized numeric dtypes if the
-          # op explicitly declares support for them in its OpInfo.
-          dtypes_to_test.extend([
-              d
-              for d in getattr(op, "dtypes", ())
-              if d in quantize_utils.QUANTIZED_NUMERIC_DTYPES
-          ])
+      if _gen_gpu_golden_mode():
+        # Include quantized numeric dtypes during GPU golden data generation.
+        dtypes_to_test.extend(quantize_utils.QUANTIZED_NUMERIC_DTYPES)
+      elif _torch_tpu_vs_gpu_mode():
+        # In GPU golden comparison mode, include quantized numeric dtypes if the
+        # op explicitly declares support for them in its OpInfo.
+        dtypes_to_test.extend([
+            d
+            for d in getattr(op, "dtypes", ())
+            if d in quantize_utils.QUANTIZED_NUMERIC_DTYPES
+        ])
       dtypes_to_test = list(dict.fromkeys(dtypes_to_test))
       applicable_dtypes = [
           d
@@ -5718,9 +5708,7 @@ class OpInfoTestBase(TorchTpuTestBase):
       if check_out_variant and _supports_out(op):
         print(f"Testing {op_name}(out=...).", flush=True)
 
-        op_exclude_dtypes = _get_dtype_exclusions(
-            raw_exclude_dtypes, self.golden_device_type
-        )
+        op_exclude_dtypes = tuple(raw_exclude_dtypes or ())
         # Select one valid promotional upcast pair (allowed_pair, e.g., float32
         # -> float64) and one invalid downcast pair (illegal_pair, e.g.,
         # float32 -> int32) from the dtypes to be tested. These will be used
@@ -5984,51 +5972,11 @@ def _load_golden_files() -> None:
     _GOLDEN_GPU_DATA.merge_plistlib_pytree(golden.tree)
 
 
-def _get_dtype_exclusions(
-    exclude_dtypes: (
-        Iterable[torch.dtype] | Mapping[str, Iterable[torch.dtype]] | None
-    ),
-    device_type: str,
-) -> Sequence[torch.dtype]:
-  """Extracts dtype exclusions for a specific device type.
-
-  Args:
-    exclude_dtypes: Exclusions specified either directly as 1. an iterable of
-      dtypes, e.g. (torch.float32, torch.float64), or 2. a mapping from device
-      type to an iterable of dtypes, e.g. {"cpu": (torch.float32,), "gpu":
-      (torch.float64,)}, or 3. None.
-    device_type: The target device type string. Must be "cpu" or "gpu".
-
-  Returns:
-    A sequence of `torch.dtype` objects excluded for the given device type.
-
-  Raises:
-    ValueError: If `exclude_dtypes` is a dict containing keys other than
-      "cpu" and "gpu".
-  """
-  exclude_dtypes = exclude_dtypes or ()
-  if isinstance(exclude_dtypes, dict):
-    # Ensure that only "cpu" and "gpu" are used as keys.
-    excessive_keys = set(exclude_dtypes.keys()) - {"cpu", "gpu"}
-    if excessive_keys:
-      raise ValueError(
-          "Expected only 'cpu' and 'gpu' keys in exclude_dtypes, got keys"
-          f" {excessive_keys}"
-      )
-
-    exclude_dtypes = exclude_dtypes.get(device_type, ())
-  return tuple(exclude_dtypes)
-
-
 def _record_gpu_dtype_exclusions(
     op_name: str,
     *,
-    exclude_dtypes: (
-        Iterable[torch.dtype] | Mapping[str, Iterable[torch.dtype]] | None
-    ),
-    exclude_inplace_dtypes: (
-        Iterable[torch.dtype] | Mapping[str, Iterable[torch.dtype]] | None
-    ),
+    exclude_dtypes: Iterable[torch.dtype] | None,
+    exclude_inplace_dtypes: Iterable[torch.dtype] | None,
 ) -> None:
   """Records a do_test_op call's GPU dtype exclusions in _DTYPE_EXCLUSIONS.
 
@@ -6045,10 +5993,7 @@ def _record_gpu_dtype_exclusions(
       ("exclude_dtypes", exclude_dtypes),
       ("exclude_inplace_dtypes", exclude_inplace_dtypes),
   ):
-    dtypes = {
-        str(dtype)
-        for dtype in _get_dtype_exclusions(exclusions, device_type="gpu")
-    }
+    dtypes = {str(dtype) for dtype in exclusions or ()}
     op_exclusions = _DTYPE_EXCLUSIONS.setdefault(op_name, {})
     if kind not in op_exclusions:
       op_exclusions[kind] = dtypes

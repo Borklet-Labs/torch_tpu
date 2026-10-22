@@ -1126,7 +1126,6 @@ if test_utils.parse_version(torch.__version__) < (2, 14, 0):
 #
 # TODO: b/478321000 remove when PyTorch#173110 is fixed.
 def _inplace_clamp_input_has_negative_values_uint8_gpu(
-    golden_device_type: str,
     variant: OpVariant,
     op_input: OpInput,
 ) -> bool:
@@ -1147,9 +1146,8 @@ def _inplace_clamp_input_has_negative_values_uint8_gpu(
 
   return (
       # PyTorch GPU implementation bug.
-      golden_device_type == "gpu"
       # Main input should be a `uint8` tensor.
-      and isinstance(op_input.input_value, torch.Tensor)
+      isinstance(op_input.input_value, torch.Tensor)
       and op_input.input_value.dtype == torch.uint8
       # Only on in-place variant.
       # It also happens on out-of-place variant, but only when the output tensor
@@ -1165,30 +1163,10 @@ def _inplace_clamp_input_has_negative_values_uint8_gpu(
 # TODO: support `linalg.lu_factor_ex(pivot=False)` on TorchTPU.
 # TODO: support `linalg.lu(pivot=False)` on TorchTPU.
 def _linalg_lu_without_pivot_gpu(
-    golden_device_type: str, unused_variant: OpVariant, op_input: OpInput
+    unused_variant: OpVariant, op_input: OpInput
 ) -> bool:
-  return (
-      # Only GPU supports `pivot=False`.
-      golden_device_type == "gpu"
-      # The `pivot` keyword argument is set to False.
-      and not op_input.kwargs.get("pivot", True)
-  )
-
-
-# Returns true for inference mode (`training=False`) cases when comparing
-# against CPU, whose empty save_mean/save_invstd shapes differ from GPU.
-def _native_batch_norm_notrain_cpu(
-    golden_device_type: str, unused_variant: OpVariant, op_input: OpInput
-) -> bool:
-  # In inference mode, CPU returns empty ([0]) save_mean and
-  # save_invstd, whereas GPU returns per-channel ([C]) statistics.
-  return (
-      golden_device_type == "cpu"
-      # native_batch_norm has 1 (input) + 7 parameters.
-      and len(op_input.args) == 7
-      # Excluding the input, `training` is the 5-th parameter.
-      and not op_input.args[4]
-  )
+  # The `pivot` keyword argument is set to False.
+  return not op_input.kwargs.get("pivot", True)
 
 
 # Returns true for test cases in eager mode, with 0-sized tensor input (trivial
@@ -1196,11 +1174,10 @@ def _native_batch_norm_notrain_cpu(
 # TODO: support 0-sized tensor inputs whose dtype is not floating point in TPU
 # eager mode.
 def _native_layer_norm_0sized_nonfloat_eager_gpu(
-    golden_device_type: str, unused_variant: OpVariant, op_input: OpInput
+    unused_variant: OpVariant, op_input: OpInput
 ) -> bool:
   return (
-      golden_device_type == "gpu"
-      and not op_testing.is_compiled_mode()
+      not op_testing.is_compiled_mode()
       and not torch.is_floating_point(op_input.input_value)
       # Trivial case: 0-sized tensors.
       and op_input.input_value.numel() == 0
@@ -1211,11 +1188,10 @@ def _native_layer_norm_0sized_nonfloat_eager_gpu(
 # `col` (second argument) is 0, and `dtype=bool`.
 # TODO: support bool inputs.
 def _tril_indices_bool_zero_arg_eager_gpu(
-    golden_device_type: str, unused_variant: OpVariant, op_input: OpInput
+    unused_variant: OpVariant, op_input: OpInput
 ) -> bool:
   return (
-      golden_device_type == "gpu"
-      and not op_testing.is_compiled_mode()
+      not op_testing.is_compiled_mode()
       # The input is an integer.
       and isinstance(op_input.input_value, int)
       # The second argument (i.e. first is input) is an integer.
@@ -1285,12 +1261,10 @@ class TestOps(op_testing.OpInfoTestBase):
         # TODO(b/495929595): can be incorrect close to 0.
         # TODO: stablehlo gradients for Real/Imag/Abs on complex are not
         # working.
-        skip_if=lambda _1, _2, op_input: (
+        skip_if=lambda _, op_input: (
             op_testing._COMPUTE_GRAD.value
             and op_input.input_value.dtype == torch.complex64
         ),
-        exclude_dtypes={"cpu": (torch.bool,)},
-        exclude_inplace_dtypes={"cpu": (torch.bool,)},
     )
 
   def test_acos(self):
@@ -1308,16 +1282,12 @@ class TestOps(op_testing.OpInfoTestBase):
   def test_adaptive_avg_pool3d(self):
     self.do_test_op(
         "nn.functional.adaptive_avg_pool3d",
-        exclude_dtypes={
-            "gpu": (
-                COMPLEX_DTYPES
-                + (
-                    torch.uint8,
-                    torch.int8,
-                    torch.int16,
-                )
-            ),
-        },
+        exclude_dtypes=COMPLEX_DTYPES
+        + (
+            torch.uint8,
+            torch.int8,
+            torch.int16,
+        ),
     )
 
   def test_adaptive_max_pool2d(self):
@@ -1347,33 +1317,23 @@ class TestOps(op_testing.OpInfoTestBase):
         # algebraic_simplifier.cc:584] Check failed: computation->Accept(this)
         # is OK (UNIMPLEMENTED: Converting from type C128 to type F32 is not
         # implemented.
-        exclude_dtypes={
-            "cpu": COMPLEX_DTYPES + (torch.int32, torch.int64),
-            # TODO: make addmm fail for integral dtypes to match GPU.
-            "gpu": (
-                COMPLEX_DTYPES
-                + (
-                    torch.uint8,
-                    torch.int8,
-                    torch.int16,
-                )
-            ),
-        },
+        # TODO: make addmm fail for integral dtypes to match GPU.
+        exclude_dtypes=COMPLEX_DTYPES
+        + (
+            torch.uint8,
+            torch.int8,
+            torch.int16,
+        ),
         # TODO: XLA doesn't support complex dtypes currently. Fails with:
         # algebraic_simplifier.cc:584] Check failed: computation->Accept(this)
         # is OK (UNIMPLEMENTED: Converting from type C128 to type F32 is not
         # implemented.
-        exclude_inplace_dtypes={
-            "cpu": COMPLEX_DTYPES + (torch.int32, torch.int64),
-            "gpu": (
-                COMPLEX_DTYPES
-                + (
-                    torch.uint8,
-                    torch.int8,
-                    torch.int16,
-                )
-            ),
-        },
+        exclude_inplace_dtypes=COMPLEX_DTYPES
+        + (
+            torch.uint8,
+            torch.int8,
+            torch.int16,
+        ),
     )
 
   def test_addmv(self):
@@ -1381,41 +1341,31 @@ class TestOps(op_testing.OpInfoTestBase):
     self.do_test_op(
         "addmv",
         # GPU (CUDA) does not support integral dtypes for addmv.
-        exclude_dtypes={
-            "cpu": (torch.int32, torch.int64, torch.complex64),
-            "gpu": (
-                torch.uint8,
-                torch.int8,
-                torch.int16,
-                torch.complex64,
-            ),
-        },
-        exclude_inplace_dtypes={
-            "cpu": (torch.int32, torch.int64, torch.complex64),
-            "gpu": (
-                torch.uint8,
-                torch.int8,
-                torch.int16,
-                torch.float64,
-                torch.complex64,
-            ),
-        },
+        exclude_dtypes=(
+            torch.uint8,
+            torch.int8,
+            torch.int16,
+            torch.complex64,
+        ),
+        exclude_inplace_dtypes=(
+            torch.uint8,
+            torch.int8,
+            torch.int16,
+            torch.float64,
+            torch.complex64,
+        ),
     )
 
   def test_all(self):
     self.do_test_op(
         "all",
-        exclude_dtypes={
-            "gpu": (torch.int4,),
-        },
+        exclude_dtypes=(torch.int4,),
     )
 
   def test_any(self):
     self.do_test_op(
         "any",
-        exclude_dtypes={
-            "gpu": (torch.int4,),
-        },
+        exclude_dtypes=(torch.int4,),
     )
 
   def test_amax(self):
@@ -1439,12 +1389,9 @@ class TestOps(op_testing.OpInfoTestBase):
         "angle",
         # TODO(b/540345849): CUDA kernel is not implemented for float16, and
         # inductor fails on bfloat16.
-        exclude_dtypes={
-            "cpu": (torch.bfloat16,),
-            "gpu": _if_tpu_vs_gpu_compiled(
-                (torch.bfloat16, torch.float16), (torch.float16,)
-            ),
-        },
+        exclude_dtypes=_if_tpu_vs_gpu_compiled(
+            (torch.bfloat16, torch.float16), (torch.float16,)
+        ),
     )
 
   def test_arange(self):
@@ -1457,10 +1404,7 @@ class TestOps(op_testing.OpInfoTestBase):
         # TODO: fix arange() succeeding for complex types (it should
         # fail).
         # TODO: fix arange() returning wrong results for uint8.
-        exclude_dtypes={
-            "cpu": (torch.bool, torch.uint8) + COMPLEX_DTYPES,
-            "gpu": (torch.uint8,) + COMPLEX_DTYPES,
-        },
+        exclude_dtypes=(torch.uint8,) + COMPLEX_DTYPES,
         # NOTE: the test sample contains torch.arange(5), which *should*
         # return a tensor on CPU. Therefore we don't check that the result
         # is on TPU.
@@ -1499,33 +1443,29 @@ class TestOps(op_testing.OpInfoTestBase):
         # GPU short-circuits empty-batch inputs in avg_pool1d before checking
         # dtype, whereas TorchTPU's ValidateAvgPool1dDtype rejects bool, uint8,
         # int8, int16, int32, and complex64 upfront.
-        exclude_dtypes={
-            "cpu": (torch.int64, torch.bool),
-            "gpu": (
-                (torch.bool, torch.uint8, torch.int8, torch.int16, torch.int32)
-                + COMPLEX_DTYPES
-            ),
-        },
+        exclude_dtypes=(
+            torch.bool,
+            torch.uint8,
+            torch.int8,
+            torch.int16,
+            torch.int32,
+        )
+        + COMPLEX_DTYPES,
     )
 
   def test_avg_pool2d(self):
     self.do_test_op(
         "nn.functional.avg_pool2d",
-        exclude_dtypes={"cpu": (torch.int64, torch.bool), "gpu": (torch.bool,)},
+        exclude_dtypes=(torch.bool,),
     )
 
   def test_avg_pool3d(self):
     self.do_test_op(
         "nn.functional.avg_pool3d",
         # TODO: GPU does not support integral, complex, and `float16` dtypes.
-        exclude_dtypes={
-            "cpu": (torch.int64,),
-            "gpu": (
-                (torch.uint8, torch.int8, torch.int16)
-                + COMPLEX_DTYPES
-                + (torch.float16,)
-            ),
-        },
+        exclude_dtypes=(torch.uint8, torch.int8, torch.int16)
+        + COMPLEX_DTYPES
+        + (torch.float16,),
     )
 
   def test_baddbmm(self):
@@ -1533,22 +1473,16 @@ class TestOps(op_testing.OpInfoTestBase):
         "baddbmm",
         # TODO(b/495524286): Failed to generate integral golden results on GPU
         # GPU (CUDA) does not support integral dtypes for baddbmm.
-        exclude_dtypes={
-            "cpu": (torch.bool, torch.int32, torch.int64),
-            "gpu": (
-                torch.uint8,
-                torch.int8,
-                torch.int16,
-            ),
-        },
-        exclude_inplace_dtypes={
-            "cpu": (torch.bool, torch.int32, torch.int64),
-            "gpu": (
-                torch.uint8,
-                torch.int8,
-                torch.int16,
-            ),
-        },
+        exclude_dtypes=(
+            torch.uint8,
+            torch.int8,
+            torch.int16,
+        ),
+        exclude_inplace_dtypes=(
+            torch.uint8,
+            torch.int8,
+            torch.int16,
+        ),
     )
 
   def test_bernoulli(self):
@@ -1559,15 +1493,12 @@ class TestOps(op_testing.OpInfoTestBase):
         check_value=CheckValueMode.SKIP,
         # GPU (CUDA) does not support complex dtypes for bernoulli.
         # TPU does not support complex or integral dtypes for bernoulli.
-        exclude_dtypes={
-            "cpu": (*COMPLEX_DTYPES, *INTEGRAL_DTYPES, torch.bool),
-            "gpu": (
-                *COMPLEX_DTYPES,
-                *INTEGRAL_DTYPES,
-                torch.int4,
-                torch.bool,
-            ),
-        },
+        exclude_dtypes=(
+            *COMPLEX_DTYPES,
+            *INTEGRAL_DTYPES,
+            torch.int4,
+            torch.bool,
+        ),
     )
 
   def test_binary_cross_entropy(self):
@@ -1581,14 +1512,11 @@ class TestOps(op_testing.OpInfoTestBase):
     self.do_test_op(
         "bincount",
         # TODO(b/557286629): support data sampling for booleans.
-        exclude_dtypes={
-            "cpu": COMPLEX_DTYPES + FLOAT_DTYPES + (torch.bool,),
-            "gpu": COMPLEX_DTYPES + FLOAT_DTYPES + (torch.bool,),
-        },
+        exclude_dtypes=COMPLEX_DTYPES + FLOAT_DTYPES + (torch.bool,),
         # TODO(b/544855480): Fix bincount consistency failure on GPU vs TPU for float dtypes.
         # GPU reference fails: "bincount_cuda" not implemented for 'Float'.
         # However, it succeeds on TorchTPU, causing a consistency check failure.
-        skip_if=lambda device, variant, op_input: (
+        skip_if=lambda variant, op_input: (
             op_testing._torch_tpu_vs_gpu_mode()
             and op_testing._COMPUTE_GRAD.value
             and op_input.input_value.dtype in FLOAT_DTYPES
@@ -1621,14 +1549,11 @@ class TestOps(op_testing.OpInfoTestBase):
     self.do_test_op(
         "bmm",
         # GPU (CUDA) does not support integral dtypes for bmm.
-        exclude_dtypes={
-            "cpu": INTEGRAL_DTYPES,
-            "gpu": (
-                torch.uint8,
-                torch.int8,
-                torch.int16,
-            ),
-        },
+        exclude_dtypes=(
+            torch.uint8,
+            torch.int8,
+            torch.int16,
+        ),
     )
 
   def test_cat(self):
@@ -1638,9 +1563,7 @@ class TestOps(op_testing.OpInfoTestBase):
         # which fails on CUDA (`"sum_cuda" not implemented for 'Float8_e4m3fn'`)
         # but succeeds on TorchTPU, causing a failure-consistency mismatch.
         exclude_dtypes=(
-            {"gpu": (torch.float8_e4m3fn,)}
-            if op_testing._COMPUTE_GRAD.value
-            else None
+            (torch.float8_e4m3fn,) if op_testing._COMPUTE_GRAD.value else None
         ),
     )
 
@@ -1656,7 +1579,6 @@ class TestOps(op_testing.OpInfoTestBase):
   def test_ceil(self):
     self.do_test_op(
         "ceil",
-        exclude_dtypes={"cpu": (torch.bool,)},
     )
 
   def test_channel_shuffle(self):
@@ -1720,9 +1642,7 @@ class TestOps(op_testing.OpInfoTestBase):
         # which fails on CUDA (`"sum_cuda" not implemented for 'Float8_e4m3fn'`)
         # but succeeds on TorchTPU, causing a failure-consistency mismatch.
         exclude_dtypes=(
-            {"gpu": (torch.float8_e4m3fn,)}
-            if op_testing._COMPUTE_GRAD.value
-            else None
+            (torch.float8_e4m3fn,) if op_testing._COMPUTE_GRAD.value else None
         ),
     )
 
@@ -1742,22 +1662,12 @@ class TestOps(op_testing.OpInfoTestBase):
     self.do_test_op(
         "nn.functional.ctc_loss",
         # TODO(b/557286629): support data sampling for integral dtypes.
-        exclude_dtypes={
-            "cpu": (
-                INTEGRAL_DTYPES
-                + COMPLEX_DTYPES
-                + (torch.bfloat16, torch.float16)
-            ),
-            "gpu": (
-                INTEGRAL_DTYPES
-                + COMPLEX_DTYPES
-                # PyTorch's native CUDA kernel (LossCTC.cu) dynamic shared
-                # memory allocation per thread block exceeds hardware limits
-                # for float64 on long target sequence lengths, leading to
-                # cudaErrorLaunchOutOfResources.
-                + (torch.float64,)
-            ),
-        },
+        exclude_dtypes=INTEGRAL_DTYPES + COMPLEX_DTYPES
+        # PyTorch's native CUDA kernel (LossCTC.cu) dynamic shared
+        # memory allocation per thread block exceeds hardware limits
+        # for float64 on long target sequence lengths, leading to
+        # cudaErrorLaunchOutOfResources.
+        + (torch.float64,),
     )
 
   def test_cumprod(self):
@@ -1793,14 +1703,11 @@ class TestOps(op_testing.OpInfoTestBase):
         # and actual results can be slightly above the strict tolerance of
         # 1e-05.
         # GPU (CUDA) does not support integral dtypes for dot.
-        exclude_dtypes={
-            "cpu": (torch.int32, torch.int64),
-            "gpu": (
-                torch.uint8,
-                torch.int8,
-                torch.int16,
-            ),
-        },
+        exclude_dtypes=(
+            torch.uint8,
+            torch.int8,
+            torch.int16,
+        ),
     )
 
   def test_native_dropout_backward(self):
@@ -1808,45 +1715,32 @@ class TestOps(op_testing.OpInfoTestBase):
         "native_dropout_backward",
         # GPU (CUDA) does not support complex and integral dtypes for
         # native_dropout_backward.
-        exclude_dtypes={
-            "cpu": INTEGRAL_DTYPES + COMPLEX_DTYPES,
-            "gpu": (
-                (
-                    torch.uint8,
-                    torch.int8,
-                    torch.int16,
-                )
-                + COMPLEX_DTYPES
-            ),
-        },
+        exclude_dtypes=(
+            torch.uint8,
+            torch.int8,
+            torch.int16,
+        )
+        + COMPLEX_DTYPES,
     )
 
   def test_einsum(self):
     self.do_test_op(
         "einsum",
-        # GPU (CUDA) does not support integral or boolean dtypes for einsum,
-        # and CPU's sum/bmm decomposition has inconsistent integral dtype
-        # promotion.
-        exclude_dtypes={
-            "cpu": (torch.bool,) + INTEGRAL_DTYPES,
-            "gpu": (torch.bool,) + INTEGRAL_DTYPES,
-        },
+        # GPU (CUDA) does not support integral or boolean dtypes for einsum.
+        exclude_dtypes=(torch.bool,) + INTEGRAL_DTYPES,
     )
 
   def test_embedding(self):
     self.do_test_op(
         "nn.functional.embedding",
         # TODO: fix embedding() failing with complex dtypes.
-        exclude_dtypes={
-            "cpu": COMPLEX_DTYPES,
-            "gpu": (
-                *COMPLEX_DTYPES,
-                # TODO(b/555391048): support float8 golden data sampling.
-                torch.float8_e4m3fn,
-                torch.float8_e5m2,
-                torch.float4_e2m1fn_x2,
-            ),
-        },
+        exclude_dtypes=(
+            *COMPLEX_DTYPES,
+            # TODO(b/555391048): support float8 golden data sampling.
+            torch.float8_e4m3fn,
+            torch.float8_e5m2,
+            torch.float4_e2m1fn_x2,
+        ),
     )
 
   def test_embedding_bag(self):
@@ -1854,7 +1748,7 @@ class TestOps(op_testing.OpInfoTestBase):
         "nn.functional.embedding_bag",
         # TODO: add support for sparse embeddings, scale_grad_by_freq, and
         # _embedding_bag_per_sample_weights_backward on TPU.
-        skip_if=lambda device, variant, op_input: (
+        skip_if=lambda variant, op_input: (
             op_input.kwargs.get("sparse", False)
             or op_input.kwargs.get("scale_grad_by_freq", False)
             or (
@@ -1892,9 +1786,7 @@ class TestOps(op_testing.OpInfoTestBase):
   def test_eq(self):
     self.do_test_op(
         "eq",
-        exclude_inplace_dtypes={
-            "gpu": (torch.int4,),
-        },
+        exclude_inplace_dtypes=(torch.int4,),
     )
 
   def test_equal(self):
@@ -1924,9 +1816,7 @@ class TestOps(op_testing.OpInfoTestBase):
         # By definition, exponential() returns a tensor with random values, so
         # there's no point in checking the values.
         check_value=CheckValueMode.SKIP,
-        exclude_dtypes={
-            "gpu": (torch.int4,),
-        },
+        exclude_dtypes=(torch.int4,),
     )
 
   def test_eye(self):
@@ -1935,65 +1825,53 @@ class TestOps(op_testing.OpInfoTestBase):
   def test_fft_rfft(self):
     self.do_test_op(
         "fft.rfft",
-        exclude_dtypes={
-            "cpu": (torch.float64,),
-            # TODO: b/518595804 - PyTorch currently does not support half
-            # precision FFTs for PrivateUse1 backends. See promote_type_fft
-            # in SpectralOps.cpp.
-            "gpu": (
-                torch.float64,
-                torch.float16,
-                torch.int4,
-            ),
-        },
+        # TODO: b/518595804 - PyTorch currently does not support half
+        # precision FFTs for PrivateUse1 backends. See promote_type_fft
+        # in SpectralOps.cpp.
+        exclude_dtypes=(
+            torch.float64,
+            torch.float16,
+            torch.int4,
+        ),
     )
 
   def test_fft_fft(self):
     self.do_test_op(
         "fft.fft",
-        exclude_dtypes={
-            "cpu": (torch.float64,),
-            # TODO: b/518595804 - PyTorch currently does not support half
-            # precision FFTs for PrivateUse1 backends. See promote_type_fft
-            # in SpectralOps.cpp.
-            "gpu": (
-                torch.float64,
-                torch.float16,
-                torch.int4,
-            ),
-        },
+        # TODO: b/518595804 - PyTorch currently does not support half
+        # precision FFTs for PrivateUse1 backends. See promote_type_fft
+        # in SpectralOps.cpp.
+        exclude_dtypes=(
+            torch.float64,
+            torch.float16,
+            torch.int4,
+        ),
     )
 
   def test_fft_ifft(self):
     self.do_test_op(
         "fft.ifft",
-        exclude_dtypes={
-            "cpu": (torch.float64,),
-            # TODO: b/518595804 - PyTorch currently does not support half
-            # precision FFTs for PrivateUse1 backends. See promote_type_fft
-            # in SpectralOps.cpp.
-            "gpu": (
-                torch.float64,
-                torch.float16,
-                torch.int4,
-            ),
-        },
+        # TODO: b/518595804 - PyTorch currently does not support half
+        # precision FFTs for PrivateUse1 backends. See promote_type_fft
+        # in SpectralOps.cpp.
+        exclude_dtypes=(
+            torch.float64,
+            torch.float16,
+            torch.int4,
+        ),
     )
 
   def test_fft_irfft(self):
     self.do_test_op(
         "fft.irfft",
-        exclude_dtypes={
-            "cpu": (torch.float64,),
-            # TODO: b/518595804 - PyTorch currently does not support half
-            # precision FFTs for PrivateUse1 backends. See promote_type_fft
-            # in SpectralOps.cpp.
-            "gpu": (
-                torch.float64,
-                torch.float16,
-                torch.int4,
-            ),
-        },
+        # TODO: b/518595804 - PyTorch currently does not support half
+        # precision FFTs for PrivateUse1 backends. See promote_type_fft
+        # in SpectralOps.cpp.
+        exclude_dtypes=(
+            torch.float64,
+            torch.float16,
+            torch.int4,
+        ),
     )
 
   def test_fill(self):
@@ -2006,21 +1884,13 @@ class TestOps(op_testing.OpInfoTestBase):
   def test_floor(self):
     self.do_test_op(
         "floor",
-        exclude_dtypes={"cpu": (torch.bool,)},
     )
 
   def test_floor_divide(self):
     self.do_test_op(
         "floor_divide",
-        # TODO: cpu does incorrect rounding for bfloat16 and float16.
-        exclude_dtypes={
-            "cpu": (torch.bfloat16, torch.float16),
-            "gpu": (torch.float16,),
-        },
-        exclude_inplace_dtypes={
-            "cpu": (torch.bfloat16, torch.float16),
-            "gpu": (torch.float16,),
-        },
+        exclude_dtypes=(torch.float16,),
+        exclude_inplace_dtypes=(torch.float16,),
     )
 
   def test_flip(self):
@@ -2039,8 +1909,6 @@ class TestOps(op_testing.OpInfoTestBase):
   def test_foreach_abs(self):
     self.do_test_op(
         "_foreach_abs",
-        exclude_dtypes={"cpu": (torch.bool,)},
-        exclude_inplace_dtypes={"cpu": (torch.bool,)},
     )
 
   @category("foreach")
@@ -2070,7 +1938,7 @@ class TestOps(op_testing.OpInfoTestBase):
         # TODO(b/552441831): Skip legacy GPU golden samples with 'scalars' in kwargs
         # and calls where 'value' is a list of scalars (PyTorch OpInfo passes
         # 'value' kwarg which the C++ binding rejects for list of scalars).
-        skip_if=lambda _device, _variant, op_input: (
+        skip_if=lambda _variant, op_input: (
             "scalars" in op_input.kwargs
             or (
                 "value" in op_input.kwargs
@@ -2090,7 +1958,7 @@ class TestOps(op_testing.OpInfoTestBase):
         # TODO(b/552441831): Skip legacy GPU golden samples with 'scalars' in kwargs
         # and calls where 'value' is a list of scalars (PyTorch OpInfo passes
         # 'value' kwarg which the C++ binding rejects for list of scalars).
-        skip_if=lambda _device, _variant, op_input: (
+        skip_if=lambda _variant, op_input: (
             "scalars" in op_input.kwargs
             or (
                 "value" in op_input.kwargs
@@ -2111,42 +1979,26 @@ class TestOps(op_testing.OpInfoTestBase):
   def test_foreach_ceil(self):
     self.do_test_op(
         "_foreach_ceil",
-        exclude_dtypes={"cpu": (torch.bool,)},
-        exclude_inplace_dtypes={"cpu": (torch.bool,)},
     )
 
   @category("foreach")
   def test_foreach_clamp_max(self):
     self.do_test_op(
         "_foreach_clamp_max",
-        # TODO: "clamp_max_scalar_cpu" not implemented for 'Bool'.
         # TODO: fix _foreach_clamp_max() failing with complex dtypes.
-        exclude_dtypes={
-            "cpu": (torch.bool,) + COMPLEX_DTYPES,
-            "gpu": COMPLEX_DTYPES,
-        },
+        exclude_dtypes=COMPLEX_DTYPES,
         # TODO: fix _foreach_clamp_max_() failing with complex dtypes.
-        exclude_inplace_dtypes={
-            "cpu": (torch.bool,) + COMPLEX_DTYPES,
-            "gpu": COMPLEX_DTYPES,
-        },
+        exclude_inplace_dtypes=COMPLEX_DTYPES,
     )
 
   @category("foreach")
   def test_foreach_clamp_min(self):
     self.do_test_op(
         "_foreach_clamp_min",
-        # TODO: "clamp_min_scalar_cpu" not implemented for 'Bool'.
         # TODO: fix _foreach_clamp_min() failing with complex dtypes.
-        exclude_dtypes={
-            "cpu": (torch.bool,) + COMPLEX_DTYPES,
-            "gpu": COMPLEX_DTYPES,
-        },
+        exclude_dtypes=COMPLEX_DTYPES,
         # TODO: fix _foreach_clamp_min_() failing with complex dtypes.
-        exclude_inplace_dtypes={
-            "cpu": (torch.bool,) + COMPLEX_DTYPES,
-            "gpu": COMPLEX_DTYPES,
-        },
+        exclude_inplace_dtypes=COMPLEX_DTYPES,
     )
 
   @category("foreach")
@@ -2169,24 +2021,15 @@ class TestOps(op_testing.OpInfoTestBase):
     self.do_test_op(
         "_foreach_div",
         # TODO(b/485291373): fix _foreach_div() failing with complex dtypes.
-        exclude_dtypes={
-            "cpu": (torch.bool,) + COMPLEX_DTYPES,
-            "gpu": COMPLEX_DTYPES,
-        },
-        # TODO: CPU returns nans but TPU returns 0.
+        exclude_dtypes=COMPLEX_DTYPES,
         # TODO(b/485291373): fix _foreach_div_() failing with integral and
         # complex dtypes.
-        exclude_inplace_dtypes={
-            "cpu": INTEGRAL_DTYPES + COMPLEX_DTYPES,
-            "gpu": (
-                (
-                    torch.uint8,
-                    torch.int8,
-                    torch.int16,
-                )
-                + COMPLEX_DTYPES
-            ),
-        },
+        exclude_inplace_dtypes=(
+            torch.uint8,
+            torch.int8,
+            torch.int16,
+        )
+        + COMPLEX_DTYPES,
     )
 
   @category("foreach")
@@ -2209,8 +2052,6 @@ class TestOps(op_testing.OpInfoTestBase):
   def test_foreach_floor(self):
     self.do_test_op(
         "_foreach_floor",
-        exclude_dtypes={"cpu": (torch.bool,)},
-        exclude_inplace_dtypes={"cpu": (torch.bool,)},
     )
 
   @category("foreach")
@@ -2260,15 +2101,9 @@ class TestOps(op_testing.OpInfoTestBase):
     self.do_test_op(
         "_foreach_maximum",
         # TODO: fix _foreach_maximum() failing with complex dtypes.
-        exclude_dtypes={
-            "cpu": (torch.bool,) + COMPLEX_DTYPES,
-            "gpu": COMPLEX_DTYPES,
-        },
+        exclude_dtypes=COMPLEX_DTYPES,
         # TODO: fix _foreach_maximum_() failing with complex dtypes.
-        exclude_inplace_dtypes={
-            "cpu": (torch.bool,) + COMPLEX_DTYPES,
-            "gpu": COMPLEX_DTYPES,
-        },
+        exclude_inplace_dtypes=COMPLEX_DTYPES,
     )
 
   @category("foreach")
@@ -2276,15 +2111,9 @@ class TestOps(op_testing.OpInfoTestBase):
     self.do_test_op(
         "_foreach_minimum",
         # TODO: fix _foreach_minimum() failing with complex dtypes.
-        exclude_dtypes={
-            "cpu": (torch.bool,) + COMPLEX_DTYPES,
-            "gpu": COMPLEX_DTYPES,
-        },
+        exclude_dtypes=COMPLEX_DTYPES,
         # TODO: fix _foreach_minimum_() failing with complex dtypes.
-        exclude_inplace_dtypes={
-            "cpu": (torch.bool,) + COMPLEX_DTYPES,
-            "gpu": COMPLEX_DTYPES,
-        },
+        exclude_inplace_dtypes=COMPLEX_DTYPES,
     )
 
   @category("foreach")
@@ -2308,8 +2137,7 @@ class TestOps(op_testing.OpInfoTestBase):
   @category("foreach")
   def test_foreach_norm(self):
 
-    def skip_if(device_type, variant, op_input):
-      _ = device_type  # Unused, suppress linter error
+    def skip_if(variant, op_input):
       _ = variant  # Unused, suppress linter error
       # TODO(b/488385491): Enable grad check for negative ord when the issues
       # are fixed.
@@ -2331,13 +2159,10 @@ class TestOps(op_testing.OpInfoTestBase):
     self.do_test_op(
         "_foreach_norm",
         # TODO(b/485291373): fix _foreach_norm() failing with complex dtypes.
-        exclude_dtypes={
-            "cpu": COMPLEX_DTYPES,
-            "gpu": (
-                *COMPLEX_DTYPES,
-                torch.int4,
-            ),
-        },
+        exclude_dtypes=(
+            *COMPLEX_DTYPES,
+            torch.int4,
+        ),
         skip_if=skip_if,
     )
 
@@ -2511,32 +2336,23 @@ class TestOps(op_testing.OpInfoTestBase):
   def test_ge(self):
     self.do_test_op(
         "ge",
-        exclude_inplace_dtypes={
-            "gpu": (torch.int4,),
-        },
+        exclude_inplace_dtypes=(torch.int4,),
     )
 
   def test_gt(self):
     self.do_test_op(
         "gt",
-        exclude_inplace_dtypes={
-            "gpu": (torch.int4,),
-        },
+        exclude_inplace_dtypes=(torch.int4,),
     )
 
   def test_grid_sample(self):
     self.do_test_op(
         "nn.functional.grid_sample",
-        exclude_dtypes={
-            # CPU implementation has precision issues leading to incorrect
-            # addressing for float16 and bfloat16
-            "cpu": (torch.bfloat16, torch.float16),
-            "gpu": _if_tpu_vs_gpu_compiled((torch.complex64,), ()),
-        },
+        exclude_dtypes=_if_tpu_vs_gpu_compiled((torch.complex64,), ()),
         # TODO(b/544855640): TPU implementation hangs on float64:
         # test_grid_sample (subtest_name='grid_sample_float64_subtest2') hangs
         # indefinitely with float64 on TPU, causing test timeout.
-        skip_if=lambda device, variant, op_input: (
+        skip_if=lambda variant, op_input: (
             op_testing._torch_tpu_vs_gpu_mode()
             and op_testing._COMPUTE_GRAD.value
             and op_input.input_value.dtype == torch.float64
@@ -2555,15 +2371,8 @@ class TestOps(op_testing.OpInfoTestBase):
   def test_histc(self):
     self.do_test_op(
         "histc",
-        # NOTE: Exclude integral dtypes on CPU, because histc() is not
-        # implemented in the PyTorch CPU backend.
-        # Additionally, exclude float16 and bfloat16 because (expected)
-        # precision variations can lead to binning errors.
         # TODO: GPU does not support `bool` and `float16` dtypes.
-        exclude_dtypes={
-            "cpu": INTEGRAL_DTYPES + (torch.float16, torch.bfloat16),
-            "gpu": (torch.float16,),
-        },
+        exclude_dtypes=(torch.float16,),
     )
 
   def test_histc_skip_value_check_due_to_precision_variations(self):
@@ -2572,13 +2381,10 @@ class TestOps(op_testing.OpInfoTestBase):
     self.do_test_op(
         "histc",
         # TODO: GPU does not support `bool` and `float16` dtypes.
-        exclude_dtypes={
-            "cpu": INTEGRAL_DTYPES + (torch.bfloat16,),
-            "gpu": (
-                torch.bool,
-                torch.float16,
-            ),
-        },
+        exclude_dtypes=(
+            torch.bool,
+            torch.float16,
+        ),
         check_value=CheckValueMode.SKIP,
     )
 
@@ -2603,9 +2409,7 @@ class TestOps(op_testing.OpInfoTestBase):
         # in BuildScatterShlo.
         exclude_dtypes=COMPLEX_DTYPES + (torch.bool,),
         exclude_inplace_dtypes=COMPLEX_DTYPES + (torch.bool,),
-        skip_if=lambda _device, _variant, op_input: (
-            op_input.input_value.ndim > 1
-        ),
+        skip_if=lambda _variant, op_input: (op_input.input_value.ndim > 1),
     )
 
   def test_index_reduce_amin(self):
@@ -2617,9 +2421,7 @@ class TestOps(op_testing.OpInfoTestBase):
         # in BuildScatterShlo.
         exclude_dtypes=COMPLEX_DTYPES + (torch.bool,),
         exclude_inplace_dtypes=COMPLEX_DTYPES + (torch.bool,),
-        skip_if=lambda _device, _variant, op_input: (
-            op_input.input_value.ndim > 1
-        ),
+        skip_if=lambda _variant, op_input: (op_input.input_value.ndim > 1),
     )
 
   def test_index_reduce_mean(self):
@@ -2631,9 +2433,7 @@ class TestOps(op_testing.OpInfoTestBase):
         # in BuildScatterShlo.
         exclude_dtypes=COMPLEX_DTYPES + (torch.bool,),
         exclude_inplace_dtypes=COMPLEX_DTYPES + (torch.bool,),
-        skip_if=lambda _device, _variant, op_input: (
-            op_input.input_value.ndim > 1
-        ),
+        skip_if=lambda _variant, op_input: (op_input.input_value.ndim > 1),
     )
 
   def test_index_reduce_prod(self):
@@ -2645,9 +2445,7 @@ class TestOps(op_testing.OpInfoTestBase):
         # in BuildScatterShlo.
         exclude_dtypes=COMPLEX_DTYPES + (torch.bool,),
         exclude_inplace_dtypes=COMPLEX_DTYPES + (torch.bool,),
-        skip_if=lambda _device, _variant, op_input: (
-            op_input.input_value.ndim > 1
-        ),
+        skip_if=lambda _variant, op_input: (op_input.input_value.ndim > 1),
     )
 
   def test_index_select(self):
@@ -2697,9 +2495,7 @@ class TestOps(op_testing.OpInfoTestBase):
   def test_le(self):
     self.do_test_op(
         "le",
-        exclude_inplace_dtypes={
-            "gpu": (torch.int4,),
-        },
+        exclude_inplace_dtypes=(torch.int4,),
     )
 
   def test_leaky_relu(self):
@@ -2730,10 +2526,7 @@ class TestOps(op_testing.OpInfoTestBase):
   def test_linalg_triangular_solve(self):
     self.do_test_op(
         "linalg.solve_triangular",
-        exclude_dtypes={
-            "cpu": INTEGRAL_DTYPES,
-            "gpu": INTEGRAL_DTYPES,
-        },
+        exclude_dtypes=INTEGRAL_DTYPES,
     )
 
   def test_logit(self):
@@ -2748,16 +2541,10 @@ class TestOps(op_testing.OpInfoTestBase):
         "lu_unpack",
         # TODO(b/553658275): support data sampling of integral and
         # half-precision float dtypes for SVD-based linear algebra ops.
-        exclude_dtypes={
-            "cpu": (
-                INTEGRAL_DTYPES
-                + (torch.half, torch.bfloat16, torch.float64, torch.complex128)
-            ),
-            "gpu": INTEGRAL_DTYPES + (torch.half, torch.bfloat16),
-        },
+        exclude_dtypes=INTEGRAL_DTYPES + (torch.half, torch.bfloat16),
         # ApplyPivotsInPlace in linalg_lu_kernels.cc calls .item() in C++ loop,
         # which fails placeholder tensor materialization in compiled mode.
-        skip_if=lambda device, variant, op_input: op_testing.is_compiled_mode(),
+        skip_if=lambda variant, op_input: op_testing.is_compiled_mode(),
     )
 
   def test_linalg_lu_solve(self):
@@ -2765,16 +2552,10 @@ class TestOps(op_testing.OpInfoTestBase):
         "linalg.lu_solve",
         # TODO(b/553658275): support data sampling of integral and
         # half-precision float dtypes for SVD-based linear algebra ops.
-        exclude_dtypes={
-            "cpu": (
-                INTEGRAL_DTYPES
-                + (torch.half, torch.bfloat16, torch.float64, torch.complex128)
-            ),
-            "gpu": INTEGRAL_DTYPES + (torch.half, torch.bfloat16),
-        },
+        exclude_dtypes=INTEGRAL_DTYPES + (torch.half, torch.bfloat16),
         # ApplyPivotsInPlace in linalg_lu_kernels.cc calls .item() in C++ loop,
         # which fails placeholder tensor materialization in compiled mode.
-        skip_if=lambda device, variant, op_input: op_testing.is_compiled_mode(),
+        skip_if=lambda variant, op_input: op_testing.is_compiled_mode(),
     )
 
   def test_linalg_solve_ex(self):
@@ -2782,18 +2563,11 @@ class TestOps(op_testing.OpInfoTestBase):
         "linalg.solve_ex",
         # TODO(b/553658275): support data sampling of integral and
         # half-precision float dtypes for SVD-based linear algebra ops.
-        exclude_dtypes={
-            "cpu": (
-                INTEGRAL_DTYPES
-                + (torch.half, torch.bfloat16, torch.float64, torch.complex128)
-            ),
-            "gpu": (
-                INTEGRAL_DTYPES + (torch.half, torch.bfloat16, torch.float64)
-            ),
-        },
+        exclude_dtypes=INTEGRAL_DTYPES
+        + (torch.half, torch.bfloat16, torch.float64),
         # ApplyPivotsInPlace in linalg_lu_kernels.cc calls .item() in C++ loop,
         # which fails placeholder tensor materialization in compiled mode.
-        skip_if=lambda device, variant, op_input: op_testing.is_compiled_mode(),
+        skip_if=lambda variant, op_input: op_testing.is_compiled_mode(),
     )
 
   def test_linalg_svd(self):
@@ -2801,13 +2575,7 @@ class TestOps(op_testing.OpInfoTestBase):
         "linalg.svd",
         # TODO(b/553658275): support data sampling of integral and
         # half-precision float dtypes for SVD-based linear algebra ops.
-        exclude_dtypes={
-            "cpu": (
-                INTEGRAL_DTYPES
-                + (torch.half, torch.bfloat16, torch.float64, torch.complex128)
-            ),
-            "gpu": INTEGRAL_DTYPES + (torch.half, torch.bfloat16),
-        },
+        exclude_dtypes=INTEGRAL_DTYPES + (torch.half, torch.bfloat16),
         # Singular vectors U (index 0) and Vh (index 2) have sign/phase
         # ambiguity across backends; singular value gradients are tested in
         # test_linalg_svdvals.
@@ -2821,18 +2589,12 @@ class TestOps(op_testing.OpInfoTestBase):
         "linalg.svdvals",
         # TODO(b/553658275): support data sampling of integral and
         # half-precision float dtypes for SVD-based linear algebra ops.
-        exclude_dtypes={
-            "cpu": (
-                INTEGRAL_DTYPES
-                + (torch.half, torch.bfloat16, torch.float64, torch.complex128)
-            ),
-            "gpu": INTEGRAL_DTYPES + (torch.half, torch.bfloat16),
-        },
+        exclude_dtypes=INTEGRAL_DTYPES + (torch.half, torch.bfloat16),
         check_dynamism=False,
         # TODO(b/544855640): TPU implementation of _linalg_svd(compute_uv=True)
         # invoked by svdvals backward hangs on float64 (subtest18), causing
         # shard timeouts.
-        skip_if=lambda _device, _variant, op_input: (
+        skip_if=lambda _variant, op_input: (
             op_testing._COMPUTE_GRAD.value
             and op_input.input_value.dtype == torch.float64
         ),
@@ -2847,8 +2609,8 @@ class TestOps(op_testing.OpInfoTestBase):
         ),
         # ApplyPivotsInPlace in linalg_lu_kernels.cc calls .item() in C++ loop,
         # which fails placeholder tensor materialization in compiled mode.
-        skip_if=lambda device, variant, op_input: (
-            _linalg_lu_without_pivot_gpu(device, variant, op_input)
+        skip_if=lambda variant, op_input: (
+            _linalg_lu_without_pivot_gpu(variant, op_input)
             or op_testing.is_compiled_mode()
         ),
     )
@@ -2858,14 +2620,9 @@ class TestOps(op_testing.OpInfoTestBase):
         "linalg.inv",
         # TODO(b/553658275): support data sampling of integral and
         # half-precision float dtypes for SVD-based linear algebra ops.
-        exclude_dtypes={
-            "cpu": (
-                INTEGRAL_DTYPES + (torch.half, torch.bfloat16, torch.float64)
-            ),
-            "gpu": INTEGRAL_DTYPES + (torch.half, torch.bfloat16),
-        },
+        exclude_dtypes=INTEGRAL_DTYPES + (torch.half, torch.bfloat16),
         # TODO(b/495521055): linalg.inv fails with complex64 with compile.
-        skip_if=lambda device, variant, op_input: (
+        skip_if=lambda variant, op_input: (
             op_testing.is_compiled_mode()
             and op_input.input_value.dtype in COMPLEX_DTYPES
         ),
@@ -2874,25 +2631,21 @@ class TestOps(op_testing.OpInfoTestBase):
   def test_norm(self):
     self.do_test_op(
         "norm",
-        exclude_dtypes={
-            "gpu": (
-                # TODO(b/555391048): support float4 golden data sampling.
-                torch.float4_e2m1fn_x2,
-                torch.int4,
-            ),
-        },
+        exclude_dtypes=(
+            # TODO(b/555391048): support float4 golden data sampling.
+            torch.float4_e2m1fn_x2,
+            torch.int4,
+        ),
     )
 
   def test_linalg_vector_norm_other_dtypes(self):
     self.do_test_op(
         "linalg.vector_norm",
-        exclude_dtypes={
-            "gpu": (torch.int4,),
-        },
+        exclude_dtypes=(torch.int4,),
         # TODO(b/544854527): Fix complex64 ord=inf/-inf gradient accuracy mismatch:
         # Greatest absolute difference: nan at index (2, 0).
         # Expected (GPU): (nan+nanj), Actual (TPU): 0j.
-        skip_if=lambda device, variant, op_input: (
+        skip_if=lambda variant, op_input: (
             op_testing._torch_tpu_vs_gpu_mode()
             and op_testing._COMPUTE_GRAD.value
             and op_input.input_value.dtype == torch.complex64
@@ -2907,15 +2660,13 @@ class TestOps(op_testing.OpInfoTestBase):
         # sample without a device kwarg: `yield SampleInput(1, args=(3, 1))`
         # (see common_methods_invocations.py).
         # Same issue as test_arange() above.
-        skip_if=lambda _1, _2, op_input: "device" not in op_input.kwargs,
+        skip_if=lambda _, op_input: "device" not in op_input.kwargs,
     )
 
   def test_lt(self):
     self.do_test_op(
         "lt",
-        exclude_inplace_dtypes={
-            "gpu": (torch.int4,),
-        },
+        exclude_inplace_dtypes=(torch.int4,),
     )
 
   def test_log(self):
@@ -2983,19 +2734,12 @@ class TestOps(op_testing.OpInfoTestBase):
         # delegated, but due to the same reason above, there are some funky
         # lowering causing delegation to fail for us. This requires additional
         # work to fix. For now, we just exclude bool dtypes.
-        exclude_dtypes={
-            "cpu": (
-                torch.bool,
-                torch.int32,
-                torch.int64,
-            ),
-            # TODO: make matmul fail for integral dtypes to match GPU.
-            "gpu": (
-                torch.uint8,
-                torch.int8,
-                torch.int16,
-            ),
-        },
+        # TODO: make matmul fail for integral dtypes to match GPU.
+        exclude_dtypes=(
+            torch.uint8,
+            torch.int8,
+            torch.int16,
+        ),
     )
 
   def test_multinomial(self):
@@ -3006,13 +2750,10 @@ class TestOps(op_testing.OpInfoTestBase):
         # generator.
         check_value=CheckValueMode.SKIP,
         # TODO: float64 is not supported for rng on TPU.
-        exclude_dtypes={
-            "cpu": (torch.float64,),
-            "gpu": (
-                torch.float64,
-                torch.int4,
-            ),
-        },
+        exclude_dtypes=(
+            torch.float64,
+            torch.int4,
+        ),
     )
 
   def test_max(self):
@@ -3030,54 +2771,34 @@ class TestOps(op_testing.OpInfoTestBase):
         "nn.functional.max_pool1d",
         check_dynamism=False,
         # TODO: complex64, float64, and int64 dtypes are not supported on TPU.
-        exclude_dtypes={
-            "cpu": (
-                torch.complex64,
-                torch.float64,
-                torch.int32,
-                torch.int64,
-            ),
-            "gpu": (
-                (
-                    torch.complex64,
-                    torch.float64,
-                )
-                # TODO: b/476417319 reject integer dtypes in TPU implementation,
-                # so that it matches the GPU implementation.
-                + (
-                    torch.uint8,
-                    torch.int8,
-                    torch.int16,
-                )
-            ),
-        },
+        exclude_dtypes=(
+            torch.complex64,
+            torch.float64,
+        )
+        # TODO: b/476417319 reject integer dtypes in TPU implementation,
+        # so that it matches the GPU implementation.
+        + (
+            torch.uint8,
+            torch.int8,
+            torch.int16,
+        ),
     )
 
   def test_max_pool2d(self):
     self.do_test_op(
         "nn.functional.max_pool2d",
         # TODO: complex64, float64, and int64 dtypes are not supported on TPU.
-        exclude_dtypes={
-            "cpu": (
-                torch.complex64,
-                torch.float64,
-                torch.int32,
-                torch.int64,
-            ),
-            "gpu": (
-                (
-                    torch.complex64,
-                    torch.float64,
-                )
-                # TODO: b/476417319 reject integer dtypes in TPU implementation,
-                # so that it matches the GPU implementation.
-                + (
-                    torch.uint8,
-                    torch.int8,
-                    torch.int16,
-                )
-            ),
-        },
+        exclude_dtypes=(
+            torch.complex64,
+            torch.float64,
+        )
+        # TODO: b/476417319 reject integer dtypes in TPU implementation,
+        # so that it matches the GPU implementation.
+        + (
+            torch.uint8,
+            torch.int8,
+            torch.int16,
+        ),
     )
 
   def test_max_pool3d(self):
@@ -3085,27 +2806,17 @@ class TestOps(op_testing.OpInfoTestBase):
         "nn.functional.max_pool3d",
         # TODO: b/467347286 - complex64, float64, and int64 dtypes
         # are not supported on TPU.
-        exclude_dtypes={
-            "cpu": (
-                torch.complex64,
-                torch.float64,
-                torch.int32,
-                torch.int64,
-            ),
-            "gpu": (
-                (
-                    torch.complex64,
-                    torch.float64,
-                )
-                # TODO: b/476417319 reject integer dtypes in TPU implementation,
-                # so that it matches the GPU implementation.
-                + (
-                    torch.uint8,
-                    torch.int8,
-                    torch.int16,
-                )
-            ),
-        },
+        exclude_dtypes=(
+            torch.complex64,
+            torch.float64,
+        )
+        # TODO: b/476417319 reject integer dtypes in TPU implementation,
+        # so that it matches the GPU implementation.
+        + (
+            torch.uint8,
+            torch.int8,
+            torch.int16,
+        ),
     )
 
   def test_mean(self):
@@ -3125,14 +2836,11 @@ class TestOps(op_testing.OpInfoTestBase):
     self.do_test_op(
         "mm",
         # TODO: fix mm() failing with integral dtypes.
-        exclude_dtypes={
-            "cpu": INTEGRAL_DTYPES,
-            "gpu": (
-                torch.uint8,
-                torch.int8,
-                torch.int16,
-            ),
-        },
+        exclude_dtypes=(
+            torch.uint8,
+            torch.int8,
+            torch.int16,
+        ),
     )
 
   def test_mul(self):
@@ -3147,35 +2855,19 @@ class TestOps(op_testing.OpInfoTestBase):
   def test_native_batch_norm(self):
     self.do_test_op(
         "native_batch_norm",
-        # Due to a PyTorch output dtype inconsistency bw CPU and GPU, we skip
-        # checking the output dtype against CPU.
-        check_dtype=self.golden_device_type == "gpu",
         # TODO: fix native_batch_norm(out=...) failing.
         check_out_variant=False,
-        exclude_dtypes={
-            "gpu": (
-                (torch.float64,)
-                + _if_tpu_vs_gpu_compiled((torch.complex64,), ())
-            )
-        },
-        skip_if=_native_batch_norm_notrain_cpu,
+        exclude_dtypes=(torch.float64,)
+        + _if_tpu_vs_gpu_compiled((torch.complex64,), ()),
     )
 
   def test_native_batch_norm_legit(self):
     self.do_test_op(
         "_native_batch_norm_legit",
-        # Due to a PyTorch output dtype inconsistency bw CPU and GPU, we skip
-        # checking the output dtype against CPU.
-        check_dtype=self.golden_device_type == "gpu",
         # TODO: fix _native_batch_norm_legit(out=...) failing.
         check_out_variant=False,
-        exclude_dtypes={
-            "gpu": (
-                (torch.float64,)
-                + _if_tpu_vs_gpu_compiled((torch.complex64,), ())
-            ),
-        },
-        skip_if=_native_batch_norm_notrain_cpu,
+        exclude_dtypes=(torch.float64,)
+        + _if_tpu_vs_gpu_compiled((torch.complex64,), ()),
     )
 
   def test_native_group_norm(self):
@@ -3200,19 +2892,12 @@ class TestOps(op_testing.OpInfoTestBase):
         # with check_grad=True. As there is no default implementation of
         # backward for native_layer_norm, it should fail. Investigate why it's
         # not failing.
-        # NOTE: native_layer_norm() is not implemented for complex64 on CPU,
-        # so we have to exclude complex64 here.
-        exclude_dtypes={
-            "cpu": COMPLEX_DTYPES,
-            "gpu": (
-                (
-                    torch.uint8,
-                    torch.int8,
-                    torch.int16,
-                )
-                + COMPLEX_DTYPES
-            ),
-        },
+        exclude_dtypes=(
+            torch.uint8,
+            torch.int8,
+            torch.int16,
+        )
+        + COMPLEX_DTYPES,
         # TODO: look into why this test produces float32 (default dtype) tensors
         # on GPU for the last 2 tensors being compared, while TPU produces
         # tensors of the same dtype as the input.
@@ -3225,9 +2910,7 @@ class TestOps(op_testing.OpInfoTestBase):
   def test_ne(self):
     self.do_test_op(
         "ne",
-        exclude_inplace_dtypes={
-            "gpu": (torch.int4,),
-        },
+        exclude_inplace_dtypes=(torch.int4,),
     )
 
   def test_new_full(self):
@@ -3252,9 +2935,7 @@ class TestOps(op_testing.OpInfoTestBase):
   def test_nonzero(self):
     self.do_test_op(
         "nonzero",
-        exclude_dtypes={
-            "gpu": (torch.int4,),
-        },
+        exclude_dtypes=(torch.int4,),
     )
 
   def test_normal_(self):
@@ -3284,24 +2965,10 @@ class TestOps(op_testing.OpInfoTestBase):
         # TODO: fix nn.functional.conv*d() failing with integral and complex
         # dtypes.
         # Known issues:
-        # 1. CPU sometimes fails with low-bitwidth integers, even though XLA
-        #    succeeds; possible bug in CPU kernel?
-        # 2. TPU lowering for int64 crashes due to "While rewriting computation
+        # 1. TPU lowering for int64 crashes due to "While rewriting computation
         #    to not contain X64 element types, XLA encountered an HLO for which
         #    this rewriting is not implemented: %convolution [...]"
-        exclude_dtypes={
-            "cpu": (
-                COMPLEX_DTYPES
-                + (
-                    torch.uint8,
-                    torch.int8,
-                    torch.int16,
-                    torch.int32,
-                    torch.int64,
-                )
-            ),
-            "gpu": COMPLEX_DTYPES + (torch.uint8, torch.int8, torch.int16),
-        },
+        exclude_dtypes=COMPLEX_DTYPES + (torch.uint8, torch.int8, torch.int16),
     )
 
   def test_nn_functional_conv2d(self):
@@ -3309,19 +2976,7 @@ class TestOps(op_testing.OpInfoTestBase):
         "nn.functional.conv2d",
         # TODO: fix nn.functional.conv*d() failing with integral and complex
         # dtypes. See comments in test_nn_functional_conv1d.
-        exclude_dtypes={
-            "cpu": (
-                COMPLEX_DTYPES
-                + (
-                    torch.uint8,
-                    torch.int8,
-                    torch.int16,
-                    torch.int32,
-                    torch.int64,
-                )
-            ),
-            "gpu": COMPLEX_DTYPES + (torch.uint8, torch.int8, torch.int16),
-        },
+        exclude_dtypes=COMPLEX_DTYPES + (torch.uint8, torch.int8, torch.int16),
     )
 
   def test_nn_functional_conv_transpose1d(self):
@@ -3329,22 +2984,7 @@ class TestOps(op_testing.OpInfoTestBase):
         "nn.functional.conv_transpose1d",
         # TODO: fix nn.functional.conv*d() failing with integral and complex
         # dtypes.
-        # Known issues:
-        # 1. CPU sometimes fails with low-bitwidth integers, even though XLA
-        #    succeeds; possible bug in CPU kernel?
-        exclude_dtypes={
-            "cpu": (
-                COMPLEX_DTYPES
-                + (
-                    torch.uint8,
-                    torch.int8,
-                    torch.int16,
-                    torch.int32,
-                    torch.int64,
-                )
-            ),
-            "gpu": COMPLEX_DTYPES + (torch.uint8, torch.int8, torch.int16),
-        },
+        exclude_dtypes=COMPLEX_DTYPES + (torch.uint8, torch.int8, torch.int16),
     )
 
   def test_nn_functional_conv_transpose2d(self):
@@ -3352,22 +2992,7 @@ class TestOps(op_testing.OpInfoTestBase):
         "nn.functional.conv_transpose2d",
         # TODO: fix nn.functional.conv*d() failing with integral and complex
         # dtypes.
-        # Known issues:
-        # 1. CPU sometimes fails with low-bitwidth integers, even though XLA
-        #    succeeds; possible bug in CPU kernel?
-        exclude_dtypes={
-            "cpu": (
-                COMPLEX_DTYPES
-                + (
-                    torch.uint8,
-                    torch.int8,
-                    torch.int16,
-                    torch.int32,
-                    torch.int64,
-                )
-            ),
-            "gpu": COMPLEX_DTYPES + (torch.uint8, torch.int8, torch.int16),
-        },
+        exclude_dtypes=COMPLEX_DTYPES + (torch.uint8, torch.int8, torch.int16),
     )
 
   def test_nn_functional_conv_transpose3d(self):
@@ -3375,22 +3000,7 @@ class TestOps(op_testing.OpInfoTestBase):
         "nn.functional.conv_transpose3d",
         # TODO: fix nn.functional.conv*d() failing with integral and complex
         # dtypes.
-        # Known issues:
-        # 1. CPU sometimes fails with low-bitwidth integers, even though XLA
-        #    succeeds; possible bug in CPU kernel?
-        exclude_dtypes={
-            "cpu": (
-                COMPLEX_DTYPES
-                + (
-                    torch.uint8,
-                    torch.int8,
-                    torch.int16,
-                    torch.int32,
-                    torch.int64,
-                )
-            ),
-            "gpu": COMPLEX_DTYPES + (torch.uint8, torch.int8, torch.int16),
-        },
+        exclude_dtypes=COMPLEX_DTYPES + (torch.uint8, torch.int8, torch.int16),
     )
 
   def test_nn_functional_conv3d(self):
@@ -3398,19 +3008,7 @@ class TestOps(op_testing.OpInfoTestBase):
         "nn.functional.conv3d",
         # TODO: fix nn.functional.conv*d() failing with integral and complex
         # dtypes. See comments in test_nn_functional_conv1d.
-        exclude_dtypes={
-            "cpu": (
-                COMPLEX_DTYPES
-                + (
-                    torch.uint8,
-                    torch.int8,
-                    torch.int16,
-                    torch.int32,
-                    torch.int64,
-                )
-            ),
-            "gpu": COMPLEX_DTYPES + (torch.uint8, torch.int8, torch.int16),
-        },
+        exclude_dtypes=COMPLEX_DTYPES + (torch.uint8, torch.int8, torch.int16),
     )
 
   def test_nn_functional_relu(self):
@@ -3419,13 +3017,7 @@ class TestOps(op_testing.OpInfoTestBase):
         # TODO: fix relu() with uint8/int8/int16 dtypes.
         # xla_cuda has no support for complex64::min():
         # https://github.com/openxla/stablehlo/issues/560
-        exclude_dtypes={
-            "cpu": (
-                (torch.uint8, torch.int8, torch.int16, torch.bool)
-                + COMPLEX_DTYPES
-            ),
-            "gpu": (torch.uint8, torch.int8, torch.int16) + COMPLEX_DTYPES,
-        },
+        exclude_dtypes=(torch.uint8, torch.int8, torch.int16) + COMPLEX_DTYPES,
     )
 
   def test_nn_functional_rms_norm(self):
@@ -3520,41 +3112,27 @@ class TestOps(op_testing.OpInfoTestBase):
         # GPU (CUDA) does not support integral or boolean dtypes for linear.
         # In compiled mode, linear decomposes to addmm which does not yet
         # support complex64.
-        exclude_dtypes={
-            "gpu": (
-                INTEGRAL_DTYPES
-                + _if_tpu_vs_gpu_compiled((torch.complex64,), ())
-            ),
-        },
+        exclude_dtypes=INTEGRAL_DTYPES
+        + _if_tpu_vs_gpu_compiled((torch.complex64,), ()),
     )
 
   def test_nn_functional_silu(self):
     self.do_test_op(
         "nn.functional.silu",
         # TODO: fix nn.functional.silu() failing with complex dtypes.
-        exclude_dtypes={
-            "cpu": INTEGRAL_DTYPES + COMPLEX_DTYPES,
-            "gpu": (
-                (
-                    torch.uint8,
-                    torch.int8,
-                    torch.int16,
-                )
-                + COMPLEX_DTYPES
-            ),
-        },
+        exclude_dtypes=(
+            torch.uint8,
+            torch.int8,
+            torch.int16,
+        )
+        + COMPLEX_DTYPES,
         # TODO: fix nn.functional.silu_() failing with complex dtypes.
-        exclude_inplace_dtypes={
-            "cpu": INTEGRAL_DTYPES + COMPLEX_DTYPES,
-            "gpu": (
-                (
-                    torch.uint8,
-                    torch.int8,
-                    torch.int16,
-                )
-                + COMPLEX_DTYPES
-            ),
-        },
+        exclude_inplace_dtypes=(
+            torch.uint8,
+            torch.int8,
+            torch.int16,
+        )
+        + COMPLEX_DTYPES,
     )
 
   def test_nn_functional_softplus(self):
@@ -3596,7 +3174,7 @@ class TestOps(op_testing.OpInfoTestBase):
         "polygamma",
         # TODO(b/568080282): Fix aten::polygamma_ alias annotation error in
         # torch.compile functionalization.
-        skip_if=lambda _1, variant, _2: (
+        skip_if=lambda variant, _: (
             op_testing.is_compiled_mode()
             and variant == op_testing.OpVariant.INPLACE
         ),
@@ -3631,14 +3209,6 @@ class TestOps(op_testing.OpInfoTestBase):
   def test_remainder(self):
     self.do_test_op(
         "remainder",
-        # bfloat16 remainder is unstable at division boundaries: quotient
-        # rounding flips shift the result by a full divisor vs CPU and GPU.
-        exclude_dtypes={
-            "cpu": (torch.bfloat16,),
-        },
-        exclude_inplace_dtypes={
-            "cpu": (torch.bfloat16,),
-        },
     )
 
   def test_repeat(self):
@@ -3647,7 +3217,7 @@ class TestOps(op_testing.OpInfoTestBase):
   def test_repeat_interleave(self):
     self.do_test_op(
         "repeat_interleave",
-        skip_if=lambda _device, _variant, op_input: (
+        skip_if=lambda _variant, op_input: (
             op_testing.is_compiled_mode()
             and (
                 isinstance(op_input.kwargs.get("repeats"), torch.Tensor)
@@ -3697,10 +3267,7 @@ class TestOps(op_testing.OpInfoTestBase):
     self.do_test_op(
         "torch._scaled_mm",
         variant_test_name="rowwise",
-        exclude_dtypes={
-            "cpu": ALL_NUMERIC_DTYPES,
-            "gpu": UNQUANTIZED_NUMERIC_DTYPES,
-        },
+        exclude_dtypes=UNQUANTIZED_NUMERIC_DTYPES,
         # aten._scaled_mm.out only supports tensorwise scaling in PyTorch.
         check_out_variant=False,
         check_grad=False,
@@ -3709,7 +3276,7 @@ class TestOps(op_testing.OpInfoTestBase):
         check_dynamism=False,
         # TODO(amainz): Test the use_fast_accum samples once cl/990400735 lets
         # TorchTPU's torch._scaled_mm accept use_fast_accum=True.
-        skip_if=lambda _, __, op_input: op_input.kwargs["use_fast_accum"],
+        skip_if=lambda _, op_input: op_input.kwargs["use_fast_accum"],
         # Cover all 7 samples regardless of --max_samples_per_op_dtype.
         max_samples_per_op_dtype=7,
     )
@@ -3721,15 +3288,12 @@ class TestOps(op_testing.OpInfoTestBase):
     self.do_test_op(
         "torch._scaled_grouped_mm",
         variant_test_name="rowwise",
-        exclude_dtypes={
-            "cpu": ALL_NUMERIC_DTYPES,
-            "gpu": (
-                *UNQUANTIZED_NUMERIC_DTYPES,
-                # TODO(amainz): Enable once cl/995189060 lands rowwise scale
-                # lowering for torch._scaled_grouped_mm on TPU.
-                torch.float8_e4m3fn,
-            ),
-        },
+        exclude_dtypes=(
+            *UNQUANTIZED_NUMERIC_DTYPES,
+            # TODO(amainz): Enable once cl/995189060 lands rowwise scale
+            # lowering for torch._scaled_grouped_mm on TPU.
+            torch.float8_e4m3fn,
+        ),
         check_out_variant=False,
         check_grad=False,
         # TODO(amainz): Bounded dynamism requires synchronized group offset,
@@ -3738,7 +3302,7 @@ class TestOps(op_testing.OpInfoTestBase):
         # TODO(amainz): Enable compiled mode once cl/995189061 registers a TPU
         # meta override that accepts non-col-major mat_b strides, and enable
         # use_fast_accum samples once cl/990400735 lands.
-        skip_if=lambda _device, _variant, op_input: (
+        skip_if=lambda _variant, op_input: (
             op_testing.is_compiled_mode() or op_input.kwargs["use_fast_accum"]
         ),
         # Cover all 5 samples regardless of --max_samples_per_op_dtype.
@@ -3748,18 +3312,12 @@ class TestOps(op_testing.OpInfoTestBase):
   def test_scaled_mm_v2(self):
     self.do_test_op(
         "torch._scaled_mm_v2",
-        exclude_dtypes={
-            "cpu": (
-                *ALL_NUMERIC_DTYPES,
-                *quantize_utils.ROCM_ONLY_FLOAT8_DTYPES,
-            ),
-            "gpu": (
-                *UNQUANTIZED_NUMERIC_DTYPES,
-                # cuBLASLt does not support e5m2 x e5m2 multiplication on CUDA
-                torch.float8_e5m2,
-                *quantize_utils.ROCM_ONLY_FLOAT8_DTYPES,
-            ),
-        },
+        exclude_dtypes=(
+            *UNQUANTIZED_NUMERIC_DTYPES,
+            # cuBLASLt does not support e5m2 x e5m2 multiplication on CUDA
+            torch.float8_e5m2,
+            *quantize_utils.ROCM_ONLY_FLOAT8_DTYPES,
+        ),
         check_out_variant=False,
         # Override _OSS_SAMPLE_LIMIT to cover all 8 scaled_mm_v2 test samples.
         max_samples_per_op_dtype=8,
@@ -3790,17 +3348,14 @@ class TestOps(op_testing.OpInfoTestBase):
   def test_searchsorted(self):
     self.do_test_op(
         "searchsorted",
-        exclude_dtypes={
-            "cpu": COMPLEX_DTYPES,
-            "gpu": (
-                *COMPLEX_DTYPES,
-                # TODO(b/555391048): support float8 golden data sampling.
-                torch.float8_e4m3fn,
-                torch.float8_e5m2,
-                torch.float4_e2m1fn_x2,
-                torch.int4,
-            ),
-        },
+        exclude_dtypes=(
+            *COMPLEX_DTYPES,
+            # TODO(b/555391048): support float8 golden data sampling.
+            torch.float8_e4m3fn,
+            torch.float8_e5m2,
+            torch.float4_e2m1fn_x2,
+            torch.int4,
+        ),
         # Upstream generates 288 samples per dtype; cap to prevent test
         # shard timeouts (10 samples per op dtype results in ~15m test time).
         max_samples_per_op_dtype=4,
@@ -3810,10 +3365,7 @@ class TestOps(op_testing.OpInfoTestBase):
     self.do_test_op(
         "_segment_reduce",
         variant_test_name="lengths",
-        exclude_dtypes={
-            "cpu": INTEGRAL_DTYPES + COMPLEX_DTYPES,
-            "gpu": COMPLEX_DTYPES,
-        },
+        exclude_dtypes=COMPLEX_DTYPES,
         # TODO: _segment_reduce_backward is not implemented on TPU.
         check_grad=False,
         # TODO: segment_reduce requires length/offset dimension matching under
@@ -3825,10 +3377,7 @@ class TestOps(op_testing.OpInfoTestBase):
     self.do_test_op(
         "_segment_reduce",
         variant_test_name="offsets",
-        exclude_dtypes={
-            "cpu": INTEGRAL_DTYPES + COMPLEX_DTYPES,
-            "gpu": COMPLEX_DTYPES,
-        },
+        exclude_dtypes=COMPLEX_DTYPES,
         # TODO: _segment_reduce_backward is not implemented on TPU.
         check_grad=False,
         # TODO: segment_reduce requires length/offset dimension matching under
@@ -4060,15 +3609,13 @@ class TestOps(op_testing.OpInfoTestBase):
   def test_to(self):
     self.do_test_op(
         "to",
-        exclude_dtypes={
-            "gpu": (
-                # CPU and CUDA don't support casting to/from float4_e2m1fn_x2,
-                # but TorchTPU intentionally does to support data sampling via
-                # cross-dtype casts.
-                torch.float4_e2m1fn_x2,
-                torch.int4,
-            ),
-        },
+        exclude_dtypes=(
+            # CPU and CUDA don't support casting to/from float4_e2m1fn_x2,
+            # but TorchTPU intentionally does to support data sampling via
+            # cross-dtype casts.
+            torch.float4_e2m1fn_x2,
+            torch.int4,
+        ),
     )
 
   def test_topk(self):
@@ -4097,13 +3644,9 @@ class TestOps(op_testing.OpInfoTestBase):
         "tril_indices",
         # TODO: b/476115671 add support for other dtypes that GPU supports:
         # integers other than int32 and int64, floats and complex.
-        exclude_dtypes={
-            "gpu": (
-                (torch.uint8, torch.int8, torch.int16)
-                + (torch.float64, torch.float16)
-                + COMPLEX_DTYPES
-            ),
-        },
+        exclude_dtypes=(torch.uint8, torch.int8, torch.int16)
+        + (torch.float64, torch.float16)
+        + COMPLEX_DTYPES,
         # TODO(b/542277009): add support for bool dtype when either `row` or
         # `col` is 0 (trivial case).
         skip_if=_tril_indices_bool_zero_arg_eager_gpu,
@@ -4130,7 +3673,7 @@ class TestOps(op_testing.OpInfoTestBase):
         check_dynamism=False,
         # TODO: _unique2 on 0D inputs with return_inverse=True produces a 1D
         # PjRtBuffer for a 0D ATen inverse_indices output tensor.
-        skip_if=lambda _device, _variant, op_input: (
+        skip_if=lambda _variant, op_input: (
             not op_testing._CHECK_DYNAMISM_USING_SEED.value
             and (
                 op_testing.is_compiled_mode()
@@ -4168,52 +3711,39 @@ class TestOps(op_testing.OpInfoTestBase):
         # By definition, uniform() returns a tensor with random values, so
         # there's no point in checking the values.
         check_value=CheckValueMode.SKIP,
-        exclude_dtypes={
-            "gpu": (torch.int4,),
-        },
+        exclude_dtypes=(torch.int4,),
     )
 
   def test_unsafe_view(self):
     self.do_test_op("torch.ops.aten._unsafe_view")
 
   def test_upsample_nearest(self):
-    # TODO: The CPU side fails for complex dtypes and integers.
     self.do_test_op(
         "nn.functional.upsample_nearest",
-        exclude_dtypes={
-            "cpu": COMPLEX_DTYPES + INTEGRAL_DTYPES,
-            "gpu": (
-                COMPLEX_DTYPES
-                + (
-                    torch.uint8,
-                    torch.int8,
-                    torch.int16,
-                )
-                # TODO(b/568080282): Fix upsample ops succeeding on integral
-                # dtypes in compiled mode when GPU fails.
-                + _if_tpu_vs_gpu_compiled(INTEGRAL_DTYPES, ())
-            ),
-        },
+        exclude_dtypes=COMPLEX_DTYPES
+        + (
+            torch.uint8,
+            torch.int8,
+            torch.int16,
+        )
+        # TODO(b/568080282): Fix upsample ops succeeding on integral
+        # dtypes in compiled mode when GPU fails.
+        + _if_tpu_vs_gpu_compiled(INTEGRAL_DTYPES, ()),
     )
 
   def test_upsample_bicubic2d(self):
     self.do_test_op(
         "nn.functional.interpolate",
         variant_test_name="bicubic",
-        exclude_dtypes={
-            "cpu": COMPLEX_DTYPES + INTEGRAL_DTYPES,
-            "gpu": (
-                COMPLEX_DTYPES
-                + (
-                    torch.uint8,
-                    torch.int8,
-                    torch.int16,
-                )
-                # TODO(b/568080282): Fix upsample ops succeeding on integral
-                # dtypes in compiled mode when GPU fails.
-                + _if_tpu_vs_gpu_compiled(INTEGRAL_DTYPES, ())
-            ),
-        },
+        exclude_dtypes=COMPLEX_DTYPES
+        + (
+            torch.uint8,
+            torch.int8,
+            torch.int16,
+        )
+        # TODO(b/568080282): Fix upsample ops succeeding on integral
+        # dtypes in compiled mode when GPU fails.
+        + _if_tpu_vs_gpu_compiled(INTEGRAL_DTYPES, ()),
     )
 
   def test_upsample_bicubic2d_aa(self):
@@ -4236,45 +3766,33 @@ class TestOps(op_testing.OpInfoTestBase):
     )
 
   def test_upsample_bilinear(self):
-    # TODO: The CPU side fails for complex dtypes and integers.
     self.do_test_op(
         "nn.functional.upsample_bilinear",
-        exclude_dtypes={
-            "cpu": COMPLEX_DTYPES + INTEGRAL_DTYPES,
-            "gpu": (
-                COMPLEX_DTYPES
-                + (
-                    torch.uint8,
-                    torch.int8,
-                    torch.int16,
-                )
-                # TODO(b/568080282): Fix upsample ops succeeding on integral
-                # dtypes in compiled mode when GPU fails.
-                + _if_tpu_vs_gpu_compiled(INTEGRAL_DTYPES, ())
-            ),
-        },
+        exclude_dtypes=COMPLEX_DTYPES
+        + (
+            torch.uint8,
+            torch.int8,
+            torch.int16,
+        )
+        # TODO(b/568080282): Fix upsample ops succeeding on integral
+        # dtypes in compiled mode when GPU fails.
+        + _if_tpu_vs_gpu_compiled(INTEGRAL_DTYPES, ()),
         # TODO: STRICT fails for some types. Look into narrowing this down.
     )
 
   def test_upsample_nearest_exact(self):
-    # TODO: The CPU side fails for complex dtypes and integers.
     self.do_test_op(
         "nn.functional.interpolate",
         variant_test_name="nearest-exact",
-        exclude_dtypes={
-            "cpu": COMPLEX_DTYPES + INTEGRAL_DTYPES,
-            "gpu": (
-                COMPLEX_DTYPES
-                + (
-                    torch.uint8,
-                    torch.int8,
-                    torch.int16,
-                )
-                # TODO(b/568080282): Fix upsample ops succeeding on integral
-                # dtypes in compiled mode when GPU fails.
-                + _if_tpu_vs_gpu_compiled(INTEGRAL_DTYPES, ())
-            ),
-        },
+        exclude_dtypes=COMPLEX_DTYPES
+        + (
+            torch.uint8,
+            torch.int8,
+            torch.int16,
+        )
+        # TODO(b/568080282): Fix upsample ops succeeding on integral
+        # dtypes in compiled mode when GPU fails.
+        + _if_tpu_vs_gpu_compiled(INTEGRAL_DTYPES, ()),
     )
 
   def test_std(self):
@@ -4290,14 +3808,11 @@ class TestOps(op_testing.OpInfoTestBase):
     self.do_test_op(
         "vdot",
         # GPU (CUDA) does not support integral dtypes for vdot.
-        exclude_dtypes={
-            "cpu": (torch.int32, torch.int64),
-            "gpu": (
-                torch.uint8,
-                torch.int8,
-                torch.int16,
-            ),
-        },
+        exclude_dtypes=(
+            torch.uint8,
+            torch.int8,
+            torch.int16,
+        ),
     )
 
   def test_view(self):
@@ -4339,12 +3854,8 @@ class TestOps(op_testing.OpInfoTestBase):
   def test_bucketize(self):
     self.do_test_op(
         "bucketize",
-        exclude_dtypes={
-            # - No total order for complex numbers.
-            # - Inconsistent behaviour on CPU with bool.
-            "cpu": COMPLEX_DTYPES + (torch.bool,),
-            "gpu": COMPLEX_DTYPES,
-        },
+        # No total order for complex numbers.
+        exclude_dtypes=COMPLEX_DTYPES,
     )
 
   def test_geqrf(self):
@@ -4355,10 +3866,7 @@ class TestOps(op_testing.OpInfoTestBase):
         check_grad=False,
         # TODO(b/553658275): support data sampling of integral and
         # half-precision float dtypes for SVD-based linear algebra ops.
-        exclude_dtypes={
-            "cpu": ALL_NUMERIC_DTYPES,
-            "gpu": INTEGRAL_DTYPES + (torch.half, torch.bfloat16),
-        },
+        exclude_dtypes=INTEGRAL_DTYPES + (torch.half, torch.bfloat16),
     )
 
   def test_linalg_qr(self):
@@ -4366,10 +3874,7 @@ class TestOps(op_testing.OpInfoTestBase):
         "linalg.qr",
         # TODO(b/553658275): support data sampling of integral and
         # half-precision float dtypes for SVD-based linear algebra ops.
-        exclude_dtypes={
-            "cpu": ALL_NUMERIC_DTYPES,
-            "gpu": INTEGRAL_DTYPES + (torch.half, torch.bfloat16),
-        },
+        exclude_dtypes=INTEGRAL_DTYPES + (torch.half, torch.bfloat16),
     )
 
   def test_thnn_fused_gru_cell(self):
