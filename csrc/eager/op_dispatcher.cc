@@ -47,6 +47,7 @@
 #include "csrc/common/to_string.h"
 #include "csrc/eager/device_buffer.h"
 #include "csrc/eager/eager_mode.h"
+#include "csrc/eager/events_queue.h"
 #include "csrc/eager/tensor_to_buffer.h"
 #include "csrc/ops/macros/kernel.h"
 #include "csrc/ops/op_builder_utils.h"
@@ -131,7 +132,8 @@ absl::StatusOr<DeviceBufferRef> MakeBuffer(
     TT_ASSIGN_OR_RETURN(
         DeviceBufferRef buf_ref,
         TpuMallocAndMemcpyHtoD(scalar_data, element_type, /*dimensions=*/{},
-                               /*non_blocking=*/true, std::move(scalar_bytes)));
+                               std::move(scalar_bytes)));
+    RecordAsyncHostToDevice(buf_ref);
     scalar_map.insert({hashable_scalar, buf_ref});
     return buf_ref;
   }

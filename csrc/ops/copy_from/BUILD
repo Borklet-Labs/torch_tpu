@@ -86,6 +86,7 @@ torch_tpu_cc_library(
         "//csrc/common:layout_utils",
         "//csrc/common:to_string",
         "//csrc/eager:device_buffer",
+        "//csrc/eager:events_queue",
         "//csrc/eager:tensor_to_buffer",
         "//csrc/pjrt:pjrt_transfer",
         "//shims/torch:aten_headers",
@@ -113,6 +114,7 @@ torch_tpu_cc_library(
         "//csrc/common:utils",
         "//csrc/eager:current_stream",
         "//csrc/eager:device_buffer",
+        "//csrc/eager:events_queue",
         "//csrc/eager:materialize",
         "//csrc/eager:op_dispatcher",
         "//csrc/eager:split_traversal",
@@ -137,6 +139,7 @@ torch_tpu_cc_library(
         "@com_google_absl//absl/types:span",
         "@stablehlo//stablehlo/integrations/cpp/builder:attr_type_builder_util",
         "@tsl//tsl/profiler/lib:traceme",
+        "@xla//xla:future",
     ],
 )
 

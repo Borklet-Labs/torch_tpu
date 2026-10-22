@@ -147,11 +147,10 @@ TEST_F(EventsQueueTest, IgnoresAlreadyMaterializedBuffers) {
 
   // Create a fully-materialized buffer (filled with zeros) and record its
   // DataPtr creation.
-  TT_ASSERT_OK_AND_ASSIGN(
-      auto ref,
-      TpuMallocAndMemcpyHtoD(/*host_data=*/nullptr, mlir::ElementType::UI8, {1},
-                             /*non_blocking=*/false));
-  ASSERT_TRUE(ref.is_materialized());
+  TT_ASSERT_OK_AND_ASSIGN(auto ref,
+                          TpuMallocAndMemcpyHtoD(/*host_data=*/nullptr,
+                                                 mlir::ElementType::UI8, {1}));
+  ASSERT_TRUE(ref.Synchronize().ok()) << ref.Synchronize();
   ref.device_buffer_list()->IncrementLiveDataPtrs(ref.index());
 
   // The placeholder does not need to be synced.
@@ -168,11 +167,10 @@ TEST_F(EventsQueueTest, ClearsBuffersAfterMaterialization) {
   ScopedPythonContextCapturer capturer(OpName::kEmpty);
   Shape shape(Dimensions{1}, mlir::ElementType::UI8);
 
-  TT_ASSERT_OK_AND_ASSIGN(
-      auto input_ref,
-      TpuMallocAndMemcpyHtoD(/*host_data=*/nullptr, mlir::ElementType::UI8, {1},
-                             /*non_blocking=*/false));
-  ASSERT_TRUE(input_ref.is_materialized());
+  TT_ASSERT_OK_AND_ASSIGN(auto input_ref,
+                          TpuMallocAndMemcpyHtoD(/*host_data=*/nullptr,
+                                                 mlir::ElementType::UI8, {1}));
+  ASSERT_TRUE(input_ref.Synchronize().ok()) << input_ref.Synchronize();
   input_ref.device_buffer_list()->IncrementLiveDataPtrs(input_ref.index());
 
   // Record creation a deferred buffer (with a real op builder).

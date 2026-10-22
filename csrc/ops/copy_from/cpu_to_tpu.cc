@@ -27,6 +27,7 @@
 #include "csrc/common/layout_utils.h"
 #include "csrc/common/to_string.h"
 #include "csrc/eager/device_buffer.h"
+#include "csrc/eager/events_queue.h"
 #include "csrc/eager/tensor_to_buffer.h"
 #include "csrc/pjrt/pjrt_transfer.h"
 #include "torch/headeronly/core/MemoryFormat.h"
@@ -68,7 +69,14 @@ absl::Status CopyCpuToTpu(const at::Tensor& src, const at::Tensor& dest,
   TT_ASSIGN_OR_RETURN(
       DeviceBufferRef tpu_buf,
       TpuMallocAndMemcpyHtoD(effective_src.data_ptr(), tpu_layout.element_type,
-                             tpu_layout.sizes, non_blocking));
+                             tpu_layout.sizes));
+  if (non_blocking) {
+    RecordAsyncHostToDevice(tpu_buf);
+  } else {
+    TT_RETURN_IF_ERROR(AdaptXlaError(
+        tpu_buf.Synchronize(),
+        /* context= */ "failed to copy buffer from host to device"));
+  }
   TT_RETURN_IF_ERROR(AssignBufferToAtTensor(tpu_buf, dest));
   return absl::OkStatus();
 }

@@ -189,7 +189,6 @@ torch_tpu_cc_library(
         "//csrc/common:dtype",
         "//csrc/common:error_utils",
         "//csrc/eager:device_buffer",
-        "//csrc/eager:events_queue",
         "//shims/torch:torch_headers",
         "@com_google_absl//absl/base:nullability",
         "@com_google_absl//absl/log:absl_check",

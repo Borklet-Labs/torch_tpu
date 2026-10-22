@@ -366,6 +366,7 @@ torch_tpu_cc_library(
     deps = [
         ":device_buffer",
         ":eager_mode",
+        ":events_queue",
         ":materialize",
         ":op_dispatcher",
         ":split_traversal",

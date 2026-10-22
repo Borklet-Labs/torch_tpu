@@ -809,9 +809,18 @@ std::vector<PendingSnapshotMaterialization> PrepareSnapshotMaterializations(
 void RecordAsyncHostToDevice(const DeviceBufferRef& device_buffer_ref) {
   ABSL_CHECK_NE(  // CRASH_OK=no device transfers during FX trace
       GetEagerMode(), EagerMode::kInternalCompileFxGraph);
+  // Satisfy TorchTPU error formatting requirements.
+  auto [error_map_promise, error_map_future] = xla::MakePromise<void>();
+  device_buffer_ref.GetReadyFuture().OnReady(
+      [error_map_promise =
+           std::move(error_map_promise)](const absl::Status& status) mutable {
+        error_map_promise.Set(
+            AdaptXlaError(status,
+                          /*context=*/"failed to copy buffer from host to "
+                                      "device"));
+      });
   MarkStreamActive(device_buffer_ref.device_index(),
-                   device_buffer_ref.stream_id(),
-                   device_buffer_ref.GetReadyFuture());
+                   device_buffer_ref.stream_id(), std::move(error_map_future));
 }
 
 void RecordAsyncDeviceToHost(xla::Future<void> to_literal_future) {

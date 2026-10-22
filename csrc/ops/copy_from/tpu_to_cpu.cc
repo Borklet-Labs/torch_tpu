@@ -18,6 +18,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <utility>
 
 #include "ATen/core/ATen_fwd.h"
 #include "ATen/core/TensorBody.h"
@@ -37,6 +38,7 @@
 #include "csrc/common/utils.h"
 #include "csrc/eager/current_stream.h"
 #include "csrc/eager/device_buffer.h"
+#include "csrc/eager/events_queue.h"
 #include "csrc/eager/materialize.h"
 #include "csrc/eager/split_traversal.h"
 #include "csrc/eager/structured_log_buffer.h"
@@ -49,6 +51,7 @@
 #include "torch/headeronly/core/MemoryFormat.h"
 #include "torch/headeronly/core/ScalarType.h"
 #include "tsl/profiler/lib/traceme.h"
+#include "xla/future.h"
 
 namespace torch_tpu {
 
@@ -149,7 +152,12 @@ absl::Status CopyDeviceBufferRefToCpuPtrImpl(
         ConvertTo<at::ScalarType>(src_buffer_ref.element_type()),
         src_buffer_ref.dimensions()));
   }
-  return TpuMemcpyDtoHDirect(src_buffer_ref, dest_ptr, non_blocking);
+  xla::Future<> future = TpuMemcpyDtoHDirect(src_buffer_ref, dest_ptr);
+  if (non_blocking) {
+    RecordAsyncDeviceToHost(std::move(future));
+    return absl::OkStatus();
+  }
+  return future.Await();
 }
 
 // Materializes the base buffer of src, and copies it byte-for-byte into dest's

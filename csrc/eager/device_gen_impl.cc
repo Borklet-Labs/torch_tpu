@@ -51,6 +51,7 @@
 #include "csrc/common/error_utils.h"
 #include "csrc/eager/device_buffer.h"
 #include "csrc/eager/eager_mode.h"
+#include "csrc/eager/events_queue.h"
 #include "csrc/eager/materialize.h"
 #include "csrc/eager/op_dispatcher.h"
 #include "csrc/eager/split_traversal.h"
@@ -150,8 +151,8 @@ absl::StatusOr<at::Tensor> CreateDeviceRngStateTensor(c10::Device device,
   TT_ASSIGN_OR_RETURN(
       auto rng_state_buffer,
       TpuMallocAndMemcpyHtoD(host_data_ptr, mlir::ElementType::UI64, {2},
-                             /*non_blocking=*/true,
                              /*backing_data=*/std::move(host_data_bytes)));
+  RecordAsyncHostToDevice(rng_state_buffer);
   return MakeTensor(std::move(rng_state_buffer), device.index());
 }
 
