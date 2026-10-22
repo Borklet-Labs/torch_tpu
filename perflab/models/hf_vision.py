@@ -117,3 +117,16 @@ def dinov2_base_forward(ctx: context_lib.Context):
       ctx, "facebook/dinov2-base", batch_size=batch_size
   )
   return model, (), inputs
+
+
+@registry_lib.register_benchmark(
+    stepper=step_lib.StepperType.FORWARD,
+    presubmit=registry_lib.PresubmitPolicy.RUN,
+)
+def deit_tiny_forward(ctx: context_lib.Context):
+  """Benchmark factory for DeiT-Ti (facebook/deit-tiny-patch16-224) forward."""
+  batch_size = 1 if ctx.run_scope == context_lib.RunScope.PRESUBMIT else 64
+  model, inputs = _load_hf_vision_model(
+      ctx, "facebook/deit-tiny-patch16-224", batch_size=batch_size
+  )
+  return model, (), inputs
