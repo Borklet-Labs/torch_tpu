@@ -41,6 +41,7 @@ torch_tpu_cc_library(
         "//csrc/ops:op_builder_utils",
         "//csrc/ops:op_names",
         "//csrc/ops:precision_context",
+        "//csrc/ops/index_select",
         "//csrc/ops/macros:kernel",
         "//csrc/ops/resize:resize_aten_kernels",
         "//shims/torch:aten_headers",

@@ -41,6 +41,7 @@
 #include "csrc/eager/device_buffer.h"
 #include "csrc/eager/op_dispatcher.h"
 #include "csrc/eager/tensor_to_buffer.h"
+#include "csrc/ops/index_select/index_select.h"
 #include "csrc/ops/macros/kernel.h"
 #include "csrc/ops/op_builder_utils.h"
 #include "csrc/ops/op_names.h"
@@ -62,6 +63,186 @@ namespace {
 
 bool IsScalar(const at::Tensor& t) {
   return t.dim() == 0 || (t.dim() == 1 && t.size(0) == 1);
+}
+
+bool HasShape1D(const at::Tensor& t, int64_t d0) {
+  return t.dim() == 1 && t.size(0) == d0;
+}
+
+bool HasShape2D(const at::Tensor& t, int64_t d0, int64_t d1) {
+  return t.dim() == 2 && t.size(0) == d0 && t.size(1) == d1;
+}
+
+bool IsRowwiseScales2d2d(const at::Tensor& self, const at::Tensor& mat2,
+                         const at::Tensor& scale_a, const at::Tensor& scale_b,
+                         const std::optional<at::Tensor>& offs) {
+  if (!offs.has_value() || !offs->defined() || offs->dim() != 1) {
+    return false;
+  }
+  const int64_t g = offs->size(0);
+  return HasShape1D(scale_a, g * self.size(0)) &&
+         HasShape1D(scale_b, g * mat2.size(1));
+}
+
+// Returns true if scale_a and scale_b match the rowwise/per-group scale shapes
+// for torch._scaled_grouped_mm:
+//   2D x 3D: scale_a [M], scale_b [G, N]
+//   3D x 2D: scale_a [G, M], scale_b [N]
+//   2D x 2D: scale_a [G * M], scale_b [G * N]
+//   3D x 3D: scale_a [G, M], scale_b [G, N]
+bool IsRowwiseScales(const at::Tensor& self, const at::Tensor& mat2,
+                     const at::Tensor& scale_a, const at::Tensor& scale_b,
+                     const std::optional<at::Tensor>& offs) {
+  if ((self.dim() != 2 && self.dim() != 3) ||
+      (mat2.dim() != 2 && mat2.dim() != 3)) {
+    return false;
+  }
+  const bool a_is_2d = self.dim() == 2;
+  const bool b_is_2d = mat2.dim() == 2;
+  if (a_is_2d && !b_is_2d) {
+    // Case 1: 2D x 3D
+    return HasShape1D(scale_a, self.size(0)) &&
+           HasShape2D(scale_b, mat2.size(0), mat2.size(2));
+  } else if (!a_is_2d && b_is_2d) {
+    // Case 2: 3D x 2D
+    return HasShape2D(scale_a, self.size(0), self.size(1)) &&
+           HasShape1D(scale_b, mat2.size(1));
+  } else if (a_is_2d && b_is_2d) {
+    // Case 3: 2D x 2D
+    return IsRowwiseScales2d2d(self, mat2, scale_a, scale_b, offs);
+  } else {
+    // Case 4: 3D x 3D
+    return HasShape2D(scale_a, self.size(0), self.size(1)) &&
+           HasShape2D(scale_b, mat2.size(0), mat2.size(2));
+  }
+}
+
+// Maps token indices along a ragged dimension of size `ragged_size` to their
+// corresponding group id in [0, G-1] based on cumulative offsets `offs_op` [G].
+// Tokens beyond offs[G-1] clamp to G-1.
+mlir::MlirOp MapRaggedTokensToGroup(mlir::MlirOp offs_op, int64_t ragged_size) {
+  mlir::MlirBuilder& builder = offs_op.getBuilder();
+  const auto offs_type = GetTensorTypeOrDie(offs_op);
+  const int64_t g = offs_type.getShape()[0];
+  const mlir::Type idx_type = offs_type.getElementType();
+
+  auto iota = mlir::stablehlo::Iota(
+      builder,
+      mlir::makeTensorType(builder.getContext(), {ragged_size, g}, idx_type),
+      0);
+  auto offs_row = mlir::stablehlo::Reshape(offs_op, {1, g});
+  auto offs_broadcasted = mlir::stablehlo::BroadcastInDim(
+      mlir::makeTensorType(builder.getContext(), {ragged_size, g}, idx_type),
+      offs_row, {0, 1});
+  auto ge = mlir::stablehlo::Compare(iota, offs_broadcasted,
+                                     mlir::stablehlo::ComparisonDirection::GE);
+  auto ge_i = mlir::stablehlo::ConvertElementType(ge, idx_type);
+  auto zero = MakeScalarConstant(builder, 0, idx_type);
+  auto gid = mlir::stablehlo::Reduce(
+      builder, {ge_i}, {zero},
+      [idx_type](mlir::RegionBuilder& rb) {
+        auto& body_builder = rb.getOpBuilder();
+        mlir::stablehlo::buildReduceBody<mlir::stablehlo::AddOp>(
+            idx_type, rb.getRegion(), body_builder);
+      },
+      {1})[0];
+  auto gmax = MakeConstantLike(gid, g - 1);
+  return mlir::stablehlo::Min(gid, gmax);
+}
+
+// Zeroes out rows (`ragged_dim = 0`) or columns (`ragged_dim = 1`) of 2D
+// `scaled` at indices >= `offs_op[g - 1]`. CHLO RaggedDot leaves tokens past
+// `offs[-1]` unmasked.
+mlir::MlirOp MaskRaggedTailTokens(mlir::MlirOp scaled, mlir::MlirOp offs_op,
+                                  int64_t ragged_dim) {
+  mlir::MlirBuilder& builder = scaled.getBuilder();
+  const auto scaled_type = GetTensorTypeOrDie(scaled);
+  const auto offs_type = GetTensorTypeOrDie(offs_op);
+  const int64_t g = offs_type.getShape()[0];
+  mlir::MlirOp zero =
+      MakeScalarConstant(builder, 0, scaled_type.getElementType());
+  mlir::MlirOp zero_2d = mlir::stablehlo::BroadcastInDim(scaled_type, zero, {});
+  if (g == 0) {
+    return zero_2d;
+  }
+  const mlir::Type idx_type = offs_type.getElementType();
+  const mlir::Type idx_2d_type = mlir::makeTensorType(
+      builder.getContext(), scaled_type.getShape(), idx_type);
+  mlir::MlirOp last_off =
+      mlir::stablehlo::Slice(offs_op, {g - 1}, {g}, {1});  // [1]
+  mlir::MlirOp last_off_scalar = mlir::stablehlo::Reshape(last_off, {});
+  mlir::MlirOp last_off_2d =
+      mlir::stablehlo::BroadcastInDim(idx_2d_type, last_off_scalar, {});
+  mlir::MlirOp iota = mlir::stablehlo::Iota(builder, idx_2d_type, ragged_dim);
+  mlir::MlirOp valid_mask = mlir::stablehlo::Compare(
+      iota, last_off_2d, mlir::stablehlo::ComparisonDirection::LT);
+  return mlir::stablehlo::Select(valid_mask, scaled, zero_2d);
+}
+
+// Lowers rowwise/per-group scale multiplication for grouped_mm result.
+mlir::MlirOp ApplyRowwiseGroupScales(mlir::MlirOp mm_result,
+                                     mlir::MlirOp scale_a, mlir::MlirOp scale_b,
+                                     std::optional<mlir::MlirOp> offs_op,
+                                     bool a_is_2d, bool b_is_2d) {
+  mlir::MlirBuilder& builder = mm_result.getBuilder();
+  const auto mm_type = GetTensorTypeOrDie(mm_result);
+
+  const mlir::Type elem_a = GetTensorTypeOrDie(scale_a).getElementType();
+  const mlir::Type elem_b = GetTensorTypeOrDie(scale_b).getElementType();
+
+  if (a_is_2d && !b_is_2d) {
+    // Case 1 (2D x 3D): mm_result [M, N], scale_a [M], scale_b [G, N]
+    ABSL_CHECK(offs_op.has_value());  // CRASH_OK
+    if (GetTensorTypeOrDie(*offs_op).getShape()[0] == 0) {
+      return MaskRaggedTailTokens(mm_result, *offs_op, /*ragged_dim=*/0);
+    }
+    const int64_t m = mm_type.getShape()[0];
+    const int64_t n = mm_type.getShape()[1];
+    mlir::MlirOp gid = MapRaggedTokensToGroup(*offs_op, m);
+    mlir::MlirOp sb_rows = BuildIndexSelectShlo(scale_b, 0, gid);  // [M, N]
+    mlir::MlirOp sa_reshaped = mlir::stablehlo::Reshape(scale_a, {m, 1});
+    mlir::MlirOp sa_bcast = mlir::stablehlo::BroadcastInDim(
+        mlir::makeTensorType(builder.getContext(), {m, n}, elem_a), sa_reshaped,
+        {0, 1});
+    mlir::MlirOp combined = mlir::stablehlo::Mul(sa_bcast, sb_rows);
+    mlir::MlirOp scaled = mlir::stablehlo::Mul(mm_result, combined);
+    return MaskRaggedTailTokens(scaled, *offs_op, /*ragged_dim=*/0);
+  } else if (!a_is_2d && b_is_2d) {
+    // Case 2 (3D x 2D): mm_result [M, N], scale_a [G, M], scale_b [N]
+    ABSL_CHECK(offs_op.has_value());  // CRASH_OK
+    if (GetTensorTypeOrDie(*offs_op).getShape()[0] == 0) {
+      return MaskRaggedTailTokens(mm_result, *offs_op, /*ragged_dim=*/1);
+    }
+    const int64_t m = mm_type.getShape()[0];
+    const int64_t n = mm_type.getShape()[1];
+    mlir::MlirOp gid = MapRaggedTokensToGroup(*offs_op, n);
+    mlir::MlirOp sa_cols = BuildIndexSelectShlo(scale_a, 0, gid);  // [N, M]
+    mlir::MlirOp sa_rows =
+        mlir::stablehlo::Transpose(sa_cols, {1, 0});  // [M, N]
+    mlir::MlirOp sb_reshaped = mlir::stablehlo::Reshape(scale_b, {1, n});
+    mlir::MlirOp sb_bcast = mlir::stablehlo::BroadcastInDim(
+        mlir::makeTensorType(builder.getContext(), {m, n}, elem_b), sb_reshaped,
+        {0, 1});
+    mlir::MlirOp combined = mlir::stablehlo::Mul(sa_rows, sb_bcast);
+    mlir::MlirOp scaled = mlir::stablehlo::Mul(mm_result, combined);
+    return MaskRaggedTailTokens(scaled, *offs_op, /*ragged_dim=*/1);
+  } else {
+    // Cases 3 & 4 (2D x 2D and 3D x 3D): mm_result [G, M, N],
+    // scale_a [G*M] or [G, M], scale_b [G*N] or [G, N].
+    const int64_t g = mm_type.getShape()[0];
+    const int64_t m = mm_type.getShape()[1];
+    const int64_t n = mm_type.getShape()[2];
+    mlir::MlirOp sa_3d = mlir::stablehlo::Reshape(scale_a, {g, m, 1});
+    mlir::MlirOp sb_3d = mlir::stablehlo::Reshape(scale_b, {g, 1, n});
+    mlir::MlirOp sa_bcast = mlir::stablehlo::BroadcastInDim(
+        mlir::makeTensorType(builder.getContext(), {g, m, n}, elem_a), sa_3d,
+        {0, 1, 2});
+    mlir::MlirOp sb_bcast = mlir::stablehlo::BroadcastInDim(
+        mlir::makeTensorType(builder.getContext(), {g, m, n}, elem_b), sb_3d,
+        {0, 1, 2});
+    mlir::MlirOp combined = mlir::stablehlo::Mul(sa_bcast, sb_bcast);
+    return mlir::stablehlo::Mul(mm_result, combined);
+  }
 }
 
 bool UnwrapTransposed3dMat2(mlir::MlirOp& mat2_op) {
@@ -323,12 +504,31 @@ absl::StatusOr<mlir::MlirOp> BuildGroupedMmShlo(
   return result;
 }
 
+bool IsScalarScaleOp(mlir::MlirOp scale_op) {
+  const auto scale_type = GetTensorTypeOrDie(scale_op);
+  return scale_type.getRank() == 0 ||
+         (scale_type.getRank() == 1 && scale_type.getShape()[0] == 1);
+}
+
+absl::StatusOr<mlir::MlirOp> ApplyScalarGroupScales(mlir::MlirOp mm_result,
+                                                    mlir::MlirOp scale_a_f32,
+                                                    mlir::MlirOp scale_b_f32) {
+  TT_ASSIGN_OR_RETURN(auto broadcasted_scales,
+                      ApplyBroadcastIfNeeded<2>({scale_a_f32, scale_b_f32}));
+  mlir::MlirOp combined_scale =
+      mlir::stablehlo::Mul(broadcasted_scales[0], broadcasted_scales[1]);
+  TT_ASSIGN_OR_RETURN(auto broadcasted_mm_scale,
+                      ApplyBroadcastIfNeeded<2>({mm_result, combined_scale}));
+  return mlir::stablehlo::Mul(broadcasted_mm_scale[0], broadcasted_mm_scale[1]);
+}
+
 absl::StatusOr<mlir::MlirOp> BuildScaledGroupedMmShlo(
     mlir::MlirOp self_op, mlir::MlirOp mat2_op, mlir::MlirOp scale_a,
     mlir::MlirOp scale_b, std::optional<mlir::MlirOp> offs_op,
     std::optional<mlir::MlirOp> bias, std::optional<mlir::MlirOp> scale_result,
     mlir::ElementType out_dtype, mlir::stablehlo::Precision precision) {
   auto self_type = GetTensorTypeOrDie(self_op);
+  auto mat2_type = GetTensorTypeOrDie(mat2_op);
   TT_ASSIGN_OR_RETURN(mlir::ElementType self_elem_type,
                       ConvertTo<mlir::ElementType>(self_type.getElementType()));
 
@@ -348,45 +548,21 @@ absl::StatusOr<mlir::MlirOp> BuildScaledGroupedMmShlo(
                       CastIfNeeded(scale_a, mlir::ElementType::F32));
   TT_ASSIGN_OR_RETURN(auto scale_b_f32,
                       CastIfNeeded(scale_b, mlir::ElementType::F32));
-  // ApplyBroadcastIfNeeded is a no-op for scalar scales but required for
-  // dynamism compliance and future per-group scale support.
-  TT_ASSIGN_OR_RETURN(auto broadcasted_scales,
-                      ApplyBroadcastIfNeeded<2>({scale_a_f32, scale_b_f32}));
-  auto combined_scale =
-      mlir::stablehlo::Mul(broadcasted_scales[0], broadcasted_scales[1]);
 
-  // Currently only scalar scales are supported (enforced by IsScalar checks
-  // in ScaledGroupedMm), so the scalar path always applies. The rank-3 and
-  // error paths are retained for future per-group scaling support.
-  auto broadcast_scale_to_result =
-      [&](mlir::MlirOp scale) -> absl::StatusOr<mlir::MlirOp> {
-    auto result_type = GetTensorTypeOrDie(mm_result);
-    auto scale_type = GetTensorTypeOrDie(scale);
-    if (scale_type.getRank() == 0 ||
-        (scale_type.getRank() == 1 && scale_type.getShape()[0] == 1)) {
-      return scale;
-    }
-    if (result_type.getRank() == 3) {
-      auto bcast_type =
-          mlir::makeTensorType(scale.getContext(), result_type.getShape(),
-                               scale_type.getElementType());
-      std::vector<int64_t> bcast_dims = {0};  // INT_VEC_OK
-      return mlir::stablehlo::BroadcastInDim(bcast_type, scale, bcast_dims);
-    }
-    return TT_ERROR(  // ERROR_COV_INFEASIBLE=IsScalar rejects non-scalar scales
-               absl::StatusCode::kUnimplemented)  // STATUS_CODE_OK
-           << "Per-group scaling for 2D ragged grouped_mm is mathematically "
-           << "unsupported without scatter/gather representation.";
-  };
+  const bool a_is_2d = self_type.getRank() == 2;
+  const bool b_is_2d = mat2_type.getRank() == 2;
+  const bool is_scalar_scale =
+      IsScalarScaleOp(scale_a) && IsScalarScaleOp(scale_b);
 
-  TT_ASSIGN_OR_RETURN(auto rank_expanded_combined_scale,
-                      broadcast_scale_to_result(combined_scale));
-
-  TT_ASSIGN_OR_RETURN(
-      auto broadcasted_mm_scale,
-      ApplyBroadcastIfNeeded<2>({mm_result, rank_expanded_combined_scale}));
-  auto scaled_result =
-      mlir::stablehlo::Mul(broadcasted_mm_scale[0], broadcasted_mm_scale[1]);
+  mlir::MlirOp scaled_result;
+  if (!is_scalar_scale) {
+    scaled_result = ApplyRowwiseGroupScales(mm_result, scale_a_f32, scale_b_f32,
+                                            offs_op, a_is_2d, b_is_2d);
+  } else {
+    TT_ASSIGN_OR_RETURN(
+        scaled_result,
+        ApplyScalarGroupScales(mm_result, scale_a_f32, scale_b_f32));
+  }
 
   if (bias.has_value()) {
     TT_ASSIGN_OR_RETURN(auto bias_f32,
@@ -578,10 +754,16 @@ absl::StatusOr<DeviceBufferRef> ScaledGroupedMm(
   const bool has_scale_result =
       scale_result.has_value() && scale_result->defined();
 
-  TT_RET_CHECK(IsScalar(scale_a), error::kPythonNotImplementedError)
-      << "expected scale_a to be 1D or scalar, got " << scale_a.dim() << "D";
-  TT_RET_CHECK(IsScalar(scale_b), error::kPythonNotImplementedError)
-      << "expected scale_b to be 1D or scalar, got " << scale_b.dim() << "D";
+  TT_ASSIGN_OR_RETURN(auto out_size, GetGroupedMmOutputSize(self, mat2, offs));
+
+  const bool tensorwise = IsScalar(scale_a) && IsScalar(scale_b);
+  const bool rowwise = IsRowwiseScales(self, mat2, scale_a, scale_b, offs);
+  TT_RET_CHECK(tensorwise || rowwise, error::kPythonNotImplementedError)
+      << "expected scale_a and scale_b to both be scalar/size-1 or match "
+         "rowwise shapes for self "
+      << ToString(self.sizes()) << " and mat2 " << ToString(mat2.sizes())
+      << ", got scale_a " << ToString(scale_a.sizes()) << " and scale_b "
+      << ToString(scale_b.sizes());
   if (has_bias) {
     TT_RET_CHECK(IsScalar(*bias), error::kPythonNotImplementedError)
         << "expected bias to be 1D or scalar, got " << bias->dim() << "D";
@@ -591,8 +773,6 @@ absl::StatusOr<DeviceBufferRef> ScaledGroupedMm(
         << "expected scale_result to be 1D or scalar, got "
         << scale_result->dim() << "D";
   }
-
-  TT_ASSIGN_OR_RETURN(auto out_size, GetGroupedMmOutputSize(self, mat2, offs));
 
   const at::ScalarType target_dtype = out_dtype.value_or(self.scalar_type());
   TT_ASSIGN_OR_RETURN(mlir::ElementType output_elem_type,
@@ -646,13 +826,13 @@ absl::Status ValidateScaledGroupedMmV2Inputs(
     const at::ITensorListRef& scale_a, at::IntArrayRef recipe_a,
     at::IntArrayRef swizzle_a, const at::ITensorListRef& scale_b,
     at::IntArrayRef recipe_b, at::IntArrayRef swizzle_b,
-    at::IntArrayRef contraction_dim) {
+    const std::optional<at::Tensor>& offs, at::IntArrayRef contraction_dim) {
 #else
 absl::Status ValidateScaledGroupedMmV2Inputs(
     const at::Tensor& self, const at::Tensor& mat2, at::TensorList scale_a,
     at::IntArrayRef recipe_a, at::IntArrayRef swizzle_a, at::TensorList scale_b,
     at::IntArrayRef recipe_b, at::IntArrayRef swizzle_b,
-    at::IntArrayRef contraction_dim) {
+    const std::optional<at::Tensor>& offs, at::IntArrayRef contraction_dim) {
 #endif
   if (!contraction_dim.empty()) {
     TT_RET_CHECK(contraction_dim.size() == 2, error::kInvalidArgument)
@@ -686,15 +866,31 @@ absl::Status ValidateScaledGroupedMmV2Inputs(
       << "expected recipe_b list to contain exactly 1 recipe, got "
       << recipe_b.size();
 
-  // Only TensorWise for now: ScaledGroupedMm requires scalar scales.
   constexpr auto kTensorWise =
       static_cast<int64_t>(at::blas::ScalingType::TensorWise);
-  TT_RET_CHECK(recipe_a[0] == kTensorWise, error::kPythonNotImplementedError)
-      << "expected scaling recipe for scale_a to be TensorWise, got "
+  constexpr auto kRowWise =
+      static_cast<int64_t>(at::blas::ScalingType::RowWise);
+  TT_RET_CHECK(recipe_a[0] == kTensorWise || recipe_a[0] == kRowWise,
+               error::kPythonNotImplementedError)
+      << "expected scaling recipe for scale_a to be TensorWise or RowWise, got "
       << recipe_a[0];
-  TT_RET_CHECK(recipe_b[0] == kTensorWise, error::kPythonNotImplementedError)
-      << "expected scaling recipe for scale_b to be TensorWise, got "
+  TT_RET_CHECK(recipe_b[0] == kTensorWise || recipe_b[0] == kRowWise,
+               error::kPythonNotImplementedError)
+      << "expected scaling recipe for scale_b to be TensorWise or RowWise, got "
       << recipe_b[0];
+  TT_RET_CHECK(recipe_a[0] == recipe_b[0], error::kPythonNotImplementedError)
+      << "expected recipe_a and recipe_b to match, got " << recipe_a[0]
+      << " and " << recipe_b[0];
+
+  const at::Tensor& s_a = scale_a.front();
+  const at::Tensor& s_b = scale_b.front();
+  const bool scale_matches_recipe =
+      recipe_a[0] == kTensorWise ? (IsScalar(s_a) && IsScalar(s_b))
+                                 : IsRowwiseScales(self, mat2, s_a, s_b, offs);
+  TT_RET_CHECK(scale_matches_recipe, error::kInvalidArgument)
+      << "expected scale_a and scale_b shapes to match scaling recipe "
+      << recipe_a[0] << ", got scale_a " << ToString(s_a.sizes())
+      << " and scale_b " << ToString(s_b.sizes());
 
   // An empty swizzle list means NO_SWIZZLE (the
   // torch.nn.functional.scaled_grouped_mm default).
@@ -739,7 +935,7 @@ absl::StatusOr<DeviceBufferRef> ScaledGroupedMmV2(
 #endif
   TT_RETURN_IF_ERROR(ValidateScaledGroupedMmV2Inputs(
       self, mat2, scale_a, recipe_a, swizzle_a, scale_b, recipe_b, swizzle_b,
-      contraction_dim));
+      offs, contraction_dim));
 
   // Extract the single scale tensor from each list.
   const at::Tensor& s_a = scale_a.front();

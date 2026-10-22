@@ -4057,7 +4057,7 @@ module {
     offs = torch.tensor([1, 2, 3], dtype=torch.int32, device=et.device())
     with et.assert_raises_message(
         RuntimeError,
-        tpu="""scaled_grouped_mm(): expected scale_a to be 1D or scalar, got 2D""",
+        tpu="""scaled_grouped_mm(): expected scale_a and scale_b to both be scalar/size-1 or match rowwise shapes for self [3, 4] and mat2 [3, 4, 8], got scale_a [2, 2] and scale_b []""",
     ):
       torch._scaled_grouped_mm(a, b, scale_a, scale_b, offs=offs)
 
@@ -4070,7 +4070,7 @@ module {
     offs = torch.tensor([1, 2, 3], dtype=torch.int32, device=et.device())
     with et.assert_raises_message(
         RuntimeError,
-        tpu="""scaled_grouped_mm(): expected scale_b to be 1D or scalar, got 2D""",
+        tpu="""scaled_grouped_mm(): expected scale_a and scale_b to both be scalar/size-1 or match rowwise shapes for self [3, 4] and mat2 [3, 4, 8], got scale_a [] and scale_b [2, 2]""",
     ):
       torch._scaled_grouped_mm(a, b, scale_a, scale_b, offs=offs)
 
@@ -4148,12 +4148,31 @@ module {
       (
           "blockwise_recipe",
           {"recipe_a": [2]},  # at::blas::ScalingType::BlockWise1x16.
-          "expected scaling recipe for scale_a to be TensorWise, got 2",
+          (
+              "expected scaling recipe for scale_a to be TensorWise or RowWise,"
+              " got 2"
+          ),
       ),
       (
-          "rowwise_recipe",
-          {"recipe_b": [1]},  # at::blas::ScalingType::RowWise.
-          "expected scaling recipe for scale_b to be TensorWise, got 1",
+          "unsupported_recipe",
+          {"recipe_b": [3]},  # at::blas::ScalingType::BlockWise1x32.
+          (
+              "expected scaling recipe for scale_b to be TensorWise or RowWise,"
+              " got 3"
+          ),
+      ),
+      (
+          "mismatched_recipes",
+          {"recipe_b": [1]},  # RowWise vs TensorWise.
+          "expected recipe_a and recipe_b to match, got 0 and 1",
+      ),
+      (
+          "scale_recipe_mismatch",
+          {"recipe_a": [1], "recipe_b": [1]},  # RowWise with scalar scales.
+          (
+              "expected scale_a and scale_b shapes to match scaling recipe 1,"
+              " got scale_a [] and scale_b []"
+          ),
       ),
       (
           "swizzle_a",
