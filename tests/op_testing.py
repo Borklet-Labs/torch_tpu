@@ -3154,7 +3154,7 @@ class PerfResult:
   def __str__(self) -> str:
     return (
         f"test shard {self.test_shard}, sample {self.sequence_number}:"
-        f" {self.op_name} {_format_dtype(self.dtype)} [{self.subtest_name}]"
+        f" {self.op_name} {_dtype_str(self.dtype)} [{self.subtest_name}]"
         f" {1000*self.duration_sec:.02f}ms"
     )
 
@@ -3178,12 +3178,12 @@ class PerfResult:
     return (
         self.duration_sec,
         self.op_name,
-        _format_dtype(self.dtype),
+        _dtype_str(self.dtype),
         self.subtest_name,
     ) < (
         other.duration_sec,
         other.op_name,
-        _format_dtype(other.dtype),
+        _dtype_str(other.dtype),
         other.subtest_name,
     )
 
@@ -3212,13 +3212,8 @@ class PerfResult:
 _PERF_RESULTS: MutableSequence[PerfResult] = []
 
 
-def _format_dtype(dtype: torch.dtype) -> str:
-  """Prints the dtype without the "torch." prefix."""
-  return str(dtype).removeprefix("torch.")
-
-
 _DTYPE_NAME_TO_DTYPE: Final[Mapping[str, torch.dtype]] = {
-    _format_dtype(dtype): dtype for dtype in ALL_NUMERIC_DTYPES
+    _dtype_str(dtype): dtype for dtype in ALL_NUMERIC_DTYPES
 }
 
 
@@ -3519,8 +3514,6 @@ def _sample_inputs(
     op: OpInfo,
     device: torch.device,
     dtype: torch.dtype,
-    *,
-    set_seed: bool = True,
 ) -> list[SampleInput]:
   """Generates sample inputs for an op on the given device.
 
@@ -3528,21 +3521,13 @@ def _sample_inputs(
     op: The op to generate sample inputs for.
     device: The device to generate sample inputs for.
     dtype: The desired dtype of the sample inputs.
-    set_seed: If True, set the seed for the sample inputs.
 
   Returns:
     A list of sample inputs.
   """
   sample_dtype = quantize_utils.DESIRED_DTYPE_TO_SAMPLE_DTYPE.get(dtype, dtype)
   try:
-    samples = list(
-        op.sample_inputs(
-            device,
-            sample_dtype,
-            requires_grad=False,
-            set_seed=set_seed,
-        )
-    )
+    samples = list(op.sample_inputs(device, sample_dtype, requires_grad=False))
     if sample_dtype != dtype:
       samples = [_convert_sample_dtype(s, sample_dtype, dtype) for s in samples]
     return samples
@@ -3554,12 +3539,7 @@ def _sample_inputs(
     # low-precision quantized dtypes. To avoid (op, dtype) being silently
     # dropped, fall back to CPU and transfer back to the requested device.
     try:
-      cpu_samples = _sample_inputs(
-          op,
-          torch.device("cpu"),
-          dtype,
-          set_seed=set_seed,
-      )
+      cpu_samples = _sample_inputs(op, torch.device("cpu"), dtype)
       print(
           f"WARNING: Generated samples for {op.name}() with dtype {dtype}"
           f" on CPU because generation failed on {device}: {e}",
@@ -3826,7 +3806,7 @@ def _to_plistlib_compatible(ptree: _pytree.PyTree) -> _pytree.PyTree:
       # "b:" prefix.
       if x.dtype in quantize_utils.RAW_BYTE_DTYPES:
         return st.save({
-            f"b:{_format_dtype(x.dtype)}":
+            f"b:{_dtype_str(x.dtype)}":
             # Densify the uint8 view rather than the tensor itself because
             # contiguous() needs a copy kernel the sub-byte dtypes don't have.
             x.view(torch.uint8).contiguous()
@@ -4148,8 +4128,7 @@ class OpOutput:
       output_value: The output of the op, or an Exception if the op failed.
     """
 
-    # In perf mode, golden result computation on CPU is skipped to avoid
-    # executing the CPU code path, resulting in output_value being None.
+    # Keep exceptions and None results (e.g. of ops returning None) as is.
     if output_value is None or isinstance(output_value, Exception):
       self.output_value = output_value
       return
@@ -4442,7 +4421,6 @@ class TorchTpuTestBase(seed_test_utils.RepeatableTest, common_utils.TestCase):
     self.golden_device = (
         torch.device("cuda") if _gen_gpu_golden_mode() else None
     )
-    self.golden_device_type = "gpu"
 
   def set_accuracy_overrides(
       self,
@@ -4495,7 +4473,7 @@ class TorchTpuTestBase(seed_test_utils.RepeatableTest, common_utils.TestCase):
 
   def golden_device_name(self) -> str:
     """Returns the name of the golden device for logging purposes."""
-    return self.golden_device_type.upper()
+    return "GPU"
 
   def assert_devices_equivalent(
       self,
@@ -4699,7 +4677,6 @@ class OpInfoTestBase(TorchTpuTestBase):
       compute_grad: bool = False,
       use_compiled: bool = False,
       verbose: bool = True,
-      set_seed: bool = True,
       out_dtype_override: torch.dtype | None = None,
   ) -> Sequence[tuple[OpInput, OpOutput]]:
     """Returns a list of (input, output) pairs for the op.
@@ -4722,8 +4699,6 @@ class OpInfoTestBase(TorchTpuTestBase):
       use_compiled: If True, use torch.compile to compile the op before running.
       verbose: If True, print a log message when starting to fetch golden
         results.
-      set_seed: If True, reset the RNG seed before generating samples. Set to
-        False to allow RNG to advance across multiple calls.
       out_dtype_override: The data type of the out tensor to use when testing
         out-variant dtype casting.
     """
@@ -4762,12 +4737,7 @@ class OpInfoTestBase(TorchTpuTestBase):
       return samples
 
     # Generate sample inputs on the golden device.
-    golden_samples = _sample_inputs(
-        op,
-        self.golden_device,
-        dtype,
-        set_seed=set_seed,
-    )
+    golden_samples = _sample_inputs(op, self.golden_device, dtype)
     if max_samples is None:
       max_samples = _MAX_SAMPLES_PER_OP_DTYPE.value
     if max_samples >= 0 and len(golden_samples) > max_samples:
@@ -4808,15 +4778,14 @@ class OpInfoTestBase(TorchTpuTestBase):
       )
       golden_output = OpOutput(golden_result)
       pairs.append((golden_input, golden_output))
-      if _gen_gpu_golden_mode():
-        _GOLDEN_GPU_DATA.add(
-            self._testMethodName,
-            variant,
-            dtype,
-            golden_input,
-            golden_output,
-            out_dtype_override=out_dtype_override,
-        )
+      _GOLDEN_GPU_DATA.add(
+          self._testMethodName,
+          variant,
+          dtype,
+          golden_input,
+          golden_output,
+          out_dtype_override=out_dtype_override,
+      )
     return pairs
 
   def _run_op(
@@ -4926,7 +4895,8 @@ class OpInfoTestBase(TorchTpuTestBase):
     op_func = op.inplace_variant if variant == OpVariant.INPLACE else op
     # For operators that lack a native PyTorch CPU kernel (e.g. internal CUDA
     # ops like _thnn_fused_lstm_cell / _thnn_fused_gru_cell), invoke the custom
-    # analytical reference function `.ref` when computing CPU golden results.
+    # analytical reference function `.ref` when computing CPU golden results,
+    # i.e. for sub-byte dtypes in the gen_gpu_golden mode.
     if (
         target_device.type == "cpu"
         and getattr(op, "ref", None) is not None
@@ -4984,7 +4954,7 @@ class OpInfoTestBase(TorchTpuTestBase):
           kwargs=device_op_input.kwargs,
       )
 
-    if use_compiled and device != torch.device("cpu"):
+    if use_compiled:
       if not _compiled_supports_op(op, device_op_input, variant):
         self.skipTest(f"TpuBackend does not support {op_name} currently.")
       logging.getLogger(tt_compile.TpuBackend.__module__).setLevel(
@@ -5653,8 +5623,8 @@ class OpInfoTestBase(TorchTpuTestBase):
       # Applicable_dtypes empty means dtypes explicitly excluded everything. That is intentional, so skipping is expected.
       if not applicable_dtypes:
         self.skipTest(
-            f"All dtypes excluded for {op_name} on {self.golden_device_type}: "
-            f"exclude_dtypes={exclude_dtypes}"
+            f"All dtypes excluded for {op_name} on {self.golden_device_name()}:"
+            f" exclude_dtypes={exclude_dtypes}"
         )
 
       # Test the base variant.
@@ -5811,7 +5781,7 @@ class OpInfoTestBase(TorchTpuTestBase):
       if self._subtests_run == 0:
         self.fail(
             f"do_test_op({op_name!r}) executed 0 subtests for "
-            f"golden_device={self.golden_device_type!r}. "
+            f"golden_device={self.golden_device_name()}. "
             f"Check exclude_dtypes ({exclude_dtypes}) vs candidate dtypes."
         )
 
@@ -5826,7 +5796,9 @@ class TorchTpuVsCpuTestBase(TorchTpuTestBase):
   def setUp(self) -> None:
     super().setUp()
     self.golden_device = torch.device("cpu")
-    self.golden_device_type = "cpu"
+
+  def golden_device_name(self) -> str:
+    return "CPU"
 
 
 def _golden_file_prefix() -> str:
@@ -6131,6 +6103,11 @@ def set_up_test_module() -> None:
       # Measure the ops on the same inputs as the accuracy tests.
       _load_golden_files()
 
+  # The other modes read the recorded GPU golden inputs, so only golden
+  # generation needs the sample generators below.
+  if not _gen_gpu_golden_mode():
+    return
+
   # Operators that sort or select values and can have non-deterministic
   # tie-breaking, leading to flaky gradient tests when inputs have duplicates.
   # We intercept their sample generators to add a small uniqueness ramp.
@@ -6198,51 +6175,3 @@ def tear_down_test_module() -> None:
     _save_perf_data()
   elif _dump_dtype_exclusions_mode():
     _print_dtype_exclusions()
-
-
-def skip_if_torch_tpu_vs_gpu_mode(
-    test_item: Callable[..., None],
-) -> Callable[..., None]:
-  """Decorator that skips a test if on `TORCH_TPU_VS_GPU` mode.
-
-  This is useful for tests where TPU doesn't output the same results as GPU only
-  (i.e. CPU works as expected) on its samples. In other words, these are
-  pontential bugs. If you use this decorator, you should open an issue.
-
-  Args:
-    test_item: The test item to be skipped.
-
-  Returns:
-    The test item, wrapped in a function that skips it if on
-    `TORCH_TPU_VS_GPU` mode.
-  """
-
-  @functools.wraps(test_item)
-  def skip_wrapper(
-      self: unittest.TestCase,  # UNITTEST_OK=Type annotation
-      *args,
-      **kwargs,
-  ) -> None:
-    if _torch_tpu_vs_gpu_mode():
-      self.skipTest("Does not work on TORCH_TPU_VS_GPU mode.")
-    return test_item(self, *args, **kwargs)
-
-  return skip_wrapper
-
-
-def skip_unless_torch_tpu_vs_gpu_mode(
-    test_item: Callable[..., None],
-) -> Callable[..., None]:
-  """Decorator that runs a test only if on `TORCH_TPU_VS_GPU` mode."""
-
-  @functools.wraps(test_item)
-  def skip_wrapper(
-      self: unittest.TestCase,  # UNITTEST_OK=Type annotation
-      *args,
-      **kwargs,
-  ) -> None:
-    if not _torch_tpu_vs_gpu_mode():
-      self.skipTest("Does not work on non-TORCH_TPU_VS_GPU modes.")
-    return test_item(self, *args, **kwargs)
-
-  return skip_wrapper
