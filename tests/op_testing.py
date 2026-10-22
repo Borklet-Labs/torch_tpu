@@ -5263,7 +5263,8 @@ class OpInfoTestBase(TorchTpuTestBase):
       use_compiled: bool,
       out_dtype_override: torch.dtype | None = None,
   ) -> None:
-
+    # do_test_op() already rejects LOOSE, so this never fires today. Keep it to
+    # catch mistakes by future callers.
     if check_value == CheckValueMode.LOOSE:
       raise ValueError(
           "LOOSE mode is the default. Please omit the check_value argument."
@@ -5392,6 +5393,8 @@ class OpInfoTestBase(TorchTpuTestBase):
         the --max_samples_per_op_dtype flag.
     """
 
+    # do_test_op() already rejects LOOSE, so this never fires today. Keep it to
+    # catch mistakes by future callers.
     if check_value == CheckValueMode.LOOSE:
       raise ValueError(
           "LOOSE mode is the default. Please omit the check_value argument."
@@ -5402,10 +5405,6 @@ class OpInfoTestBase(TorchTpuTestBase):
           f"Skipping test for dtype {dtype} as it is not in --dtypes.",
           flush=True,
       )
-      return
-
-    if variant == OpVariant.INPLACE and not op.inplace_variant:
-      print(f"Op {op.name} does not have an inplace variant.", flush=True)
       return
 
     op_name = _op_name_for_logging(op, variant)
@@ -5478,21 +5477,6 @@ class OpInfoTestBase(TorchTpuTestBase):
                   out_dtype_override=out_dtype_override,
               )
           )
-
-  def _resolve_exclude_dtypes(
-      self,
-      exclude_dtypes: Iterable[torch.dtype] | None,
-  ) -> Sequence[torch.dtype]:
-    """Resolves the exclude_dtypes argument."""
-    if _gen_gpu_golden_mode():
-      # During golden generation, we ignore all exclusions (both general and
-      # device-specific) to proactively collect as much golden data as
-      # possible for future compatibility.
-      # Robustness against GPU-unsupported cases is handled by catching
-      # exceptions during sample generation.
-      return ()
-
-    return tuple(exclude_dtypes or ())
 
   def do_test_op(
       self,
@@ -5582,10 +5566,15 @@ class OpInfoTestBase(TorchTpuTestBase):
           "LOOSE mode is the default. Please omit the check_value argument."
       )
 
+    recording = _gen_gpu_golden_mode()
     raw_exclude_dtypes = exclude_dtypes
-    exclude_dtypes = self._resolve_exclude_dtypes(exclude_dtypes)
-    exclude_inplace_dtypes = self._resolve_exclude_dtypes(
-        exclude_inplace_dtypes
+    # During golden generation, we ignore all exclusions (both general and
+    # device-specific) to proactively collect as much golden data as possible
+    # for future compatibility. Robustness against GPU-unsupported cases is
+    # handled by catching exceptions during sample generation.
+    exclude_dtypes = () if recording else tuple(exclude_dtypes or ())
+    exclude_inplace_dtypes = (
+        () if recording else tuple(exclude_inplace_dtypes or ())
     )
     skip_output_indices = skip_output_indices or []
     compute_grad = _COMPUTE_GRAD.value
@@ -5603,10 +5592,10 @@ class OpInfoTestBase(TorchTpuTestBase):
       """
       op = _get_op(op_name, variant_test_name=variant_test_name)
       dtypes_to_test = list(UNQUANTIZED_NUMERIC_DTYPES)
-      if _gen_gpu_golden_mode():
+      if recording:
         # Include quantized numeric dtypes during GPU golden data generation.
         dtypes_to_test.extend(quantize_utils.QUANTIZED_NUMERIC_DTYPES)
-      elif _torch_tpu_vs_gpu_mode() or _perf_mode():
+      else:
         # When reading GPU goldens, include quantized numeric dtypes if the op
         # explicitly declares support for them in its OpInfo.
         dtypes_to_test.extend([
@@ -5681,7 +5670,7 @@ class OpInfoTestBase(TorchTpuTestBase):
           # In golden generation mode, always capture golden data regardless of
           # whether the op is known to fail on TPU.
           return (
-              (_gen_gpu_golden_mode() or test_out_casting)
+              (recording or test_out_casting)
               and cast_pair is not None
               and dtype == cast_pair[0]
           )
