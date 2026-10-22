@@ -19309,6 +19309,49 @@ class OpsGradUnitTest(TorchTpuVsCpuTestBase):
           atol=2e-2,
       )
 
+  @parameterized.product(
+      broadcast_dim=["query", "key"],
+      dtype=[torch.float32, torch.bfloat16],
+  )
+  def test_sdpa_flash_mask_broadcast(self, broadcast_dim: str, dtype):
+    """Tests flash attention with a mask of size 1 along the query or key dim."""
+    batch, heads, seq, head_dim = 2, 2, 256, 64
+    torch.manual_seed(0)
+    q, k, v, grad_out = (
+        torch.randn(batch, heads, seq, head_dim, dtype=dtype) for _ in range(4)
+    )
+    if broadcast_dim == "query":
+      # [B, 1, 1, S] key padding mask.
+      key_lengths = torch.tensor([100, 200])
+      mask = (torch.arange(seq)[None] < key_lengths[:, None])[:, None, None, :]
+    else:
+      # [B, 1, L, 1] additive bias (a bool mask here would mask whole rows).
+      mask = torch.randn(batch, 1, seq, 1, dtype=dtype)
+
+    def compute(device):
+      q_d, k_d, v_d = (
+          t.to(device).detach().requires_grad_(True) for t in (q, k, v)
+      )
+      active_backend = (
+          torch.nn.attention.SDPBackend.MATH
+          if device == "cpu"
+          else torch.nn.attention.SDPBackend.FLASH_ATTENTION
+      )
+      with torch.nn.attention.sdpa_kernel(active_backend):
+        out = torch.nn.functional.scaled_dot_product_attention(
+            q_d, k_d, v_d, attn_mask=mask.to(device)
+        )
+      out.backward(grad_out.to(device))
+      return out, q_d.grad, k_d.grad, v_d.grad
+
+    tol = 5e-2 if dtype == torch.bfloat16 else 2e-2
+    prev_prec = torch.get_float32_matmul_precision()
+    torch.set_float32_matmul_precision("highest")
+    try:
+      self.assert_close_tpu_vs_cpu(compute, rtol=tol, atol=tol)
+    finally:
+      torch.set_float32_matmul_precision(prev_prec)
+
   @parameterized.named_parameters(
       # (q_seq, kv_seq, head_dim) -> expected backend with default settings.
       (

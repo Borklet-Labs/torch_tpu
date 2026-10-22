@@ -25,6 +25,7 @@
 #include "csrc/common/error_utils.h"
 #include "csrc/internal/mosaic/kiln/kiln.h"
 #include "csrc/ops/scaled_dot_product_attention/flash_attention_config.h"
+#include "llvm/ADT/STLExtras.h"
 
 namespace torch_tpu {
 
@@ -108,6 +109,15 @@ kiln::IndexMap KvBlockIndexMap(const FlashAttnConfig& config,
   });
 }
 
+kiln::Shape BiasBlockShape(const FlashAttnConfig& config, const Tiling& tiling,
+                           kiln::DType dtype) {
+  // Pinning the block index to 0 (see AttnBiasSpec) only broadcasts a dim
+  // whose block is 1 wide.
+  const bool q_bcast = llvm::is_contained(config.mask_broadcast_dims, 2);
+  const bool kv_bcast = llvm::is_contained(config.mask_broadcast_dims, 3);
+  return dtype(1, 1, q_bcast ? 1 : tiling.qt, kv_bcast ? 1 : tiling.kt);
+}
+
 std::optional<kiln::InSpec> AttnBiasSpec(const FlashAttnConfig& config,
                                          const Tiling& tiling,
                                          kiln::DType dtype) {
@@ -121,7 +131,20 @@ std::optional<kiln::InSpec> AttnBiasSpec(const FlashAttnConfig& config,
         for (int64_t d : dims) idx[d] = 0;
         return idx;
       });
-  return kiln::InSpec{dtype(1, 1, tiling.qt, tiling.kt), bias_map};
+  return kiln::InSpec{BiasBlockShape(config, tiling, dtype), bias_map};
+}
+
+kiln::Tile LoadBias(kiln::Ref bias_ref, const FlashAttnConfig& config,
+                    int64_t row_offset, int64_t rows, int64_t col_offset,
+                    int64_t cols) {
+  const bool q_bcast = llvm::is_contained(config.mask_broadcast_dims, 2);
+  const bool kv_bcast = llvm::is_contained(config.mask_broadcast_dims, 3);
+  const kiln::SliceDim row_slice =
+      q_bcast ? kiln::Slice(0, 1) : kiln::Slice(row_offset, rows);
+  const kiln::SliceDim col_slice =
+      kv_bcast ? kiln::Slice(0, 1) : kiln::Slice(col_offset, cols);
+  kiln::Tile bias(bias_ref(0, 0, row_slice, col_slice));
+  return bias.AsType(kiln::f32).BroadcastTo({rows, cols});
 }
 
 bool NeedsPadMask(const FlashAttnConfig& config, const Tiling& tiling) {
@@ -198,8 +221,9 @@ kiln::Tile ComputeLogits(kiln::Tile q, kiln::Tile k,
       kiln::Dot(q, k, {.transpose_rhs = true, .precision = config.precision}) *
       (config.scale * kLog2e);
   if (bias_ref) {
-    kiln::Tile bias((*bias_ref)(0, 0));
-    s += bias.AsType(kiln::f32) * kLog2e;
+    kiln::Tile bias = LoadBias(*bias_ref, config, /*row_offset=*/0, tiling.qt,
+                               /*col_offset=*/0, tiling.kt);
+    s += bias * kLog2e;
   }
   return ApplyStructuredMask(s, row_block, col_block, config, tiling);
 }

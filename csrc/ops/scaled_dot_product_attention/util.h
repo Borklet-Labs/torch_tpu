@@ -51,6 +51,12 @@ std::optional<kiln::ScalarPrefetchSpec> DropoutSeedSpec(
 kiln::IndexMap KvBlockIndexMap(const FlashAttnConfig& config,
                                const Tiling& tiling);
 
+// Block shape of the bias: (1, 1, qt, kt), with 1 instead of qt / kt along a
+// broadcast query / key dim (e.g. a [B, 1, 1, S] key padding mask), which
+// `LoadBias` then broadcasts in VMEM.
+kiln::Shape BiasBlockShape(const FlashAttnConfig& config, const Tiling& tiling,
+                           kiln::DType dtype);
+
 // Input spec for the user attention bias on a (batch, q_head, q_block,
 // kv_block) grid, honouring `config.mask_broadcast_dims`. Returns
 // `std::nullopt` when there is no bias.
@@ -61,6 +67,12 @@ std::optional<kiln::InSpec> AttnBiasSpec(const FlashAttnConfig& config,
 // -----------------------------------------------------------------------------
 // Kernel body helpers
 // -----------------------------------------------------------------------------
+
+// Loads the f32 (rows, cols) bias sub-block at (row_offset, col_offset),
+// broadcasting a size-1 query / key dim (see `BiasBlockShape`).
+kiln::Tile LoadBias(kiln::Ref bias_ref, const FlashAttnConfig& config,
+                    int64_t row_offset, int64_t rows, int64_t col_offset,
+                    int64_t cols);
 
 // Whether any sequence boundary masking is required for the given
 // configuration.

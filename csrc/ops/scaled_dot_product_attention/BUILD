@@ -145,6 +145,7 @@ torch_tpu_cc_library(
         "//csrc/common:error_utils",
         "//csrc/internal/mosaic/kiln",
         "@com_google_absl//absl/status",
+        "@llvm-project//llvm:Support",
     ],
 )
 

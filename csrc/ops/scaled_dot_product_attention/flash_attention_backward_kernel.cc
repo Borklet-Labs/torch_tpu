@@ -203,7 +203,7 @@ absl::StatusOr<kiln::Kernel> CreateBackwardDkvKernel(
           for (int64_t d : dims) idx[d] = 0;
           return idx;
         });
-    bias_spec = kiln::InSpec{dt(1, 1, qt, kt), bias_map};
+    bias_spec = kiln::InSpec{BiasBlockShape(config, tiling, dt), bias_map};
   }
 
   // ---------------------------------------------------------------------------

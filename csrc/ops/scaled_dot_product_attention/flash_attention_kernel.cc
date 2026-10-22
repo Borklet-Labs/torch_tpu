@@ -119,9 +119,9 @@ SoftmaxState UpdateSoftmaxState(const FlashAttnConfig& config,
       kiln::Dot(q, k, {.transpose_rhs = true, .precision = config.precision}) *
       (config.scale * kLog2e);
   if (args.bias_ref) {
-    kiln::Tile bias((*args.bias_ref)(0, 0, kiln::Slice(row_offset, rows),
-                                     kiln::Slice(col_offset, kc)));
-    s += bias.AsType(kiln::f32) * kLog2e;
+    kiln::Tile bias =
+        LoadBias(*args.bias_ref, config, row_offset, rows, col_offset, kc);
+    s += bias * kLog2e;
   }
   if (apply_masking) {
     s = ApplyStructuredMask(s, args.qi, args.ki, config, tiling, row_offset,
