@@ -4572,6 +4572,15 @@ def _compiled_supports_op(
       "max.out",
       "min.out",
   ]
+  if utils.get_torch_version() < (2, 15, 0):
+    # Before PyTorch 2.15, Dynamo does not treat a torch.return_types `out=`
+    # (e.g. cummax's (values, indices)) as a tuple, so it misses the graph
+    # break for resizing the zero-element out tensors. Tracing then fails with
+    # "list index out of range" (or leaves the wrong out shape for 0-D inputs).
+    compiled_deny_list += [
+        "cummax.out",
+        "cummin.out",
+    ]
 
   key = op.name
   if variant == OpVariant.OUT:
