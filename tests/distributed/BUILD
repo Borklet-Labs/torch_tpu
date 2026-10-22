@@ -169,6 +169,8 @@ torch_tpu_py_test(
         ["exclusive"],
         [],
     ) + [
+        # Every test runs SparseCore programs; TPU v5e has no SparseCore.
+        "fails-on-tpu-v5",
         "noasan",  # TODO(b/497035517): fix the test in asan mode.
         "nomsan",  # TODO(b/497035517): fix the test in msan mode.
         "notsan",  # TODO(b/497035517): fix the test in tsan mode.
