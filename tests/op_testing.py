@@ -3532,7 +3532,7 @@ def _sample_inputs(
       samples = [_convert_sample_dtype(s, sample_dtype, dtype) for s in samples]
     return samples
   except Exception as e:  # pylint: disable=broad-except
-    if device.type == "cpu" or not _gen_gpu_golden_mode():
+    if device.type == "cpu":
       raise
 
     # CUDA kernels have gaps in supporting certain dtypes, especially the
@@ -4848,11 +4848,7 @@ class OpInfoTestBase(TorchTpuTestBase):
 
     op_name = _op_name_for_logging(op, variant)
     target_device = device
-    if (
-        _gen_gpu_golden_mode()
-        and dtype in quantize_utils.SUB_BYTE_DTYPES
-        and device.type == "cuda"
-    ):
+    if dtype in quantize_utils.SUB_BYTE_DTYPES and device.type == "cuda":
       # Sub-byte dtypes do not have CUDA copy or cast kernels. Invoking an
       # operator or .to("cuda") on a sub-byte tensor causes a CUDA assertion
       # failure, putting CUDA context into an unrecoverable error state.
@@ -5086,7 +5082,7 @@ class OpInfoTestBase(TorchTpuTestBase):
         )
     except Exception as e:  # pylint: disable=broad-except
       # The op raised an exception.
-      if _gen_gpu_golden_mode():
+      if device.type != "tpu":
         print(
             f"Exception caught during golden generation for {op_name}: {e}",
             flush=True,
