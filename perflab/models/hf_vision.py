@@ -90,3 +90,17 @@ def vit_base_forward(ctx: context_lib.Context):
       ctx, "google/vit-base-patch16-224", batch_size=batch_size
   )
   return model, (), inputs
+
+
+@registry_lib.register_benchmark(
+    stepper=step_lib.StepperType.FORWARD,
+    presubmit=registry_lib.PresubmitPolicy.RUN,
+)
+def siglip_base_forward(ctx: context_lib.Context):
+  """Benchmark factory for SigLIP-B/16 (google/siglip-base-patch16-224) forward."""
+  batch_size = 1 if ctx.run_scope == context_lib.RunScope.PRESUBMIT else 32
+  # 64 is the maximum number of SigLIP text positions.
+  model, inputs = _load_hf_vision_model(
+      ctx, "google/siglip-base-patch16-224", batch_size=batch_size, seq_len=64
+  )
+  return model, (), inputs
