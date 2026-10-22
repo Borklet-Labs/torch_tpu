@@ -77,3 +77,16 @@ def clip_base_forward(ctx: context_lib.Context):
       ctx, "openai/clip-vit-base-patch16", batch_size=batch_size, seq_len=77
   )
   return model, (), inputs
+
+
+@registry_lib.register_benchmark(
+    stepper=step_lib.StepperType.FORWARD,
+    presubmit=registry_lib.PresubmitPolicy.RUN,
+)
+def vit_base_forward(ctx: context_lib.Context):
+  """Benchmark factory for ViT-B/16 (google/vit-base-patch16-224) forward."""
+  batch_size = 1 if ctx.run_scope == context_lib.RunScope.PRESUBMIT else 32
+  model, inputs = _load_hf_vision_model(
+      ctx, "google/vit-base-patch16-224", batch_size=batch_size
+  )
+  return model, (), inputs
