@@ -104,3 +104,22 @@ def bart_base_forward(ctx: context_lib.Context):
       ctx, "facebook/bart-base", batch_size=batch_size, seq_len=seq_len
   )
   return model, (), inputs
+
+
+@registry_lib.register_benchmark(
+    stepper=step_lib.StepperType.FORWARD,
+    presubmit=registry_lib.PresubmitPolicy.RUN,
+)
+def t5_base_forward(ctx: context_lib.Context):
+  """Benchmark factory for T5-Base (google-t5/t5-base) forward."""
+  if ctx.run_scope == context_lib.RunScope.PRESUBMIT:
+    batch_size = 1
+    seq_len = 128
+  else:
+    batch_size = 8
+    # T5 was pretrained on 512-token inputs.
+    seq_len = 512
+  model, inputs = _load_hf_text_model(
+      ctx, "google-t5/t5-base", batch_size=batch_size, seq_len=seq_len
+  )
+  return model, (), inputs
