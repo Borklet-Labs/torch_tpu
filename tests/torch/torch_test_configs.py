@@ -147,6 +147,24 @@ TEST_EXCLUSIONS: Final[Mapping[str, Mapping[str, str | Sequence[str]]]] = {
             "test_pooling_zero_stride",
         ],
     },
+    "test_accelerator": {
+        "TestAccelerator": [
+            "test_memory_stats",
+            "test_multi_device_context_manager",
+            "test_multi_device_stream_context_manager",
+        ],
+    },
+    "test_ao_sparsity": {
+        "TestBaseStructuredSparsifierDevice": [
+            "test_prune_linear_activation_linear",
+            "test_prune_linear_bias_linear",
+        ],
+    },
+    "test_bmm_outer_product": {
+        "TestBmmOuterProductDevice": [
+            "test_non_current_device_outer_product",
+        ],
+    },
     "test_custom_ops": {
         "TestCustomOpTesting": [
             "test_autograd_registration_check_autograd_kernel",
@@ -156,12 +174,83 @@ TEST_EXCLUSIONS: Final[Mapping[str, Mapping[str, str | Sequence[str]]]] = {
             "test_incorrect_schema_mutation",
         ],
     },
+    "test_dlpack": {
+        "TestTorchDlPack": [
+            "test_dlpack_exchange_api",
+            "test_dlpack_exchange_api_sliced",
+            "test_dlpack_protocol_conversion",
+            "test_from_dlpack",
+            "test_from_dlpack_dtype",
+            "test_from_dlpack_noncontinguous",
+        ],
+    },
+    "test_expanded_weights": {
+        "TestExpandedWeightFunctional": [
+            "test_cnn_model_mean",
+            "test_cnn_model_sum",
+            "test_embedding_model",
+            "test_expanded_weight_forward",
+            "test_group_norm_model",
+            "test_instance_norm_model",
+            "test_layer_norm_model",
+        ],
+        "TestExpandedWeightModule": [
+            "test_module",
+        ],
+    },
     "test_fake_tensor": {
         "PropagateRealTensorsTestFakeTensorDevice": "*",
         "TestFakeTensorDevice": [
             "test_aten_set_data_multi_device",
             "test_conv_mismatched_device_error_matches_eager",
             "test_index_put_error",
+        ],
+    },
+    "test_indexing": {
+        "NumpyTestsDevice": [
+            "test_boolean_assignment_value_mismatch",
+            "test_boolean_list_indexing",
+            "test_broaderrors_indexing",
+            "test_trivial_fancy_out_of_bounds",
+        ],
+        "TestIndexingDevice": [
+            "test_advancedindex",
+            "test_bool_indices",
+            "test_byte_mask",
+            "test_byte_mask_accumulate",
+            "test_byte_tensor_assignment",
+            "test_empty_ndim_index",
+            "test_gather_take_along_dim_cross_device",
+            "test_index_add_excluded_dtypes",
+            "test_index_add_smem_stage_alignment_regression",
+            "test_index_copy",
+            "test_index_copy_deterministic",
+            "test_index_copy_scalars",
+            "test_index_fill",
+            "test_index_put_accumulate_large_tensor",
+            "test_index_put_deterministic_with_optional_tensors",
+            "test_index_put_src_datatype",
+            "test_index_reduce",
+            "test_index_select",
+            "test_multi_dimensional_bool_mask",
+            "test_multi_dimensional_bool_mask_assignment",
+            "test_multiple_bool_indices",
+            "test_multiple_byte_mask",
+            "test_setitem_uint64_above_int64_max",
+            "test_take_along_dim",
+        ],
+    },
+    "test_legacy_vmap": {
+        "TestVmapBatchedGradientLegacyDevice": [
+            "test_median",
+            "test_sigmoid",
+            "test_trace",
+        ],
+    },
+    "test_matmul_cuda": {
+        "TestMatmulCuda": [
+            "test_grouped_gemm_doubly_non_contiguous",
+            "test_grouped_gemm_rocm_ck_flag",
         ],
     },
     "test_out_dtype_op": {

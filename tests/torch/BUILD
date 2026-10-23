@@ -652,13 +652,11 @@ torch_tpu_torch_test(
 
 torch_tpu_torch_test(
     name = "accelerator_test",
-    notap = "b/563402379",  # NOTAP_OK=torch tests
     torch_test_module = "test_accelerator",
 )
 
 torch_tpu_torch_test(
     name = "ao_sparsity_test",
-    notap = "b/563402379",  # NOTAP_OK=torch tests
     torch_test_module = "test_ao_sparsity",
 )
 
@@ -682,7 +680,6 @@ torch_tpu_torch_test(
 
 torch_tpu_torch_test(
     name = "bmm_outer_product_test",
-    notap = "b/563402379",  # NOTAP_OK=torch tests
     torch_test_module = "test_bmm_outer_product",
 )
 
@@ -726,7 +723,6 @@ torch_tpu_torch_test(
 
 torch_tpu_torch_test(
     name = "dlpack_test",
-    notap = "b/563402379",  # NOTAP_OK=torch tests
     torch_test_module = "test_dlpack",
 )
 
@@ -737,7 +733,7 @@ torch_tpu_torch_test(
 
 torch_tpu_torch_test(
     name = "expanded_weights_test",
-    notap = "b/563402379",  # NOTAP_OK=torch tests
+    shard_count = 2,
     torch_test_module = "test_expanded_weights",
 )
 
@@ -766,14 +762,12 @@ torch_tpu_torch_test(
 
 torch_tpu_torch_test(
     name = "indexing_test",
-    notap = "b/563402379",  # NOTAP_OK=torch tests
-    shard_count = 4,
+    shard_count = 8,
     torch_test_module = "test_indexing",
 )
 
 torch_tpu_torch_test(
     name = "legacy_vmap_test",
-    notap = "b/563402379",  # NOTAP_OK=torch tests
     torch_test_module = "test_legacy_vmap",
 )
 
@@ -798,7 +792,6 @@ torch_tpu_torch_test(
 
 torch_tpu_torch_test(
     name = "matmul_cuda_test",
-    notap = "b/563402379",  # NOTAP_OK=torch tests
     torch_test_module = "test_matmul_cuda",
 )
 
