@@ -5444,6 +5444,41 @@ class OpInfoTestBase(TorchTpuTestBase):
           **accuracy_override,  # pyrefly: ignore[bad-argument-type]
       )
 
+  def _run_on_tpu(
+      self,
+      subtest_name: str,
+      op: OpInfo,
+      variant: OpVariant,
+      dtype: torch.dtype,
+      *,
+      golden_input: OpInput,
+      **run_op_kwargs: Any,
+  ) -> tuple[Any, OpInput]:
+    """Returns the TorchTPU result and printable input for the golden input."""
+    print(f">>>> Testing {subtest_name} ...", flush=True)
+    torch_tpu_printable_input = _to_torch_tpu_printable_input(golden_input)
+    torch_tpu_printable_input.name = subtest_name
+    if _PRINT_OP_INPUTS.value > 0:
+      # TODO b/486861095
+      if op.name != "normal":
+        print_reproducer(subtest_name, op, golden_input, variant)
+      print_op_input(torch_tpu_printable_input, data=_PRINT_OP_INPUTS.value > 1)
+
+    compiler_options = (
+        {"xla_optimization_level": _OPT_LEVEL.value} if _OPT_LEVEL.value else {}
+    )
+    with compiler.custom_compiler_options(compiler_options):
+      torch_tpu_result = self._run_op(
+          op=op,
+          variant=variant,
+          dtype=dtype,
+          op_input=golden_input,
+          device=torch.device("tpu"),
+          subtest_name=subtest_name,
+          **run_op_kwargs,
+      )
+    return torch_tpu_result, torch_tpu_printable_input
+
   def _sub_test(
       self,
       subtest_name: str,
@@ -5453,14 +5488,12 @@ class OpInfoTestBase(TorchTpuTestBase):
       *,
       golden_input: OpInput,
       golden_result: Any,
-      check_device: bool,
-      check_dynamism: bool,
       check_value: CheckValueMode | Iterable[CheckValueMode] | None,
       check_dtype: bool,
       skip_output_indices: Sequence[int],
       compute_grad: bool,
       use_compiled: bool,
-      out_dtype_override: torch.dtype | None = None,
+      **run_op_kwargs: Any,
   ) -> None:
     # do_test_op() already rejects LOOSE, so this never fires today. Keep it to
     # catch mistakes by future callers.
@@ -5470,7 +5503,6 @@ class OpInfoTestBase(TorchTpuTestBase):
       )
 
     op_name = _op_name_for_logging(op, variant)
-    print(f">>>> Testing {subtest_name} ...", flush=True)
     if _IGNORE_ACCURACY_OVERRIDES.value:
       accuracy_overrides = {}
     elif compute_grad:
@@ -5486,33 +5518,16 @@ class OpInfoTestBase(TorchTpuTestBase):
           dtype, {}
       )
 
-    torch_tpu_printable_input = _to_torch_tpu_printable_input(golden_input)
-    torch_tpu_printable_input.name = subtest_name
-    if _PRINT_OP_INPUTS.value > 0:
-      # TODO b/486861095
-      if op.name != "normal":
-        print_reproducer(subtest_name, op, golden_input, variant)
-      print_op_input(torch_tpu_printable_input, data=_PRINT_OP_INPUTS.value > 1)
-
-    opt_level = _OPT_LEVEL.value
-    if opt_level:
-      compiler_options = {"xla_optimization_level": opt_level}
-    else:
-      compiler_options = {}
-    with compiler.custom_compiler_options(compiler_options):
-      torch_tpu_result = self._run_op(
-          op=op,
-          variant=variant,
-          dtype=dtype,
-          op_input=golden_input,
-          compute_grad=compute_grad,
-          use_compiled=use_compiled,
-          device=torch.device("tpu"),
-          subtest_name=subtest_name,
-          check_device=check_device,
-          check_dynamism=check_dynamism,
-          out_dtype_override=out_dtype_override,
-      )
+    torch_tpu_result, torch_tpu_printable_input = self._run_on_tpu(
+        subtest_name,
+        op,
+        variant,
+        dtype,
+        golden_input=golden_input,
+        compute_grad=compute_grad,
+        use_compiled=use_compiled,
+        **run_op_kwargs,
+    )
     if _perf_mode():
       # In perf mode, performance measurement is completed during self._run_op
       # on TPU above. Return early to avoid running behavioral and failure
