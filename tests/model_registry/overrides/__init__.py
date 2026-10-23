@@ -14,7 +14,13 @@
 
 """Declarative ModelOverride registry.
 
-Importing this package imports every domain module below; each one
+A `ModelOverride` is a declarative per-model-family record that captures
+model-specific behavior when generic rules are insufficient—for example,
+overriding modality resolution or providing a custom `input_builder` when
+`forward` inputs cannot be synthesized from signature reflection alone.
+
+Overrides are grouped by domain (`audio`, `diffusion`, `multimodal`, `text`,
+`vision`); importing this package imports every domain module below so each one
 registers its overrides once `overrides/registry.py` lands.
 """
 

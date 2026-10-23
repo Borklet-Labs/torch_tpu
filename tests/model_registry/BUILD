@@ -19,7 +19,11 @@
 # //src/torch_tpu/google/tests/module_registry:no_cpp_deps_test).
 
 load("//build_files:build_defs.bzl", "torch_tpu_package_end")
-load("//shims/py_rules:pytype.bzl", "pytype_strict_library")
+load(
+    "//shims/py_rules:pytype.bzl",
+    "pytype_strict_library",
+    pytype_strict_test = "pytype_strict_contrib_test",
+)
 
 package(
     default_applicable_licenses = ["//:license"],
@@ -60,6 +64,11 @@ pytype_strict_library(
     # PY_LIBRARY_OK=Must stay free of torch_tpu C++ deps.
     name = "core_inputs",
     srcs = ["core/inputs.py"],
+    deps = [
+        ":core_config_utils",
+        ":types",
+        "//shims/torch:pytorch",
+    ],
 )
 
 pytype_strict_library(
@@ -160,6 +169,19 @@ pytype_strict_library(
     # PY_LIBRARY_OK=Must stay free of torch_tpu C++ deps.
     name = "overrides_vision",
     srcs = ["overrides/vision.py"],
+)
+
+pytype_strict_test(
+    name = "inputs_test",
+    srcs = ["inputs_test.py"],
+    deps = [
+        ":core_inputs",
+        ":types",
+        "//shims/absl_py/testing:absltest",
+        "//shims/absl_py/testing:parameterized",
+        "//shims/torch:pytorch",
+        "@pypi//transformers",
+    ],
 )
 
 # This must be the last line in the BUILD file.
