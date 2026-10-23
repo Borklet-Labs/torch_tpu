@@ -995,88 +995,118 @@ TEST(KilnTest, ScalarMismatchedTypesFail) {
   ASSERT_THAT(kernel, IsOk());
 }
 
-TEST(KilnTest, DTypeProperties) {
-  EXPECT_TRUE(f32.IsFloat());
-  EXPECT_FALSE(f32.IsInt());
-  EXPECT_FALSE(f32.IsSigned());
-  EXPECT_FALSE(f32.IsUnsigned());
-  EXPECT_TRUE(f32.IsIntOrFloat());
-  EXPECT_EQ(f32.GetIntOrFloatBitWidth(), 32);
-  EXPECT_EQ(f32.ToString(), "f32");
+struct DTypePropertiesTestCase {
+  DType dtype;
+  DType::Kind expected_kind;
+  unsigned int bit_width;
+  std::string_view str;
+  bool is_bool = false;
+  bool is_float = false;
+  bool is_signed = false;
+  bool is_unsigned = false;
+
+  template <typename Sink>
+  friend void AbslStringify(Sink& sink, const DTypePropertiesTestCase& tc) {
+    sink.Append(tc.str);
+  }
+};
+
+using DTypePropertiesTest = testing::TestWithParam<DTypePropertiesTestCase>;
+
+TEST_P(DTypePropertiesTest, HasExpectedTypePredicatesAndFormatting) {
+  const DTypePropertiesTestCase& tc = GetParam();
+  const bool is_int = tc.is_signed || tc.is_unsigned;
+
+  EXPECT_EQ(tc.dtype.kind(), tc.expected_kind);
+  EXPECT_EQ(tc.dtype, DType(tc.expected_kind));
+  EXPECT_EQ(tc.dtype.IsBool(), tc.is_bool);
+  EXPECT_EQ(tc.dtype.IsFloat(), tc.is_float);
+  EXPECT_EQ(tc.dtype.IsSigned(), tc.is_signed);
+  EXPECT_EQ(tc.dtype.IsUnsigned(), tc.is_unsigned);
+  EXPECT_EQ(tc.dtype.IsInt(), is_int);
+  EXPECT_EQ(tc.dtype.IsIntOrFloat(), tc.is_float || is_int);
+  EXPECT_EQ(tc.dtype.GetIntOrFloatBitWidth(), tc.bit_width);
+  EXPECT_EQ(tc.dtype.IsInteger(tc.bit_width), is_int);
+  EXPECT_FALSE(tc.dtype.IsInteger(tc.bit_width + 8));
+  EXPECT_EQ(tc.dtype.IsSignedInteger(tc.bit_width), tc.is_signed);
+  EXPECT_FALSE(tc.dtype.IsSignedInteger(tc.bit_width + 8));
+  EXPECT_EQ(tc.dtype.IsUnsignedInteger(tc.bit_width), tc.is_unsigned);
+  EXPECT_FALSE(tc.dtype.IsUnsignedInteger(tc.bit_width + 8));
+  EXPECT_EQ(tc.dtype.ToString(), tc.str);
+  EXPECT_EQ(absl::StrCat(tc.dtype), tc.str);
 
   std::ostringstream ss;
-  ss << f32;
-  EXPECT_EQ(ss.str(), "f32");
-
-  EXPECT_FALSE(i32.IsFloat());
-  EXPECT_TRUE(i32.IsInt());
-  EXPECT_TRUE(i32.IsSigned());
-  EXPECT_FALSE(i32.IsUnsigned());
-  EXPECT_TRUE(i32.IsIntOrFloat());
-  EXPECT_TRUE(i32.IsInteger(32));
-  EXPECT_TRUE(i32.IsSignedInteger(32));
-  EXPECT_FALSE(i32.IsUnsignedInteger(32));
-  EXPECT_FALSE(i32.IsInteger(64));
-  EXPECT_EQ(i32.GetIntOrFloatBitWidth(), 32);
-  EXPECT_EQ(i32.ToString(), "i32");
-
-  EXPECT_FALSE(u8.IsFloat());
-  EXPECT_TRUE(u8.IsInt());
-  EXPECT_FALSE(u8.IsSigned());
-  EXPECT_TRUE(u8.IsUnsigned());
-  EXPECT_TRUE(u8.IsUnsignedInteger(8));
-  EXPECT_FALSE(u8.IsSignedInteger(8));
-  EXPECT_EQ(u8.GetIntOrFloatBitWidth(), 8);
-  EXPECT_EQ(u8.ToString(), "u8");
-
-  EXPECT_TRUE(u16.IsUnsigned());
-  EXPECT_TRUE(u16.IsUnsignedInteger(16));
-  EXPECT_EQ(u16.GetIntOrFloatBitWidth(), 16);
-  EXPECT_EQ(u16.ToString(), "u16");
-
-  EXPECT_FALSE(u32.IsFloat());
-  EXPECT_TRUE(u32.IsInt());
-  EXPECT_FALSE(u32.IsSigned());
-  EXPECT_TRUE(u32.IsUnsigned());
-  EXPECT_TRUE(u32.IsUnsignedInteger(32));
-  EXPECT_FALSE(u32.IsSignedInteger(32));
-  EXPECT_EQ(u32.GetIntOrFloatBitWidth(), 32);
-  EXPECT_EQ(u32.ToString(), "u32");
-
-  EXPECT_TRUE(u64.IsUnsigned());
-  EXPECT_TRUE(u64.IsUnsignedInteger(64));
-  EXPECT_EQ(u64.GetIntOrFloatBitWidth(), 64);
-  EXPECT_EQ(u64.ToString(), "u64");
-
-  EXPECT_EQ(f32, DType(DType::Kind::kF32));
-  EXPECT_NE(f32, i32);
-  EXPECT_NE(u32, i32);
+  ss << tc.dtype;
+  EXPECT_EQ(ss.str(), tc.str);
 }
 
-TEST(KilnTest, TypeHelpersInsideKernel) {
-  absl::StatusOr<Kernel> kernel = CreateKernel(
-      GridSpec{.name = "type_helpers", .grid = {1}}, InSpec{f32(32, 128)},
-      OutSpec{f32(32, 128)}, [&](Ref in, Ref out) {
-        EXPECT_TRUE(bool_.IsBool());
-        EXPECT_FALSE(bool_.IsIntOrFloat());
-        EXPECT_TRUE(i8.IsSignedInteger(8));
-        EXPECT_TRUE(i16.IsSignedInteger(16));
-        EXPECT_TRUE(i32.IsSignedInteger(32));
-        EXPECT_TRUE(i64.IsSignedInteger(64));
-        EXPECT_TRUE(u8.IsUnsignedInteger(8));
-        EXPECT_TRUE(u16.IsUnsignedInteger(16));
-        EXPECT_TRUE(u32.IsUnsignedInteger(32));
-        EXPECT_TRUE(u64.IsUnsignedInteger(64));
-        EXPECT_TRUE(f16.IsFloat());
-        EXPECT_EQ(f16.GetIntOrFloatBitWidth(), 16);
-        EXPECT_TRUE(f32.IsFloat());
-        EXPECT_EQ(f32.GetIntOrFloatBitWidth(), 32);
-        EXPECT_TRUE(bf16.IsFloat());
-        EXPECT_EQ(bf16.GetIntOrFloatBitWidth(), 16);
-        out = Tile(in);
-      });
-  ASSERT_THAT(kernel, IsOk());
-}
+INSTANTIATE_TEST_SUITE_P(
+    DTypePropertiesTests, DTypePropertiesTest,
+    testing::ValuesIn<DTypePropertiesTestCase>({
+        {.dtype = bool_,
+         .expected_kind = DType::Kind::kBool,
+         .bit_width = 1,
+         .str = "bool",
+         .is_bool = true},
+        {.dtype = i8,
+         .expected_kind = DType::Kind::kI8,
+         .bit_width = 8,
+         .str = "i8",
+         .is_signed = true},
+        {.dtype = i16,
+         .expected_kind = DType::Kind::kI16,
+         .bit_width = 16,
+         .str = "i16",
+         .is_signed = true},
+        {.dtype = i32,
+         .expected_kind = DType::Kind::kI32,
+         .bit_width = 32,
+         .str = "i32",
+         .is_signed = true},
+        {.dtype = i64,
+         .expected_kind = DType::Kind::kI64,
+         .bit_width = 64,
+         .str = "i64",
+         .is_signed = true},
+        {.dtype = u8,
+         .expected_kind = DType::Kind::kU8,
+         .bit_width = 8,
+         .str = "u8",
+         .is_unsigned = true},
+        {.dtype = u16,
+         .expected_kind = DType::Kind::kU16,
+         .bit_width = 16,
+         .str = "u16",
+         .is_unsigned = true},
+        {.dtype = u32,
+         .expected_kind = DType::Kind::kU32,
+         .bit_width = 32,
+         .str = "u32",
+         .is_unsigned = true},
+        {.dtype = u64,
+         .expected_kind = DType::Kind::kU64,
+         .bit_width = 64,
+         .str = "u64",
+         .is_unsigned = true},
+        {.dtype = f16,
+         .expected_kind = DType::Kind::kF16,
+         .bit_width = 16,
+         .str = "f16",
+         .is_float = true},
+        {.dtype = bf16,
+         .expected_kind = DType::Kind::kBF16,
+         .bit_width = 16,
+         .str = "bf16",
+         .is_float = true},
+        {.dtype = f32,
+         .expected_kind = DType::Kind::kF32,
+         .bit_width = 32,
+         .str = "f32",
+         .is_float = true},
+    }),
+    [](const testing::TestParamInfo<DTypePropertiesTest::ParamType>& info) {
+      return std::string(info.param.str);
+    });
 
 TEST(KilnTest, DTypeInTileAndScalarOps) {
   absl::StatusOr<Kernel> kernel = CreateKernel(
