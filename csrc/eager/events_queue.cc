@@ -180,7 +180,9 @@ class StreamState {
     absl::Status cancel_status = TT_ERROR(error::kCancelled)
                                  << "stream state was cleared";
     for (auto& snapshot_request : snapshot_requests_) {
-      snapshot_request->snapshot_promise.Set(cancel_status);
+      if (snapshot_request->snapshot_promise.has_value()) {
+        snapshot_request->snapshot_promise->Set(cancel_status);
+      }
     }
     snapshot_requests_.clear();
 
@@ -274,7 +276,8 @@ class StreamState {
     std::optional<ExecutionTask> execution_task;
     // The promise which can be used to provide the snapshot once is it
     // defined.
-    xla::Promise<std::shared_ptr<EventSnapshot>> snapshot_promise;
+    std::optional<xla::Promise<std::shared_ptr<EventSnapshot>>>
+        snapshot_promise;
   };
 
   void RecordDeferredOpCreated(
@@ -333,13 +336,21 @@ class StreamState {
     return true;
   }
 
+  void InsertGraphBreak(std::vector<SharedDeviceBufferList> must_materialize,
+                        MaterializationReason reason, GraphSplitMode mode,
+                        EagerMode eager_mode) {
+    absl::MutexLock lock(mu_);
+    InsertGraphBreakLocked(std::move(must_materialize), reason, mode,
+                           eager_mode,
+                           /*execution_task=*/std::nullopt);
+  }
+
   xla::Future<std::shared_ptr<EventSnapshot>> RequestEventSnapshot(
       std::vector<SharedDeviceBufferList> must_materialize,
       MaterializationReason reason, GraphSplitMode mode, EagerMode eager_mode) {
     absl::MutexLock lock(mu_);
     return RequestEventSnapshotLocked(std::move(must_materialize), reason, mode,
-                                      eager_mode,
-                                      /*execution_task=*/std::nullopt);
+                                      eager_mode);
   }
 
   std::vector<absl_nonnull std::unique_ptr<EventSnapshotRequest>>
@@ -380,23 +391,24 @@ class StreamState {
   void RecordCompiledExecutionTask(ExecutionTask&& execution_task,
                                    EagerMode eager_mode) {
     absl::MutexLock lock(mu_);
-    RequestEventSnapshotLocked(
+    InsertGraphBreakLocked(
         /*must_materialize=*/{}, MaterializationReason::kCompileModeExecution,
         GraphSplitMode::kSplitGraph, eager_mode, std::move(execution_task));
   }
 
-  xla::Future<void> JoinFutures() {
+  void WriteBackMaterializationFutures(
+      std::vector<xla::Future<void>>&& futures) {
     absl::MutexLock lock(mu_);
-    if (!futures_.empty()) {
-      PruneCompletedFutures(futures_);
+    for (auto& request : snapshot_requests_) {
+      if (request->snapshot_promise.has_value()) {
+        request->futures.insert(request->futures.end(),
+                                std::make_move_iterator(futures.begin()),
+                                std::make_move_iterator(futures.end()));
+        return;
+      }
     }
-    if (futures_.empty()) {
-      return xla::Future<void>(absl::OkStatus());
-    }
-    auto join_future = xla::JoinFutures(futures_);
-    futures_.clear();
-    futures_.push_back(join_future);  // intentional copy
-    return join_future;
+    futures_.insert(futures_.end(), std::make_move_iterator(futures.begin()),
+                    std::make_move_iterator(futures.end()));
   }
 
  private:
@@ -431,8 +443,7 @@ class StreamState {
   void RecordRepeatedHashPattern(int64_t repetition_length)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
 
-  // Common helper for RequestEventSnapshot and RecordCompiledExecutionTask.
-  xla::Future<std::shared_ptr<EventSnapshot>> RequestEventSnapshotLocked(
+  void InsertGraphBreakLocked(
       std::vector<SharedDeviceBufferList> must_materialize,
       MaterializationReason reason, GraphSplitMode mode, EagerMode eager_mode,
       std::optional<ExecutionTask> execution_task)
@@ -454,13 +465,27 @@ class StreamState {
     // The queue is now empty; reset the repetition index to start scanning for
     // an existing or new pattern.
     repetition_i_ = 0;
+    snapshot_requests_.push_back(std::make_unique<EventSnapshotRequest>(
+        std::vector<xla::Future<void>>(), std::move(must_execute),
+        std::move(must_materialize),
+        MaterializationSettings(reason, mode, eager_mode),
+        std::move(execution_task), std::nullopt));
+  }
 
-    // Check if this event snapshot is a no-op.
-    // An event snapshot is meaningful only if it has futures to wait on,
-    // must-execute deferred ops, must_materialize deferred constants (which
-    // bypass insertion into deferred_ops_), or a compiled execution task.
-    PruneCompletedFutures(futures_);
-    if (!must_materialize.empty()) {
+  void PopNoOpSnapshotRequestsLocked(bool& is_no_op)
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+    while (is_no_op && !snapshot_requests_.empty()) {
+      auto& previous_request = *snapshot_requests_.back();
+      if (previous_request.snapshot_promise.has_value()) {
+        // There has been no meaningful work since the last snapshot.
+        // We can reuse the previous snapshot promise.
+        return;
+      }
+      if (previous_request.execution_task.has_value() ||
+          !previous_request.must_execute.empty()) {
+        is_no_op = false;
+        return;
+      }
       // This may potentially miss nodes that are "must materialize" but already
       // being handled by a previous snapshot.
       // Ex: foo(); record_event(); bar(); record_event(must_materialize=[foo])
@@ -468,28 +493,50 @@ class StreamState {
       // is_materializing()==false when the second snapshot is created.
       // If there is a placeholder here (which should never happen) it is
       // retained for downstream error propagation.
-      std::erase_if(must_materialize, [](const SharedDeviceBufferList& node) {
-        return node->is_materializing();
-      });
-    }
-
-    const bool is_no_op = !execution_task.has_value() && futures_.empty() &&
-                          must_execute.empty() && must_materialize.empty();
-    if (is_no_op) {
-      // We don't need to create a new fulfillable promise.
-      if (!snapshot_requests_.empty()) {
-        // When the most-recent real snapshot is created, the caller of this
-        // function will receive a shared_ptr copy of it.
-        return snapshot_requests_.back()->snapshot_promise.future<>();
+      if (std::any_of(previous_request.must_materialize.begin(),
+                      previous_request.must_materialize.end(),
+                      [](const SharedDeviceBufferList& node) {
+                        return !node->is_materializing();
+                      })) {
+        is_no_op = false;
+        return;
       }
-
-      // The previous snapshot has been pulled by the materialization worker
-      // and is in-progress. We need to allocate a new EventSnapshot but don't
-      // need to add to the chain.
-      return xla::Future<std::shared_ptr<EventSnapshot>>(
-          std::make_shared<EventSnapshot>(
-              last_snapshot_future_));  // intentional copy
+      snapshot_requests_.pop_back();
     }
+  }
+
+  xla::Future<std::shared_ptr<EventSnapshot>> RequestEventSnapshotLocked(
+      std::vector<SharedDeviceBufferList> must_materialize,
+      MaterializationReason reason, GraphSplitMode mode, EagerMode eager_mode)
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+    InsertGraphBreakLocked(std::move(must_materialize), reason, mode,
+                           eager_mode, std::nullopt);
+    // Check if this event snapshot is a no-op.
+    // An event snapshot is meaningful only if it has futures to wait on,
+    // must-execute deferred ops, must_materialize deferred constants (which
+    // bypass insertion into deferred_ops_), or a compiled execution task which
+    // have been recorded since the last snapshot request.
+    PruneCompletedFutures(futures_);
+    bool is_no_op = futures_.empty();
+    PopNoOpSnapshotRequestsLocked(is_no_op);
+
+    if (is_no_op && !snapshot_requests_.empty() &&
+        snapshot_requests_.back()->snapshot_promise.has_value()) {
+      // When the most-recent real snapshot is created, the caller of this
+      // function will receive a shared_ptr copy of it.
+      return snapshot_requests_.back()->snapshot_promise->future<>();
+    }
+
+    if (snapshot_requests_.empty() ||
+        snapshot_requests_.back()->snapshot_promise.has_value()) {
+      snapshot_requests_.push_back(std::make_unique<EventSnapshotRequest>(
+          std::vector<xla::Future<void>>(),
+          std::vector<SharedDeviceBufferList>(),
+          std::vector<SharedDeviceBufferList>(),
+          MaterializationSettings(reason, mode, eager_mode), std::nullopt,
+          std::nullopt));
+    }
+    auto& current_request = *snapshot_requests_.back();
 
     // Explanation: synchronizing the last EventSnapshot should also await all
     // prior EventSnapshots. We achieve this by chaining a promise/future;
@@ -511,13 +558,11 @@ class StreamState {
       futures_.push_back(std::move(last_snapshot_future_));
     }
     last_snapshot_future_ = std::move(chaining_future);
-
-    snapshot_requests_.push_back(std::make_unique<EventSnapshotRequest>(
-        std::move(futures_), std::move(must_execute),
-        std::move(must_materialize),
-        MaterializationSettings(reason, mode, eager_mode),
-        std::move(execution_task), std::move(snapshot_promise)));
-
+    current_request.futures.insert(current_request.futures.end(),
+                                   std::make_move_iterator(futures_.begin()),
+                                   std::make_move_iterator(futures_.end()));
+    futures_.clear();
+    current_request.snapshot_promise = std::move(snapshot_promise);
     return snapshot_future;
   }
 
@@ -996,6 +1041,24 @@ CompilationMode GetCompilationMode(EagerMode eager_mode) {
     case EagerMode::kDeferNeverAndLaunchBlocking:
       return CompilationMode::kFastCompile;
   };
+}
+
+void InsertGraphBreak(c10::DeviceIndex device_index, c10::StreamId stream_id,
+                      std::vector<SharedDeviceBufferList> must_materialize,
+                      MaterializationReason reason, GraphSplitMode mode) {
+  auto eager_mode = GetEagerMode();
+  if (eager_mode == EagerMode::kInternalCompileFxGraph) {
+    return;
+  }
+  GetOrCreateStreamState(device_index, stream_id)
+      ->InsertGraphBreak(std::move(must_materialize), reason, mode, eager_mode);
+}
+
+void WriteBackMaterializationFutures(c10::DeviceIndex device_index,
+                                     c10::StreamId stream_id,
+                                     std::vector<xla::Future<void>>&& futures) {
+  GetOrCreateStreamState(device_index, stream_id)
+      ->WriteBackMaterializationFutures(std::move(futures));
 }
 
 }  // namespace torch_tpu

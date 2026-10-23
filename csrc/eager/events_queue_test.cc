@@ -119,7 +119,9 @@ TEST_F(EventsQueueTest, IgnoresPlaceholderBuffers) {
   EventSnapshot::Record(device_index, stream_id, {});
   auto pending_snapshots =
       PrepareSnapshotMaterializations(device_index, stream_id);
-  EXPECT_TRUE(pending_snapshots.empty());
+  ASSERT_EQ(pending_snapshots.size(), 1);
+  EXPECT_TRUE(pending_snapshots[0].must_execute.empty());
+  EXPECT_TRUE(pending_snapshots[0].must_materialize.empty());
 }
 
 TEST_F(EventsQueueTest, SyncIgnoresEmptyBuffers) {
@@ -138,7 +140,9 @@ TEST_F(EventsQueueTest, SyncIgnoresEmptyBuffers) {
   auto pending_snapshots =
       PrepareSnapshotMaterializations(device_index, stream_id);
 
-  EXPECT_TRUE(pending_snapshots.empty());
+  ASSERT_EQ(pending_snapshots.size(), 1);
+  EXPECT_TRUE(pending_snapshots[0].must_execute.empty());
+  EXPECT_TRUE(pending_snapshots[0].must_materialize.empty());
 }
 
 TEST_F(EventsQueueTest, IgnoresAlreadyMaterializedBuffers) {
@@ -159,7 +163,9 @@ TEST_F(EventsQueueTest, IgnoresAlreadyMaterializedBuffers) {
   auto pending_snapshots =
       PrepareSnapshotMaterializations(device_index, stream_id);
 
-  EXPECT_TRUE(pending_snapshots.empty());
+  ASSERT_EQ(pending_snapshots.size(), 1);
+  EXPECT_TRUE(pending_snapshots[0].must_execute.empty());
+  EXPECT_TRUE(pending_snapshots[0].must_materialize.empty());
 }
 
 TEST_F(EventsQueueTest, ClearsBuffersAfterMaterialization) {
@@ -204,7 +210,9 @@ TEST_F(EventsQueueTest, ClearsBuffersAfterMaterialization) {
   auto pending_snapshots =
       PrepareSnapshotMaterializations(device_index, stream_id);
 
-  EXPECT_TRUE(pending_snapshots.empty());
+  ASSERT_EQ(pending_snapshots.size(), 1);
+  EXPECT_TRUE(pending_snapshots[0].must_execute.empty());
+  EXPECT_TRUE(pending_snapshots[0].must_materialize.empty());
 }
 
 TEST_F(EventsQueueTest, StopsTrackingAfterClearEventsQueue) {
@@ -228,7 +236,9 @@ TEST_F(EventsQueueTest, StopsTrackingAfterClearEventsQueue) {
   auto pending_snapshots1 =
       PrepareSnapshotMaterializations(device_index, stream_id);
 
-  EXPECT_TRUE(pending_snapshots1.empty());
+  ASSERT_EQ(pending_snapshots1.size(), 1);
+  EXPECT_TRUE(pending_snapshots1[0].must_execute.empty());
+  EXPECT_TRUE(pending_snapshots1[0].must_materialize.empty());
 
   // Create a second data pointer to the same buffer.
   ref.device_buffer_list()->IncrementLiveDataPtrs(ref.index());
@@ -238,7 +248,9 @@ TEST_F(EventsQueueTest, StopsTrackingAfterClearEventsQueue) {
   // to be materialized.
   auto pending_snapshots2 =
       PrepareSnapshotMaterializations(device_index, stream_id);
-  EXPECT_TRUE(pending_snapshots2.empty());
+  ASSERT_EQ(pending_snapshots2.size(), 1);
+  EXPECT_TRUE(pending_snapshots2[0].must_execute.empty());
+  EXPECT_TRUE(pending_snapshots2[0].must_materialize.empty());
 }
 
 TEST_F(EventsQueueTest, DeadCodeEliminated) {
@@ -567,7 +579,9 @@ TEST_F(EventsQueueTest, PrunesSuccessfulCompletedFutures) {
   EventSnapshot::Record(device_index, stream_id);
   auto pending_snapshots =
       PrepareSnapshotMaterializations(device_index, stream_id);
-  EXPECT_TRUE(pending_snapshots.empty());
+  ASSERT_EQ(pending_snapshots.size(), 1);
+  EXPECT_TRUE(pending_snapshots[0].must_execute.empty());
+  EXPECT_TRUE(pending_snapshots[0].must_materialize.empty());
 }
 
 TEST_F(EventsQueueTest, StreamMustMaterializeEmptyTensors) {
@@ -592,7 +606,9 @@ TEST_F(EventsQueueTest, StreamMustMaterializeEmptyTensors) {
   auto pending_snapshots =
       PrepareSnapshotMaterializations(device_index, stream_id);
 
-  EXPECT_TRUE(pending_snapshots.empty());
+  ASSERT_EQ(pending_snapshots.size(), 1);
+  EXPECT_TRUE(pending_snapshots[0].must_execute.empty());
+  EXPECT_TRUE(pending_snapshots[0].must_materialize.empty());
 
   // A stream materialization that must materialize the empty tensor does so.
   EventSnapshot::Record(device_index, stream_id, {empty_list});
@@ -625,7 +641,9 @@ TEST_F(EventsQueueTest, DeviceMustMaterializeEmptyTensors) {
   RecordDeviceSnapshots(device_index);
   auto pending_snapshots =
       PrepareSnapshotMaterializations(device_index, stream_id);
-  EXPECT_TRUE(pending_snapshots.empty());
+  ASSERT_EQ(pending_snapshots.size(), 1);
+  EXPECT_TRUE(pending_snapshots[0].must_execute.empty());
+  EXPECT_TRUE(pending_snapshots[0].must_materialize.empty());
 
   // A device materialization that must materialize the empty tensor does so.
   RecordDeviceSnapshots(device_index, {empty_list});

@@ -80,6 +80,7 @@ def run_uncoordinated_op_stream_test():
   """Repro test for interaction of SPMD safe and repeated ops heuristic."""
   rank = dist.get_rank()
   x = torch.ones((2, 2), device="cpu").to("tpu")
+  torch.accelerator.synchronize()
 
   with execution_mode.set_eager_mode(EagerMode.DEFER_AND_FUSE):
     for i in range(10):

@@ -73,6 +73,7 @@ namespace {
 struct MaterializationTask {
   c10::DeviceIndex device_index;
   c10::StreamId stream_id;
+  xla::Promise<void> started_promise;
 };
 
 // Checks that all must_materialize nodes in the task have started
@@ -127,6 +128,8 @@ std::vector<ExecutionTask> ProcessMaterializationTask(
                << "stream " << task.stream_id << " on device "
                << task.device_index;
   std::vector<ExecutionTask> flattened_execution_tasks;
+  std::vector<xla::Future<void>> materialization_futures;
+  absl::Status materialization_error = absl::OkStatus();
   auto snapshots_to_materialize =
       PrepareSnapshotMaterializations(task.device_index, task.stream_id);
   for (auto& snapshot_to_materialize : snapshots_to_materialize) {
@@ -149,23 +152,35 @@ std::vector<ExecutionTask> ProcessMaterializationTask(
       tasks_result.first_error =
           VerifyMustMaterialize(snapshot_to_materialize.must_materialize);
     }
+    for (const auto& execution_task : tasks_result.execution_tasks) {
+      AppendExecutionTaskReadyFutures(execution_task, materialization_futures);
+    }
+    if (snapshot_to_materialize.execution_task.has_value()) {
+      AppendExecutionTaskReadyFutures(*snapshot_to_materialize.execution_task,
+                                      materialization_futures);
+      tasks_result.execution_tasks.push_back(
+          std::move(*snapshot_to_materialize.execution_task));
+    }
+    if (!tasks_result.first_error.ok() && materialization_error.ok()) {
+      materialization_error = tasks_result.first_error;
+    }
+    materialization_futures.insert(
+        materialization_futures.end(),
+        std::make_move_iterator(snapshot_to_materialize.futures.begin()),
+        std::make_move_iterator(snapshot_to_materialize.futures.end()));
 
-    if (!tasks_result.first_error.ok()) {
-      snapshot_to_materialize.snapshot_promise.Set(tasks_result.first_error);
-    } else {
-      for (const auto& execution_task : tasks_result.execution_tasks) {
-        AppendExecutionTaskReadyFutures(execution_task,
-                                        snapshot_to_materialize.futures);
+    if (snapshot_to_materialize.snapshot_promise.has_value()) {
+      auto& snapshot_promise = *snapshot_to_materialize.snapshot_promise;
+      if (materialization_error.ok()) {
+        auto snapshot = std::make_shared<EventSnapshot>(
+            xla::JoinFutures(materialization_futures));
+        snapshot_promise.Set(std::move(snapshot));
+      } else {
+        snapshot_promise.Set(
+            std::make_shared<EventSnapshot>(materialization_error));
+        materialization_error = absl::OkStatus();
       }
-      if (snapshot_to_materialize.execution_task.has_value()) {
-        AppendExecutionTaskReadyFutures(*snapshot_to_materialize.execution_task,
-                                        snapshot_to_materialize.futures);
-        tasks_result.execution_tasks.push_back(
-            std::move(*snapshot_to_materialize.execution_task));
-      }
-      snapshot_to_materialize.snapshot_promise.Set(
-          std::make_shared<EventSnapshot>(
-              xla::JoinFutures(snapshot_to_materialize.futures)));
+      materialization_futures.clear();
     }
 
     if (flattened_execution_tasks.empty()) {
@@ -183,6 +198,16 @@ std::vector<ExecutionTask> ProcessMaterializationTask(
                << " ExecutionTasks for stream " << task.stream_id
                << " on device " << task.device_index << " to satisfy "
                << snapshots_to_materialize.size() << " snapshots";
+
+  if (!materialization_error.ok()) {
+    materialization_futures.push_back(xla::Future<void>(materialization_error));
+  }
+  if (!materialization_futures.empty()) {
+    WriteBackMaterializationFutures(task.device_index, task.stream_id,
+                                    std::move(materialization_futures));
+  }
+
+  task.started_promise.Set(materialization_error);
   return flattened_execution_tasks;
 }
 
@@ -253,15 +278,39 @@ class MaterializationWorker {
     }
   }
 
-  void EnqueueStream(const c10::DeviceIndex device_index,
-                     const c10::StreamId stream_id) {
+  xla::Future<void> EnqueueStream(const c10::DeviceIndex device_index,
+                                  const c10::StreamId stream_id) {
     ABSL_VLOG(1) << "[MaterializationWorker] Enqueuing stream " << stream_id
                  << " on device " << device_index << " for materialization";
     absl::MutexLock lock(materialize_mu_);
     // Check shutdown state after acquiring the lock to avoid a time-of-check/
     // time-of-use error relative to Shutdown().
-    if (shutdown_.load()) return;
-    materialize_tasks_.push(MaterializationTask(device_index, stream_id));
+    if (shutdown_.load()) {
+      return xla::Future<void>(
+          TT_ERROR(error::kCancelled)  // ERROR_COV_INFEASIBLE=unreachable
+                                       // from Python
+          << "MaterializationWorker is shutting down");
+    }
+
+    // If multiple materialization tasks are pushed to the same stream
+    // back-to-back, the materialization worker will process them all together
+    // and set a single started future.
+    if (!materialize_tasks_.empty()) {
+      // Known to not be a shutdown sentinel because of the check above.
+      auto& prev_task =
+          std::get<MaterializationTask>(materialize_tasks_.back());
+      if (prev_task.device_index == device_index &&
+          prev_task.stream_id == stream_id) {
+        return prev_task.started_promise.future();
+      }
+    }
+
+    // Either the queue is empty or the previous task is on a different stream.
+    // Create a new materialization task with a new start promise/future.
+    auto [started_promise, started_future] = xla::MakePromise<void>();
+    materialize_tasks_.push(MaterializationTask(device_index, stream_id,
+                                                std::move(started_promise)));
+    return started_future;
   }
 
   // Dequeues a materialization task or a shutdown signal.
@@ -512,6 +561,7 @@ absl::Status MaterializeSpan(absl::Span<const T> items,
     c10::StreamId stream_id;
   };
   absl::InlinedVector<DeviceStreamId, 2> device_stream_ids;
+  std::vector<xla::Future<void>> started_futures;
   for (const T& item : items) {
     const SharedDeviceBufferList& node = GetDeviceBufferList(item);
     // Check if this node needs to be materialized.
@@ -544,20 +594,19 @@ absl::Status MaterializeSpan(absl::Span<const T> items,
     TT_ASSIGN_OR_RETURN(
         std::vector<SharedDeviceBufferList> nodes_on_stream,
         GetUniqueDeferredNodes(items, node->device_index(), node->stream_id()));
-    auto future = EventSnapshot::Record(node->device_index(), node->stream_id(),
-                                        std::move(nodes_on_stream), reason,
-                                        graph_split_mode);
-    GetMaterializationWorker().EnqueueStream(node->device_index(),
-                                             node->stream_id());
-
+    InsertGraphBreak(node->device_index(), node->stream_id(),
+                     std::move(nodes_on_stream), reason, graph_split_mode);
+    xla::Future<void> started_future = GetMaterializationWorker().EnqueueStream(
+        node->device_index(), node->stream_id());
     if (block_mode == MaterializationBlockMode::kBlockUntilStarted) {
-      // Make sure that the stream task was enqueued successfully.
-      TT_RETURN_IF_ERROR(future.Await());
+      started_futures.push_back(started_future);
     }
-
     // Record that we enqueued this stream.
     device_stream_ids.push_back(DeviceStreamId{
         .device_index = node->device_index(), .stream_id = node->stream_id()});
+  }
+  if (block_mode == MaterializationBlockMode::kBlockUntilStarted) {
+    TT_RETURN_IF_ERROR(xla::JoinFutures(started_futures).Await());
   }
   return absl::OkStatus();
 }
@@ -690,6 +739,24 @@ xla::Future<std::shared_ptr<EventSnapshot>> MaterializeCurrentStream(
   const auto [device_index, stream_id] = GetCurrentDeviceStreamId();
   return MaterializeStream(device_index, stream_id, reason, mode,
                            must_materialize);
+}
+
+void EagerlyExecuteStream(
+    c10::DeviceIndex device_index, c10::StreamId stream_id,
+    MaterializationReason reason, GraphSplitMode mode,
+    absl::Span<const SharedDeviceBufferList> must_materialize) {
+  InsertGraphBreak(device_index, stream_id,
+                   std::vector<SharedDeviceBufferList>(must_materialize.begin(),
+                                                       must_materialize.end()),
+                   reason, mode);
+  GetMaterializationWorker().EnqueueStream(device_index, stream_id);
+}
+
+void EagerlyExecuteCurrentStream(
+    MaterializationReason reason, GraphSplitMode mode,
+    absl::Span<const SharedDeviceBufferList> must_materialize) {
+  const auto [device_index, stream_id] = GetCurrentDeviceStreamId();
+  EagerlyExecuteStream(device_index, stream_id, reason, mode, must_materialize);
 }
 
 }  // namespace torch_tpu

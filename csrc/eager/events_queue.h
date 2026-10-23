@@ -179,7 +179,7 @@ struct PendingSnapshotMaterialization {
   std::vector<xla::Future<void>> futures;
   // When the execution for the traversals has started, an EventSnapshot will be
   // created and provided through this promise.
-  xla::Promise<std::shared_ptr<EventSnapshot>> snapshot_promise;
+  std::optional<xla::Promise<std::shared_ptr<EventSnapshot>>> snapshot_promise;
 };
 
 // Returns a list of execution nodes and up to one ExecutionTask that, if
@@ -194,6 +194,14 @@ std::vector<PendingSnapshotMaterialization> PrepareSnapshotMaterializations(
 // Sets the core pinning mode for the given stream.
 void SetCorePinningMode(c10::DeviceIndex device_index, c10::StreamId stream_id,
                         CorePinningMode pinned);
+
+void InsertGraphBreak(c10::DeviceIndex device_index, c10::StreamId stream_id,
+                      std::vector<SharedDeviceBufferList> must_materialize,
+                      MaterializationReason reason, GraphSplitMode mode);
+
+void WriteBackMaterializationFutures(c10::DeviceIndex device_index,
+                                     c10::StreamId stream_id,
+                                     std::vector<xla::Future<void>>&& futures);
 
 }  // namespace torch_tpu
 

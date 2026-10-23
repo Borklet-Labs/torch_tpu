@@ -756,13 +756,18 @@ xla::Future<void> DeviceBufferRef::GetReadyFuture() const {
     }
     auto ready_future = buffer_or.value()->GetReadyFuture();
     if (ready_future.IsKnownReady()) {
+      absl::Status status = ready_future.Await();
+      if (!status.ok()) {
+        return AdaptXlaError(status, "buffer failed to execute");
+      }
       return ready_future;
     }
     auto [promise, future] = xla::MakePromise<void>();
-    ready_future.OnReady(
-        [promise = std::move(promise),
-         device_buffer_list = device_buffer_list_](
-            absl::Status status) mutable { promise.Set(status); });
+    ready_future.OnReady([promise = std::move(promise),
+                          device_buffer_list = device_buffer_list_](
+                             const absl::Status& status) mutable {
+      promise.Set(AdaptXlaError(status, "buffer failed to execute"));
+    });
     return future;
   }
 
@@ -786,8 +791,8 @@ xla::Future<void> DeviceBufferRef::GetReadyFuture() const {
     auto ready_future = buffer_or.value()->GetReadyFuture();
     ready_future.OnReady([promise = std::move(promise),
                           device_buffer_list = std::move(device_buffer_list)](
-                             absl::Status status) mutable {
-      promise.Set(std::move(status));
+                             const absl::Status& status) mutable {
+      promise.Set(AdaptXlaError(status, "buffer failed to execute"));
       device_buffer_list.reset();
     });
   });

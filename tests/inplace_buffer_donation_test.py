@@ -328,8 +328,7 @@ class InplaceBufferDonationTest(seed_test_utils.RepeatableTest):
         num_elements = 4 * 1024 * 1024
         x = torch.ones(num_elements, dtype=torch.float32, device=self.device)
         y = torch.zeros(num_elements, dtype=torch.float32, device=self.device)
-        _ = x.cpu()
-        _ = y.cpu()
+        torch.accelerator.synchronize()
 
         # Warmup to compile and initialize runtime buffers
         torch.add(x, y, out=y)
@@ -408,21 +407,28 @@ class InplaceBufferDonationTest(seed_test_utils.RepeatableTest):
     with execution_mode.set_eager_mode(EagerMode.DEFER_NEVER):
       num_elements = 4 * 1024 * 1024  # 16 MB
       x = torch.zeros(num_elements, dtype=torch.float32, device=self.device)
-      _ = x.cpu()
+      torch.accelerator.synchronize()
+      print(f"mem 0: {torch.accelerator.memory_allocated()}")
+      print(f"peak mem 0: {torch.accelerator.max_memory_allocated()}")
 
       # Warmup to compile and initialize runtime buffers
       x.add_(1.0)
       torch.accelerator.synchronize()
-      gc.collect()
+      print(f"mem 1: {torch.accelerator.memory_allocated()}")
+      print(f"peak mem 1: {torch.accelerator.max_memory_allocated()}")
 
       # Disabling via module property: disable_inplace_buffer_donation = True
       execution_mode.disable_inplace_buffer_donation = True
       try:
         torch.accelerator.reset_peak_memory_stats()
         base_mem = torch.accelerator.memory_allocated()
+        print(f"mem 2: {base_mem}")
+        print(f"peak mem 2: {torch.accelerator.max_memory_allocated()}")
         x.add_(1.0)
         torch.accelerator.synchronize()
         peak_mem = torch.accelerator.max_memory_allocated()
+        print(f"mem 3: {torch.accelerator.memory_allocated()}")
+        print(f"peak mem 3: {peak_mem}")
         extra_mem = peak_mem - base_mem
         # Without donation, a separate 16 MB buffer is allocated
         self.assertGreaterEqual(extra_mem, 12 * 1024 * 1024)
@@ -434,9 +440,13 @@ class InplaceBufferDonationTest(seed_test_utils.RepeatableTest):
       torch.accelerator.synchronize()
       torch.accelerator.reset_peak_memory_stats()
       base_mem = torch.accelerator.memory_allocated()
+      print(f"mem 4: {base_mem}")
+      print(f"peak mem 4: {torch.accelerator.max_memory_allocated()}")
       x.add_(1.0)
       torch.accelerator.synchronize()
       peak_mem = torch.accelerator.max_memory_allocated()
+      print(f"mem 5: {torch.accelerator.memory_allocated()}")
+      print(f"peak mem 5: {peak_mem}")
       extra_mem = peak_mem - base_mem
       self.assertLess(extra_mem, 4 * 1024 * 1024)
 
