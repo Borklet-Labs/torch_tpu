@@ -255,6 +255,22 @@ TEST_F(KilnE2eTest, TileAndScalarControlFlowOperations) {
   RunAndCompare(std::move(kernel), {&input}, expected);
 }
 
+// Without a grid, XLA copies VMEM operands in and out whole.
+TEST_F(KilnE2eTest, GridFreeKernelWithVmemOperands) {
+  TT_ASSERT_OK_AND_ASSIGN(
+      Kernel kernel,
+      CreateKernel(GridSpec{.name = "grid_free_vmem_e2e"},
+                   InSpec::Vmem(f32(8, 128)), OutSpec::Vmem(f32(8, 128)),
+                   [&](Ref in, Ref out) { out = Tile(in) * 2.0; }));
+  xla::Literal input = Make2dF32(8, 128, [](int64_t r, int64_t c) {
+    return static_cast<float>(r * 128 + c);
+  });
+  xla::Literal expected = Make2dF32(8, 128, [](int64_t r, int64_t c) {
+    return 2.0f * static_cast<float>(r * 128 + c);
+  });
+  RunAndCompare(std::move(kernel), {&input}, expected);
+}
+
 TEST_F(KilnE2eTest, GridKernelWithHbmAndDma) {
   constexpr int64_t kSteps = 4, kTileRows = 8, kCols = 128;
 

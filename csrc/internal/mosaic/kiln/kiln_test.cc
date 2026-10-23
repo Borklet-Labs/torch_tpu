@@ -1623,6 +1623,15 @@ TEST(KilnTest, HbmAndSemaphoreValidationErrors) {
               StatusIs(error::kInvalidArgument,
                        HasSubstr("HBM operands do not support index_map")));
 
+  absl::StatusOr<Kernel> bad_grid_free_map = CreateKernel(
+      GridSpec{.name = "bad_grid_free_map"},
+      InSpec{f32(8, 128), IndexMap([] { return IndexIndices{0, 0}; })},
+      OutSpec::Vmem(f32(8, 128)), [&](Ref, Ref) {});
+  EXPECT_THAT(
+      bad_grid_free_map,
+      StatusIs(error::kInvalidArgument,
+               HasSubstr("index_map windowing requires a non-empty grid")));
+
   absl::StatusOr<Kernel> bad_hbm_scratch = CreateKernel(
       GridSpec{.name = "bad_hbm_scratch", .grid = {1}},
       InSpec::Vmem(f32(8, 128)), OutSpec::Vmem(f32(8, 128)),
@@ -1955,6 +1964,23 @@ TEST(KilnTest, ConstructsShapesFromDTypeCallOperator) {
   std::ostringstream ss;
   ss << mat_f32;
   EXPECT_EQ(ss.str(), "f32[8, 128]");
+}
+
+// Like Pallas, a grid-free kernel has no grid or window attributes, so that XLA
+// copies its VMEM operands in and out whole.
+TEST(KilnTest, GridFreeKernelOmitsGridAttributes) {
+  EXPECT_THAT(CreateKernel(GridSpec{.name = "grid_free"},
+                           InSpec::Hbm(f32(8, 128)), OutSpec::Vmem(f32(8, 128)),
+                           [&](Ref in, Ref out) {
+                             AsyncCopy(in, out, AllocaDmaSemaphore()).Wait();
+                           }),
+              IsOkAndMatchesIr(R"(
+    CHECK-LABEL: func.func @grid_free(
+    CHECK-NOT:     iteration_bounds
+    CHECK-NOT:     dimension_semantics
+    CHECK-NOT:     window_params
+    CHECK:         tpu.enqueue_dma
+  )"));
 }
 
 }  // namespace

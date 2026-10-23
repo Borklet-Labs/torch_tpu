@@ -183,6 +183,16 @@ absl::Status SetGridAttributes(mlir::ImplicitLocOpBuilder& b,
                                mlir::func::FuncOp fn, const KernelSpec& spec,
                                llvm::ArrayRef<mlir::Type> prefetch_types) {
   const int64_t grid_rank = spec.grid.grid.size();
+  if (grid_rank == 0) {
+    for (const BlockSpec& s :
+         llvm::concat<const BlockSpec>(spec.in_specs, spec.out_specs)) {
+      if (s.map.has_mapping()) {
+        return TT_ERROR(::torch_tpu::error::kInvalidArgument)
+               << "index_map windowing requires a non-empty grid";
+      }
+    }
+    return absl::OkStatus();
+  }
 
   mlir::MLIRContext* context = b.getContext();
   fn->setAttr("iteration_bounds", b.getDenseI64ArrayAttr(spec.grid.grid));
