@@ -4913,36 +4913,64 @@ class OpInfoTestBase(TorchTpuTestBase):
           flush=True,
       )
 
-    if not _gen_gpu_golden_mode():
-      samples = _GOLDEN_GPU_DATA.get_samples(
-          self._testMethodName,
-          variant,
-          dtype,
-          out_dtype_override=out_dtype_override,
-      )
-      # TODO(b/540887166): Enable this check for compiled mode too when the bug
-      # is fixed.
-      if not samples and not is_compiled_mode():
-        self.fail(
-            f"No GPU golden samples found for {op_name}() with dtype {dtype}."
-            " Please re-generate the GPU golden files to cover"
-            " the new (op, dtype)."
-        )
-      if max_samples is None:
-        max_samples = _MAX_SAMPLES_PER_OP_DTYPE.value
-      if max_samples >= 0 and len(samples) > max_samples:
-        print(
-            f">>> Taking {max_samples} samples from "
-            f" {len(samples)} test samples ...",
-            flush=True,
-        )
-        samples = samples[:max_samples]
-      return samples
-
-    # Generate sample inputs on the golden device.
-    golden_samples = _sample_inputs(op, self.golden_device, dtype)
     if max_samples is None:
       max_samples = _MAX_SAMPLES_PER_OP_DTYPE.value
+    if _gen_gpu_golden_mode():
+      return self._generate_golden_pairs(
+          op,
+          dtype,
+          variant,
+          max_samples,
+          compute_grad=compute_grad,
+          use_compiled=use_compiled,
+          out_dtype_override=out_dtype_override,
+      )
+    return self._read_golden_pairs(
+        op, dtype, variant, max_samples, out_dtype_override
+    )
+
+  def _read_golden_pairs(
+      self,
+      op: OpInfo,
+      dtype: torch.dtype,
+      variant: OpVariant,
+      max_samples: int,
+      out_dtype_override: torch.dtype | None,
+  ) -> Sequence[tuple[OpInput, OpOutput]]:
+    """Returns up to `max_samples` recorded GPU golden pairs for the op."""
+    samples = _GOLDEN_GPU_DATA.get_samples(
+        self._testMethodName,
+        variant,
+        dtype,
+        out_dtype_override=out_dtype_override,
+    )
+    # TODO(b/540887166): Enable this check for compiled mode too when the bug
+    # is fixed.
+    if not samples and not is_compiled_mode():
+      self.fail(
+          "No GPU golden samples found for"
+          f" {_op_name_for_logging(op, variant)}() with dtype {dtype}. Please"
+          " re-generate the GPU golden files to cover the new (op, dtype)."
+      )
+    if max_samples >= 0 and len(samples) > max_samples:
+      print(
+          f">>> Taking {max_samples} samples from "
+          f" {len(samples)} test samples ...",
+          flush=True,
+      )
+      samples = samples[:max_samples]
+    return samples
+
+  def _generate_golden_pairs(
+      self,
+      op: OpInfo,
+      dtype: torch.dtype,
+      variant: OpVariant,
+      max_samples: int,
+      **run_op_kwargs: Any,
+  ) -> Sequence[tuple[OpInput, OpOutput]]:
+    """Generates up to `max_samples` golden pairs on the golden device."""
+    golden_samples = _sample_inputs(op, self.golden_device, dtype)
     if max_samples >= 0 and len(golden_samples) > max_samples:
       print(
           f">>> Taking {max_samples} random samples from "
@@ -4966,8 +4994,6 @@ class OpInfoTestBase(TorchTpuTestBase):
           variant=variant,
           dtype=dtype,
           op_input=golden_input,
-          compute_grad=compute_grad,
-          use_compiled=use_compiled,
           device=self.golden_device,
           subtest_name="golden",
           # When generating golden results, we should trust the op's output
@@ -4977,18 +5003,9 @@ class OpInfoTestBase(TorchTpuTestBase):
           check_device=False,
           # No need to mark inputs as dynamic when computing golden results.
           check_dynamism=False,
-          out_dtype_override=out_dtype_override,
+          **run_op_kwargs,
       )
-      golden_output = OpOutput(golden_result)
-      pairs.append((golden_input, golden_output))
-      _GOLDEN_GPU_DATA.add(
-          self._testMethodName,
-          variant,
-          dtype,
-          golden_input,
-          golden_output,
-          out_dtype_override=out_dtype_override,
-      )
+      pairs.append((golden_input, OpOutput(golden_result)))
     return pairs
 
   def _run_op(
@@ -5630,6 +5647,18 @@ class OpInfoTestBase(TorchTpuTestBase):
         max_samples=max_samples_per_op_dtype,
         out_dtype_override=out_dtype_override,
     )
+    if _gen_gpu_golden_mode():
+      for golden_input, golden_output in golden_pairs:
+        _GOLDEN_GPU_DATA.add(
+            self._testMethodName,
+            variant,
+            dtype,
+            golden_input,
+            golden_output,
+            out_dtype_override=out_dtype_override,
+        )
+      return
+
     for i, [golden_input, golden_output] in enumerate(golden_pairs):
       golden_result = golden_output.output_value
       golden_thrown = isinstance(golden_result, Exception)
@@ -5641,9 +5670,6 @@ class OpInfoTestBase(TorchTpuTestBase):
             f"Error: {golden_result}\n",
             flush=True,
         )
-        continue
-
-      if _gen_gpu_golden_mode():
         continue
 
       if skip_if and skip_if(variant, golden_input):
