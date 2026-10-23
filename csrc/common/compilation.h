@@ -158,9 +158,10 @@ class LoadedExecutableWithMetadata {
   }
 
   const std::vector<Shape>& output_shapes() const { return output_shapes_; }
-  // The on-device shapes the executable's parameters were compiled for, or
-  // nullopt for dynamic parameters. Empty if the executable doesn't report
-  // them.
+  // For each argument buffer the executable takes, the on-device shape it was
+  // compiled for, or nullopt for dynamic parameters. Tuple parameters take one
+  // buffer per element and can't be nested. Empty if the executable doesn't
+  // report them.
   const std::vector<std::optional<xla::Shape>>& parameter_device_shapes()
       const {
     return parameter_device_shapes_;
