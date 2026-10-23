@@ -135,7 +135,9 @@ absl::StatusOr<Kernel> CreateKernelImpl(GridSpec grid,
   // registered in the exact order they were passed.
   std::tuple resolvers{RegisterSpec(spec, std::get<Is>(all_args))...};
 
-  return BuildKernel(spec, [&] { body(std::get<Is>(resolvers)()...); });
+  return BuildKernel(spec, [&] {  // REF_CAPTURE_OK=called synchronously
+    body(std::get<Is>(resolvers)()...);
+  });
 }
 
 }  // namespace internal

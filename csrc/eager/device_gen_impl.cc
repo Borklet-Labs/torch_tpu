@@ -369,17 +369,18 @@ at::Generator& DeviceGenerators::GetEagerDefaultGenerator(at::DeviceIndex idx) {
   idx = NormalizeDeviceIndex(idx);
 
   auto& generator = generators_[idx];
-  c10::call_once(generator_init_flags_[idx], [&] {
-    auto gen = at::make_generator<EagerModeDeviceGeneratorImpl>(idx);
-    auto* gen_impl = gen.get<EagerModeDeviceGeneratorImpl>();
-    auto random = c10::detail::getNonDeterministicRandom(false);
-    auto status = InitDefaultGenerator(gen_impl, random);
-    if (!status.ok()) {
-      generator = status;
-    } else {
-      generator = std::move(gen);
-    }
-  });
+  c10::call_once(
+      generator_init_flags_[idx], [&] {  // REF_CAPTURE_OK=called synchronously
+        auto gen = at::make_generator<EagerModeDeviceGeneratorImpl>(idx);
+        auto* gen_impl = gen.get<EagerModeDeviceGeneratorImpl>();
+        auto random = c10::detail::getNonDeterministicRandom(false);
+        auto status = InitDefaultGenerator(gen_impl, random);
+        if (!status.ok()) {
+          generator = status;
+        } else {
+          generator = std::move(gen);
+        }
+      });
 
   // IMPORTANT: if the generator failed to initialize before, we must fail now
   // instead of returning an uninitialized generator.

@@ -927,15 +927,17 @@ absl::StatusOr<CompiledKernel> CompilationCache::GetOrCompileImpl(
     absl_nullable std::unique_ptr<xla::CompileOptions> owned_compile_options,
     bool use_dynamic_adapters) {
   // Critical section for cache lookups and insertion.
-  TT_ASSIGN_OR_RETURN(
-      auto cache_lookup, [&]() -> absl::StatusOr<CacheLookupInternal> {
-        absl::MutexLock lock(cache_mutex_);
-        perf_stats_.num_cache_reqs++;
-        TT_ASSIGN_OR_RETURN(auto lookup, GetOrCreateCacheEntry(
+  TT_ASSIGN_OR_RETURN(auto cache_lookup,
+                      [&]  // REF_CAPTURE_OK=called synchronously
+                      () -> absl::StatusOr<CacheLookupInternal> {
+                        absl::MutexLock lock(cache_mutex_);
+                        perf_stats_.num_cache_reqs++;
+                        TT_ASSIGN_OR_RETURN(
+                            auto lookup, GetOrCreateCacheEntry(
                                              key, input_shapes, output_shapes));
-        lookup.dump_on_cache_miss = dump_on_cache_miss_;
-        return lookup;
-      }());
+                        lookup.dump_on_cache_miss = dump_on_cache_miss_;
+                        return lookup;
+                      }());
 
   // Everything we are recovering from the cache is a shared pointer, so it
   // is safe to access them without the lock.

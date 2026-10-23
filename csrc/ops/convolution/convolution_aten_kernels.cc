@@ -597,7 +597,8 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> AtenConvolutionBackward(
             ConvolutionBackward(grad_output, input, weight, bias_sizes, stride,
                                 padding, dilation, transposed, output_padding,
                                 groups, output_mask, std::move(param_keys)));
-        auto to_tensor = [&](int idx) -> at::Tensor {
+        auto to_tensor =
+            [&](int idx) -> at::Tensor {  // REF_CAPTURE_OK=called locally
           if (!output_mask[idx]) return at::Tensor();
           return MakeTensor(std::move(results[idx]));
         };

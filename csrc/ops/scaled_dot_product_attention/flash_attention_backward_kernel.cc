@@ -224,25 +224,29 @@ absl::StatusOr<kiln::Kernel> CreateBackwardDkvKernel(
           kiln::OutSpec{dt(1, 1, kt, d_vo), kv_map},      // dV
           kiln::ScratchSpec{kiln::f32(kt, d_qk)},         // dK accumulator
           kiln::ScratchSpec{kiln::f32(kt, d_vo)},         // dV accumulator
-          [&](std::optional<kiln::Ref> seed_ref, kiln::Ref q_ref,
-              kiln::Ref k_ref, kiln::Ref v_ref, kiln::Ref do_ref,
-              kiln::Ref lse_ref, kiln::Ref di_ref,
-              std::optional<kiln::Ref> bias_ref, kiln::Ref dk_ref,
-              kiln::Ref dv_ref, kiln::Ref dk_acc, kiln::Ref dv_acc) {
+          [&]  // REF_CAPTURE_OK=called synchronously
+          (std::optional<kiln::Ref> seed_ref, kiln::Ref q_ref, kiln::Ref k_ref,
+           kiln::Ref v_ref, kiln::Ref do_ref, kiln::Ref lse_ref,
+           kiln::Ref di_ref, std::optional<kiln::Ref> bias_ref,
+           kiln::Ref dk_ref, kiln::Ref dv_ref, kiln::Ref dk_acc,
+           kiln::Ref dv_acc) {
             kiln::Scalar ki = kiln::ProgramId(2), qi = kiln::ProgramId(3);
             kiln::Scalar head_in_group = kiln::ProgramId(4);
 
-            kiln::If((qi == 0) & (head_in_group == 0), [&] {
-              dk_acc = kiln::Zeros(kiln::f32(kt, d_qk));
-              dv_acc = kiln::Zeros(kiln::f32(kt, d_vo));
-            });
+            kiln::If((qi == 0) & (head_in_group == 0),
+                     [&] {  // REF_CAPTURE_OK=called synchronously
+                       dk_acc = kiln::Zeros(kiln::f32(kt, d_qk));
+                       dv_acc = kiln::Zeros(kiln::f32(kt, d_vo));
+                     });
 
             if (config.is_causal) {
-              kiln::If(BelowOrOnDiagonal(qi, ki, config, tiling), [&] {
-                EmitDkvStep(config, tiling, seed_ref, q_ref, k_ref, v_ref,
-                            do_ref, lse_ref, di_ref, bias_ref, dk_ref, dv_ref,
-                            dk_acc, dv_acc, head_group, qi, ki);
-              });
+              kiln::If(BelowOrOnDiagonal(qi, ki, config, tiling),
+                       [&] {  // REF_CAPTURE_OK=called synchronously
+                         EmitDkvStep(config, tiling, seed_ref, q_ref, k_ref,
+                                     v_ref, do_ref, lse_ref, di_ref, bias_ref,
+                                     dk_ref, dv_ref, dk_acc, dv_acc, head_group,
+                                     qi, ki);
+                       });
             } else {
               EmitDkvStep(config, tiling, seed_ref, q_ref, k_ref, v_ref, do_ref,
                           lse_ref, di_ref, bias_ref, dk_ref, dv_ref, dk_acc,
@@ -304,22 +308,25 @@ absl::StatusOr<kiln::Kernel> CreateBackwardDqKernel(
           kiln::InSpec{dt(1, 1, qt, d_vo), q_map},   // out (unused)
           kiln::OutSpec{dt(1, 1, qt, d_qk), q_map},  // dQ
           kiln::ScratchSpec{kiln::f32(qt, d_qk)},    // dQ accumulator
-          [&](std::optional<kiln::Ref> seed_ref, kiln::Ref q_ref,
-              kiln::Ref k_ref, kiln::Ref v_ref, kiln::Ref do_ref,
-              kiln::Ref lse_ref, kiln::Ref di_ref,
-              std::optional<kiln::Ref> bias_ref, kiln::Ref /*out_ref*/,
-              kiln::Ref dq_ref, kiln::Ref dq_acc) {
+          [&]  // REF_CAPTURE_OK=called synchronously
+          (std::optional<kiln::Ref> seed_ref, kiln::Ref q_ref, kiln::Ref k_ref,
+           kiln::Ref v_ref, kiln::Ref do_ref, kiln::Ref lse_ref,
+           kiln::Ref di_ref, std::optional<kiln::Ref> bias_ref,
+           kiln::Ref /*out_ref*/, kiln::Ref dq_ref, kiln::Ref dq_acc) {
             kiln::Scalar qi = kiln::ProgramId(2), ki = kiln::ProgramId(3);
 
             kiln::If(ki == 0,
-                     [&] { dq_acc = kiln::Zeros(kiln::f32(qt, d_qk)); });
+                     [&] {  // REF_CAPTURE_OK=called synchronously
+                       dq_acc = kiln::Zeros(kiln::f32(qt, d_qk));
+                     });
 
             if (config.is_causal) {
-              kiln::If(BelowOrOnDiagonal(qi, ki, config, tiling), [&] {
-                EmitDqStep(config, tiling, seed_ref, q_ref, k_ref, v_ref,
-                           do_ref, lse_ref, di_ref, bias_ref, dq_ref, dq_acc,
-                           qi, ki);
-              });
+              kiln::If(BelowOrOnDiagonal(qi, ki, config, tiling),
+                       [&] {  // REF_CAPTURE_OK=called synchronously
+                         EmitDqStep(config, tiling, seed_ref, q_ref, k_ref,
+                                    v_ref, do_ref, lse_ref, di_ref, bias_ref,
+                                    dq_ref, dq_acc, qi, ki);
+                       });
             } else {
               EmitDqStep(config, tiling, seed_ref, q_ref, k_ref, v_ref, do_ref,
                          lse_ref, di_ref, bias_ref, dq_ref, dq_acc, qi, ki);

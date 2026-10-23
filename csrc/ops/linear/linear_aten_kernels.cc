@@ -322,11 +322,13 @@ absl::StatusOr<DeviceBufferRef> Linear(const at::Tensor& input,
                       ValidateLinearInputs(input, weight, bias));
   return DispatchLinearImpl<absl::StatusOr<DeviceBufferRef>>(
       input, weight, bias, std::move(output_dims), std::move(param_keys),
-      [&](auto op_builder, auto options) {
+      [&]  // REF_CAPTURE_OK=called synchronously
+      (auto op_builder, auto options) {
         return DispatchOp<2>(std::move(op_builder), {input, weight},
                              std::move(options));
       },
-      [&](auto op_builder, auto options) {
+      [&]  // REF_CAPTURE_OK=called synchronously
+      (auto op_builder, auto options) {
         return DispatchOp<3>(std::move(op_builder), {input, weight, *bias},
                              std::move(options));
       });
@@ -341,11 +343,13 @@ absl::Status LinearOut(const at::Tensor& input, const at::Tensor& weight,
                                       /*allow_out_dtype_cast=*/false));
   return DispatchLinearImpl<absl::Status>(
       input, weight, bias, std::move(output_dims), std::move(param_keys),
-      [&](auto op_builder, auto options) {
+      [&]  // REF_CAPTURE_OK=called synchronously
+      (auto op_builder, auto options) {
         return DispatchOpOut<2>(std::move(op_builder), {input, weight}, out,
                                 std::move(options));
       },
-      [&](auto op_builder, auto options) {
+      [&]  // REF_CAPTURE_OK=called synchronously
+      (auto op_builder, auto options) {
         return DispatchOpOut<3>(std::move(op_builder), {input, weight, *bias},
                                 out, std::move(options));
       });
@@ -471,7 +475,7 @@ at::Tensor AtenLinearAutograd(const at::Tensor& input, const at::Tensor& weight,
     grad_fn->input_ = torch::autograd::SavedVariable(input, false);
     grad_fn->weight_ = torch::autograd::SavedVariable(weight, false);
   }
-  at::Tensor output = ([&]() {
+  at::Tensor output = ([&]() {  // REF_CAPTURE_OK=called locally
     at::AutoDispatchBelowADInplaceOrView guard;
     return at::linear(input, weight, bias);
   })();

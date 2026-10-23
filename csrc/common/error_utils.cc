@@ -86,7 +86,9 @@ constexpr std::array<std::string_view, 3> kAllowedStartingWords{"TorchTPU",
 [[nodiscard]] bool StartsWithAllowedWord(const std::string_view message) {
   return absl::c_any_of(
       kAllowedStartingWords,
-      [&](const std::string_view word) { return message.starts_with(word); });
+      [&](const std::string_view word) {  // REF_CAPTURE_OK=called synchronously
+        return message.starts_with(word);
+      });
 }
 
 #if TT_CHECKS_ERROR_FORMAT

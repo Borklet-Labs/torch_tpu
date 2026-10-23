@@ -604,7 +604,7 @@ CreateFlashAttentionKernelImpl(const at::Tensor& query, const at::Tensor& key,
     out_dims_list.push_back(seed_dims);
   }
 
-  auto dispatch = [&]() {
+  auto dispatch = [&]() {  // REF_CAPTURE_OK=called locally
     return DispatchOp<kDynamicSize, kDynamicSize>(
         std::move(op_builder), dispatch_inputs,
         {.out_dtypes = out_dtypes,
@@ -614,12 +614,13 @@ CreateFlashAttentionKernelImpl(const at::Tensor& query, const at::Tensor& key,
 
   std::vector<DeviceBufferRef> results;
   if (has_dropout) {
-    TT_ASSIGN_OR_RETURN(
-        results, DispatchRngOpGeneral(
-                     /*generator=*/c10::nullopt, [&](const at::Tensor& state) {
-                       dispatch_inputs.push_back(state);
-                       return dispatch();
-                     }));
+    TT_ASSIGN_OR_RETURN(results, DispatchRngOpGeneral(
+                                     /*generator=*/c10::nullopt,
+                                     [&]  // REF_CAPTURE_OK=called synchronously
+                                     (const at::Tensor& state) {
+                                       dispatch_inputs.push_back(state);
+                                       return dispatch();
+                                     }));
   } else {
     TT_ASSIGN_OR_RETURN(results, dispatch());
   }

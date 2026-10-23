@@ -185,16 +185,17 @@ TORCH_LIBRARY_FRAGMENT(tpu, m) {
     outputs.insert("gains", gains);
 
     const auto& stats = preprocess_result.stats;
-    auto insert_vector_stat = [&](std::string_view key, const auto& map) {
-      if (auto it = map.find(table_name_str); it != map.end()) {
-        const auto& vec = it->second;
-        at::Tensor tensor =
-            at::empty({static_cast<int64_t>(vec.size())}, at::kInt);
-        std::memcpy(tensor.data_ptr<int32_t>(), vec.data(),
-                    vec.size() * sizeof(int32_t));
-        outputs.insert(key, tensor);
-      }
-    };
+    auto insert_vector_stat = [&]  // REF_CAPTURE_OK=called locally
+        (std::string_view key, const auto& map) {
+          if (auto it = map.find(table_name_str); it != map.end()) {
+            const auto& vec = it->second;
+            at::Tensor tensor =
+                at::empty({static_cast<int64_t>(vec.size())}, at::kInt);
+            std::memcpy(tensor.data_ptr<int32_t>(), vec.data(),
+                        vec.size() * sizeof(int32_t));
+            outputs.insert(key, tensor);
+          }
+        };
 
     insert_vector_stat("max_ids_per_partition", stats.max_ids_per_partition);
     insert_vector_stat("max_unique_ids_per_partition",

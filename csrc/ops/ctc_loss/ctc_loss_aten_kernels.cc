@@ -686,7 +686,7 @@ absl::StatusOr<std::vector<mlir::MlirOp>> BuildCtcLossShlo(
   auto whl = mlir::stablehlo::While(
       builder,
       {MakeScalarConstant(builder, 1, i32_type), alpha_0, log_alpha_acc_init},
-      [&](mlir::RegionBuilder& cond) {
+      [&](mlir::RegionBuilder& cond) {  // REF_CAPTURE_OK=called synchronously
         mlir::MlirBuilder cond_builder(cond.getOpBuilder(),
                                        cond.getOpBuilder().getUnknownLoc());
         auto args = mlir::stablehlo::Arguments(
@@ -698,7 +698,7 @@ absl::StatusOr<std::vector<mlir::MlirOp>> BuildCtcLossShlo(
             mlir::stablehlo::Compare(args[0], t_limit,
                                      mlir::stablehlo::ComparisonDirection::LT));
       },
-      [&](mlir::RegionBuilder& body) {
+      [&](mlir::RegionBuilder& body) {  // REF_CAPTURE_OK=called synchronously
         mlir::MlirBuilder body_builder(body.getOpBuilder(),
                                        body.getOpBuilder().getUnknownLoc());
         auto args = mlir::stablehlo::Arguments(
@@ -871,7 +871,7 @@ mlir::MlirOp ReduceAddDim2(mlir::MlirBuilder& builder, mlir::MlirOp input,
       mlir::RankedTensorType::get({}, element_type), zero_scalar, {});
   return mlir::stablehlo::Reduce(
       builder, {input}, {zero},
-      [&](mlir::RegionBuilder& region) {
+      [&](mlir::RegionBuilder& region) {  // REF_CAPTURE_OK=called synchronously
         auto type = mlir::RankedTensorType::get({}, element_type);
         auto arg0 = mlir::Argument(region, type);
         auto arg1 = mlir::Argument(region, type);
@@ -948,7 +948,7 @@ absl::StatusOr<mlir::MlirOp> BuildCtcLossBackwardShlo(
 
   auto whl = mlir::stablehlo::While(
       builder, {t_start, beta_0, log_beta_acc_init},
-      [&](mlir::RegionBuilder& cond) {
+      [&](mlir::RegionBuilder& cond) {  // REF_CAPTURE_OK=called synchronously
         mlir::MlirBuilder cond_builder(cond.getOpBuilder(),
                                        cond.getOpBuilder().getUnknownLoc());
         auto args = mlir::stablehlo::Arguments(
@@ -959,7 +959,7 @@ absl::StatusOr<mlir::MlirOp> BuildCtcLossBackwardShlo(
             mlir::stablehlo::Compare(args[0], zero_i32,
                                      mlir::stablehlo::ComparisonDirection::GE));
       },
-      [&](mlir::RegionBuilder& body) {
+      [&](mlir::RegionBuilder& body) {  // REF_CAPTURE_OK=called synchronously
         mlir::MlirBuilder body_builder(body.getOpBuilder(),
                                        body.getOpBuilder().getUnknownLoc());
         auto args = mlir::stablehlo::Arguments(

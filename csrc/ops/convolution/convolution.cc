@@ -696,11 +696,12 @@ absl::StatusOr<mlir::MlirOp> BuildConvolutionBackwardBias(
   mlir::MlirOp init_val = MakeScalarConstant(builder, 0, output_dtype);
 
   absl::Status reduce_status;
-  auto body_builder = [&](mlir::RegionBuilder& rb) {
-    reduce_status = BuildReduceBody(
-        rb, mlir::getElementType(builder.getContext(), output_dtype),
-        c10d::ReduceOp::SUM);
-  };
+  auto body_builder =
+      [&](mlir::RegionBuilder& rb) {  // REF_CAPTURE_OK=called locally
+        reduce_status = BuildReduceBody(
+            rb, mlir::getElementType(builder.getContext(), output_dtype),
+            c10d::ReduceOp::SUM);
+      };
 
   auto results = stablehlo::Reduce(builder, {grad_output}, {init_val},
                                    body_builder, reduction_dims);

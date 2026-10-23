@@ -159,7 +159,7 @@ absl::Status AtomicWriteToCacheFile(const std::string& cache_entry_path,
 
     // Automatically clean up the temp file and the final cache file if
     // something goes wrong.
-    auto cleanup = absl::MakeCleanup([&]() {
+    auto cleanup = absl::MakeCleanup([&]() {  // REF_CAPTURE_OK=called locally
       if (!success) {
         ABSL_LOG(ERROR) << "Failed to write cache file " << cache_entry_path
                         << ". Cleaning up.";

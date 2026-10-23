@@ -184,10 +184,11 @@ auto SparseDenseMatmulGradWithAdamBuilder(int64_t device_batch_size,
       auto zero_arg = MakeScalarConstant(builder, 0.0f, mlir::ElementType::F32);
       auto dtype =
           torch_tpu::GetTensorTypeOrDie(new_velocity_2d).getElementType();
-      auto reduce_builder = [&](mlir::RegionBuilder& rb) {
-        mlir::stablehlo::buildReduceBody<mlir::stablehlo::AddOp>(
-            dtype, rb.getRegion(), rb.getOpBuilder());
-      };
+      auto reduce_builder =
+          [&](mlir::RegionBuilder& rb) {  // REF_CAPTURE_OK=called synchronously
+            mlir::stablehlo::buildReduceBody<mlir::stablehlo::AddOp>(
+                dtype, rb.getRegion(), rb.getOpBuilder());
+          };
 
       mlir::MlirOp dim_size = mlir::stablehlo::GetDimensionSize(grad, 1);
       mlir::MlirOp dim_size_f32 =

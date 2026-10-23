@@ -79,22 +79,31 @@ struct KernelScope {
     int arg = 0;
     mlir::Block* entry = builder.getBlock();
     const int num_args = entry->getNumArguments();
-    auto bind = [&]<typename T>(llvm::SmallVectorImpl<T>& out, size_t count,
-                                auto get_dtype) {
-      for (size_t i = 0; i < count && arg < num_args; ++i) {
-        out.push_back(
-            internal::wrap<T>(entry->getArgument(arg++), get_dtype(i)));
-      }
-    };
+    auto bind = [&]  // REF_CAPTURE_OK=called locally
+        <typename T>(llvm::SmallVectorImpl<T>& out, size_t count,
+                     auto get_dtype) {
+          for (size_t i = 0; i < count && arg < num_args; ++i) {
+            out.push_back(
+                internal::wrap<T>(entry->getArgument(arg++), get_dtype(i)));
+          }
+        };
     bind(program_ids, spec.grid.grid.size(), [](size_t) { return i32; });
     bind(scalar_prefetch, spec.scalar_prefetch.size(),
-         [&](size_t i) { return spec.scalar_prefetch[i].shape.dtype(); });
+         [&](size_t i) {  // REF_CAPTURE_OK=called synchronously
+           return spec.scalar_prefetch[i].shape.dtype();
+         });
     bind(inputs, spec.in_specs.size(),
-         [&](size_t i) { return spec.in_specs[i].shape.dtype(); });
+         [&](size_t i) {  // REF_CAPTURE_OK=called synchronously
+           return spec.in_specs[i].shape.dtype();
+         });
     bind(outputs, spec.out_specs.size(),
-         [&](size_t i) { return spec.out_specs[i].shape.dtype(); });
+         [&](size_t i) {  // REF_CAPTURE_OK=called synchronously
+           return spec.out_specs[i].shape.dtype();
+         });
     bind(scratch, spec.scratch.size(),
-         [&](size_t i) { return spec.scratch[i].shape.dtype(); });
+         [&](size_t i) {  // REF_CAPTURE_OK=called synchronously
+           return spec.scratch[i].shape.dtype();
+         });
   }
   ~KernelScope() { tls_scope = prev; }
 

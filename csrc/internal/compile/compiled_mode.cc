@@ -494,7 +494,8 @@ absl::StatusOr<AsyncCompileResult> TraverseAndCompile(
                          // happens
         auto contexted_module,
         ContextedModule::Make(
-            [&](mlir::MLIRContext& mlir_context)
+            [&]  // REF_CAPTURE_OK=called synchronously
+            (mlir::MLIRContext& mlir_context)
                 -> absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> {
               return traversal->BuildMlirModule(
                   mlir_context, options.use_stablehlo_bounds,
@@ -559,7 +560,8 @@ absl::StatusOr<SharedLoadedExecutableWithMetadata> CompileMlirExecutable(
   TT_ASSIGN_OR_RETURN(
       ContextedModule module,
       ContextedModule::Make(
-          [&](mlir::MLIRContext& mlir_context)
+          [&]  // REF_CAPTURE_OK=called synchronously
+          (mlir::MLIRContext& mlir_context)
               -> absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> {
             return mlir::stablehlo::deserializePortableArtifact(
                 {mlir_module_bytecode.data(), mlir_module_bytecode.size()},
