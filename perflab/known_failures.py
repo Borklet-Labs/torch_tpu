@@ -362,6 +362,13 @@ KNOWN_FAILURES: tuple[KnownFailure, ...] = (
         # reason="LLVM cannot select v2i16 [su]mul_lohi in a Triton kernel",
     # ),
     # KnownFailure(
+        # benchmark="mllama_11b_forward",
+        # framework=mode_lib.Framework.TORCH,
+        # device_kind=target_lib.DeviceKind.CUDA,
+        # run_modes=frozenset({common.RunMode.COMPILED}),
+        # reason="LLVM cannot select v2i16 [su]mul_lohi in a Triton kernel",
+    # ),
+    # KnownFailure(
         # benchmark="qwen3_8_27b_4_layers_simple_fsdp_training",
         # framework=mode_lib.Framework.TORCH,
         # device_kind=target_lib.DeviceKind.CUDA,

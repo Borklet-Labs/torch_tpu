@@ -102,3 +102,29 @@ def llava_1_5_7b_forward(ctx: context_lib.Context):
       modify_config_hook=_modify_config_hook,
   )
   return model, (), inputs
+
+
+@registry_lib.register_benchmark(
+    stepper=step_lib.StepperType.FORWARD,
+    presubmit=registry_lib.PresubmitPolicy.CPU_SMOKE_ONLY,
+    presubmit_reason=(
+        "Llama 3.2 11B Vision uses too much memory to run on TPUs with"
+        " smaller memory, and its cross-attention layer indices prevent"
+        " truncating it."
+    ),
+)
+def mllama_11b_forward(ctx: context_lib.Context):
+  """Benchmark factory for Llama-3.2-11B-Vision (mLlama) forward."""
+  if model_helpers.is_presubmit_smoke(ctx):
+    batch_size = model_helpers.SMOKE_BATCH_SIZE
+    seq_len = model_helpers.SMOKE_SEQ_LEN
+  else:
+    batch_size = 1
+    seq_len = 512
+  model, inputs = _load_hf_vlm(
+      ctx,
+      "meta-llama/Llama-3.2-11B-Vision",
+      batch_size=batch_size,
+      seq_len=seq_len,
+  )
+  return model, (), inputs
