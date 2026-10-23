@@ -333,7 +333,6 @@ torch_tpu_cc_library(
         "@com_google_absl//absl/strings",
         "@stablehlo//stablehlo/integrations/cpp/builder:attr_type_builder_util",
         "@stablehlo//stablehlo/integrations/cpp/builder:mlir_builder",
-        "@xla//xla:xla_data_proto_cc",
     ],
 )
 
