@@ -265,7 +265,6 @@ torch_tpu_py_test(
     name = "torchcomm_multi_tpu_test",
     srcs = ["torchcomm_multi_tpu_test.py"],
     nobuild_oss = True,  # NOBUILD_OSS_OK=torchcomms is not yet available in OSS
-    shard_count = 7,
     tags = if_oss(
         ["exclusive"],
         [],
@@ -279,7 +278,7 @@ torch_tpu_py_test(
         [],
         ["@pypi//torchcomms"],
     ) + [
-        ":distributed_utils",
+        ":continuous_test_utils",
         "//shims/absl_py/logging",
         "//shims/absl_py/testing:absltest",
         "//shims/torch:pytorch",
