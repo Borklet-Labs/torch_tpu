@@ -1680,6 +1680,52 @@ class OpsUnitTest(TorchTpuVsCpuTestBase):
       self.assertEqual(out_tpu.dtype, torch.int64)
       utils.assert_close(out_tpu.cpu(), out_cpu)
 
+  def test_cumsum_pre_scan_cast(self):
+    """Tests that cumsum casts inputs to target element type before scanning."""
+    # 1. float32 -> float16 overflow: 70000.0 becomes inf in float16,
+    # -70000.0 becomes -inf, and inf + (-inf) = nan.
+    self.assert_close_tpu_vs_cpu(
+        lambda device: torch.cumsum(
+            torch.tensor(
+                [70000.0, -70000.0], dtype=torch.float32, device=device
+            ),
+            dim=0,
+            dtype=torch.float16,
+        )
+    )
+    # 2. int32 -> bfloat16 precision: 257 casts to 256.0 in bfloat16.
+    self.assert_close_tpu_vs_cpu(
+        lambda device: torch.cumsum(
+            torch.full((4,), 257, dtype=torch.int32, device=device),
+            dim=0,
+            dtype=torch.bfloat16,
+        )
+    )
+
+    # 3. out-variant: float32 -> float16 overflow with out=
+    def test_out(device):
+      out = torch.empty(2, dtype=torch.float16, device=device)
+      torch.cumsum(
+          torch.tensor([70000.0, -70000.0], dtype=torch.float32, device=device),
+          dim=0,
+          out=out,
+      )
+      return out
+
+    self.assert_close_tpu_vs_cpu(test_out)
+    # 4. Multi-dimensional tensor along dim=1
+    self.assert_close_tpu_vs_cpu(
+        lambda device: torch.cumsum(
+            torch.tensor(
+                [[70000.0, -70000.0], [1.0, 2.0]],
+                dtype=torch.float32,
+                device=device,
+            ),
+            dim=1,
+            dtype=torch.float16,
+        )
+    )
+
   def test_cumprod_out_dtype(self):
     device = torch.device("tpu")
     x = torch.tensor([1, 2, 3, 4], dtype=torch.int32, device=device)
