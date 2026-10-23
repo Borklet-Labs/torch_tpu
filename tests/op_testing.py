@@ -4439,7 +4439,7 @@ def print_reproducer(
   print(fx_reproducer, flush=True)
 
 
-def _run_and_print_exception(func: Callable[[], None]) -> None:
+def _run_and_print_exception(func: Callable[[], Any]) -> None:
   """Runs func() and prints the exception if one is raised."""
   try:
     func()
@@ -5005,7 +5005,7 @@ class OpInfoTestBase(TorchTpuTestBase):
       out: Any = None,
       compute_grad: bool = False,
       use_compiled: bool = False,
-      measure_perf: bool = True,
+      measure_perf: bool = False,
       out_dtype_override: torch.dtype | None = None,
   ) -> Any:
     """Run the op on the given device.
@@ -5032,7 +5032,7 @@ class OpInfoTestBase(TorchTpuTestBase):
       compute_grad: If True, compute the gradient of the op with respect to the
         input instead of the op outputs.
       use_compiled: If True, use torch.compile to compile the op before running.
-      measure_perf: If True, measure the performance of the op in the perf mode.
+      measure_perf: If True, measure the performance of the op.
       out_dtype_override: The data type of the out tensor to use when testing
         out-variant dtype casting.
 
@@ -5075,9 +5075,6 @@ class OpInfoTestBase(TorchTpuTestBase):
           subtest_name=subtest_name,
           check_device=check_device,
           check_dynamism=check_dynamism,
-          # This _run_op() call is for preparing test data, not part of the test
-          # itself, so disable performance measurement to avoid skewing metrics.
-          measure_perf=False,
       )
       if isinstance(base_result, Exception):
         return base_result
@@ -5271,7 +5268,7 @@ class OpInfoTestBase(TorchTpuTestBase):
       # on TorchTPU. Hence the following call is is done inside _run_op(), and
       # any exception it raises is attributed to the op.
       result = to(result, "cpu")
-      if _perf_mode() and measure_perf:
+      if measure_perf:
         # We must measure the time after the .to("cpu") call because that's the
         # time when the compilation and execution of the op is guaranteed to be
         # done.
@@ -5528,11 +5525,6 @@ class OpInfoTestBase(TorchTpuTestBase):
         use_compiled=use_compiled,
         **run_op_kwargs,
     )
-    if _perf_mode():
-      # In perf mode, performance measurement is completed during self._run_op
-      # on TPU above. Return early to avoid running behavioral and failure
-      # consistency comparisons against the golden results.
-      return
     golden_thrown = isinstance(golden_result, Exception)
     torch_tpu_thrown = isinstance(torch_tpu_result, Exception)
 
@@ -5669,23 +5661,29 @@ class OpInfoTestBase(TorchTpuTestBase):
       subtest_name = f"{op_name}_{_dtype_str(dtype)}_"
       subtest_name += golden_input.name if golden_input.name else f"subtest{i}"
 
+      if _perf_mode():
+        test = functools.partial(self._run_on_tpu, measure_perf=True)
+      else:
+        test = functools.partial(
+            self._sub_test,
+            golden_result=golden_result,
+            check_value=check_value,
+            check_dtype=check_dtype,
+            skip_output_indices=skip_output_indices,
+        )
       for perf_run_idx in range(_NUM_RUNS_PER_SUBTEST.value):
         self._subtests_run += 1
         with self.subTest(subtest_name=subtest_name, run_index=perf_run_idx):
           _run_and_print_exception(
               functools.partial(
-                  self._sub_test,
+                  test,
                   subtest_name,
                   op,
                   variant,
                   dtype,
                   golden_input=golden_input,
-                  golden_result=golden_result,
                   check_device=check_device,
                   check_dynamism=check_dynamism,
-                  check_value=check_value,
-                  check_dtype=check_dtype,
-                  skip_output_indices=skip_output_indices,
                   compute_grad=compute_grad,
                   use_compiled=use_compiled,
                   out_dtype_override=out_dtype_override,
