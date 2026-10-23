@@ -43,6 +43,7 @@ from torch._inductor.runtime.cache_dir_utils import temporary_cache_dir
 from torch.distributed import _functional_collectives as funcol
 from torch_tpu._internal import pallas
 from torch_tpu._internal.distributed import spmd_util
+from torch_tpu._internal.utils import hardware
 from torch_tpu._internal.utils import test_utils as utils
 from torch_tpu._internal.distributed import multiprocessing
 from tests.distributed import continuous_test_utils
@@ -72,7 +73,8 @@ _LAYOUTS = {
 }
 _LAYOUT_CASES = tuple((name, name) for name in _LAYOUTS)
 # Every group of these layouts is whole chips, so it compiles for a subslice.
-_SUBSLICE_LAYOUTS = ("halves", "pairs")
+# The reversed groups hold the devices of the halves.
+_SUBSLICE_LAYOUTS = ("halves", "pairs", "reversed")
 _TIER2_CACHE_ROOT = "/dev/shm/torch_tpu_cache"
 _CACHE_TOKEN = os.environ.get("TEST_TMPDIR") or os.environ.get(
     "TORCH_TPU_CACHE_TOKEN"
@@ -88,6 +90,38 @@ _TIER3_CACHE_ROOT = os.path.join(
 os.environ["TORCH_TPU_TIER2_COMPILATION_CACHE"] = _TIER2_CACHE_NAME
 # Groups in other than ascending rank order need `dist.new_group(sort_ranks=)`.
 _HAS_SORT_RANKS = "sort_ranks" in inspect.signature(dist.new_group).parameters
+# Read from the PCI devices, so the parent process can decide the skips without
+# initializing the TPU that its workers use. Unknown TPUs count as having
+# SparseCores.
+_TPU_SPEC = hardware.get_tpu_spec()
+_HAS_SPARSE_CORES = _TPU_SPEC is None or _TPU_SPEC.sparse_core_spec is not None
+
+
+def _skip_reason(test_name: str) -> str | None:
+  """Returns why the test named `test_name` must be skipped, if it must."""
+  layout = next(
+      (name for name in _LAYOUTS if test_name.endswith(f"_{name}")), None
+  )
+  if layout == "reversed" and not _HAS_SORT_RANKS:
+    return "dist.new_group has no sort_ranks in this torch version"
+  if (
+      test_name.startswith("test_uneven_group_sparse_core_programs")
+      and not _HAS_SPARSE_CORES
+  ):
+    return "This TPU has no SparseCores."
+  if (
+      test_name.startswith("test_uneven_group_all_to_all")
+      and layout in _SUBSLICE_LAYOUTS
+      and (libtpu := utils.libtpu_version()) is not None
+      and libtpu < (0, 0, 51)
+  ):
+    return (
+        "The SparseCores halt in all-to-alls of subslice programs before"
+        " libtpu 0.0.51."
+    )
+  return None
+
+
 _AXIS = "group"
 # One table row per CSR index slot: 16 CSR rows of 64 slots, 8 of them used.
 _TABLE_ROWS = 1024
@@ -484,6 +518,10 @@ def run_mixed_programs_run_on_the_world() -> None:
       torch.full((4,), float(_WORLD + 2), dtype=torch.float32),
   )
 
+  # The rest runs a SparseCore op.
+  if not _HAS_SPARSE_CORES:
+    return
+
   # A sparse-dense-matmul lookup shards its table across the SparseCores of
   # all devices (carrying the full-slice device assignment at dispatch time):
   # 16 samples of 2 ids each, in a table of 32 rows.
@@ -738,13 +776,17 @@ def run_group_programs_from_the_caches(layout: str, compilations: int) -> None:
 class SubgroupLaunchOrderTest(continuous_test_utils.TpuMultiProcContinuousTest):
   world_size = _WORLD
 
-  def _skip_unsupported_layout(self, layout: str) -> None:
-    if layout == "reversed" and not _HAS_SORT_RANKS:
-      self.skipTest("dist.new_group has no sort_ranks in this torch version")
+  def setUp(self) -> None:
+    # The test methods run in the worker processes, and before PyTorch 2.14 a
+    # skip raised there is reported as an error that also skips the rest of the
+    # class. So the parent process decides the skips here, before it sends the
+    # test to the workers.
+    if reason := _skip_reason(self._testMethodName):
+      self.skipTest(reason)
+    super().setUp()
 
   @parameterized.named_parameters(*_LAYOUT_CASES)
   def test_uneven_group_collectives(self, layout: str):
-    self._skip_unsupported_layout(layout)
     run_uneven_group_collectives(layout=layout)
 
   def test_interleaved_subgroup_and_world_collectives(self):
@@ -752,24 +794,14 @@ class SubgroupLaunchOrderTest(continuous_test_utils.TpuMultiProcContinuousTest):
 
   @parameterized.named_parameters(*_LAYOUT_CASES)
   def test_uneven_group_kernels(self, layout: str):
-    self._skip_unsupported_layout(layout)
     run_uneven_group_kernels(layout=layout)
 
   @parameterized.named_parameters(*_LAYOUT_CASES)
   def test_uneven_group_sparse_core_programs(self, layout: str):
-    self._skip_unsupported_layout(layout)
     run_uneven_group_sparse_core_programs(layout=layout)
 
   @parameterized.named_parameters(*_LAYOUT_CASES)
   def test_uneven_group_all_to_all(self, layout: str):
-    self._skip_unsupported_layout(layout)
-    if layout in _SUBSLICE_LAYOUTS and (
-        (libtpu := utils.libtpu_version()) is not None and libtpu < (0, 0, 51)
-    ):
-      self.skipTest(
-          "The SparseCores halt in all-to-alls of subslice programs before"
-          " libtpu 0.0.51."
-      )
     run_uneven_group_all_to_all(layout=layout)
 
   def test_uneven_pair_scans(self):

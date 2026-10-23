@@ -718,6 +718,7 @@ torch_tpu_py_test(
         "//src/torch_tpu/_internal/distributed:multiprocessing",
         "//src/torch_tpu/_internal/distributed:spmd_util",
         "//src/torch_tpu/_internal/pallas",
+        "//src/torch_tpu/_internal/utils:hardware",
         "//src/torch_tpu/_internal/utils:test_utils",
         "@pypi//jax",
     ],
