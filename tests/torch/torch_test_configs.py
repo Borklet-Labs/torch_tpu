@@ -32,6 +32,11 @@ TEST_EXCLUSIONS: Final[Mapping[str, Mapping[str, str | Sequence[str]]]] = {
     "distributed/fsdp/test_utils": {
         "TestUtils": ["test_apply_to_tensors"],
     },
+    "distributed/pipelining/test_microbatch": {
+        "MicrobatchTestsDevices": [
+            "test_split_block_mask",
+        ],
+    },
     "dynamo/test_debug_utils": {
         "TestInductorConfigOverrideIntegration": [
             "test_config_override_backward_propagation",
@@ -52,6 +57,73 @@ TEST_EXCLUSIONS: Final[Mapping[str, Mapping[str, str | Sequence[str]]]] = {
             "test_tensor_set_data_cross_device",
             "test_tensor_set_data_cross_device_placeholder_metadata",
             "test_torch_device_is_initialized",
+        ],
+    },
+    "dynamo/test_streams": {
+        "TestStreams": [
+            "test_event_record_wait_on_default_stream",
+            "test_event_synchronize_control_deps_e2e",
+            "test_event_synchronize_inductor_lowering",
+            "test_inductor_lowering",
+            "test_record_stream",
+            "test_record_stream_inductor_output_code",
+        ],
+    },
+    "functorch/test_eager_transforms": {
+        "TestCompileTransforms": [
+            "test_compile_dynamic_grad_vjp_trace_pytree",
+            "test_compile_vmap_hessian",
+            "test_grad_deprecated_api",
+        ],
+        "TestCompileTransformsDevice": [
+            "test_compile_dynamic_grad_vjp_trace_pytree",
+            "test_compile_vmap_hessian",
+            "test_grad_deprecated_api",
+        ],
+        "TestExamplesCorrectness": [
+            "test_maml_omniglot",
+            "test_resnet18_per_sample_grads",
+        ],
+        "TestExamplesCorrectnessDevice": [
+            "test_maml_omniglot",
+            "test_resnet18_per_sample_grads",
+        ],
+        "TestFunctionalize": [
+            "test_multioutput_inplace_slice_view",
+        ],
+        "TestFunctionalizeDevice": [
+            "test_multioutput_inplace_slice_view",
+        ],
+        "TestHessian": [
+            "test_hessian_vectorize_correctness_multi_input",
+        ],
+        "TestHessianDevice": [
+            "test_hessian_vectorize_correctness_multi_input",
+        ],
+        "TestHigherOrderOperatorInteraction": [
+            "test_basic_sum",
+            "test_grad_grad_sum",
+            "test_grad_sum",
+            "test_no_grad_inside_grad",
+            "test_no_grad_outside_grad",
+            "test_vmap_grad_sum",
+            "test_vmap_sum",
+        ],
+        "TestJac": [
+            "test_against_reference_multi_input",
+            "test_against_reference_multi_input_multi_output",
+        ],
+        "TestJacDevice": [
+            "test_against_reference_multi_input",
+            "test_against_reference_multi_input_multi_output",
+        ],
+        "TestVmapOfGrad": [
+            "test_per_sample_grads_embeddingnet",
+            "test_per_sample_grads_simple",
+        ],
+        "TestVmapOfGradDevice": [
+            "test_per_sample_grads_embeddingnet",
+            "test_per_sample_grads_simple",
         ],
     },
     "inductor/test_slice_scatter_chunking": {
@@ -145,6 +217,49 @@ TEST_EXCLUSIONS: Final[Mapping[str, Mapping[str, str | Sequence[str]]]] = {
             "test_pool_invalid_size",
             "test_pooling_bfloat16",
             "test_pooling_zero_stride",
+        ],
+    },
+    "profiler/test_execution_trace": {
+        "TestExecutionTrace": [
+            "test_execution_trace_env_enabled_with_kineto",
+            "test_execution_trace_with_kineto",
+        ],
+    },
+    "profiler/test_profiler": {
+        "TestProfilerDevice": [
+            "test_activity_filter_empty_list",
+            "test_basic_chrome_trace",
+            "test_basic_profile",
+            "test_dynamic_toggle",
+            "test_kineto_kernel_metadata_in_trace",
+            "test_kineto_profiler_with_environment_variable",
+            "test_memory_profiler",
+            "test_overhead_activities_own_no_device_time",
+            "test_profile_all_threads",
+            "test_trace_only_export_matches_default",
+        ],
+        "TestProfilerEventsParityDevice": [
+            "test_profiler_flow_events_parity",
+        ],
+        "TestPythonChromeTraceExport": [
+            "test_python_export_gzip",
+            "test_python_export_matches_kineto",
+            "test_python_export_plain_json",
+        ],
+    },
+    "quantization/core/experimental/test_bits": {
+        "TestBits": [
+            "test_cat",
+            "test_types",
+        ],
+    },
+    "quantization/core/experimental/test_floatx": {
+        "TestFloat4Dtype": [
+            "test_float4_e2m1fn_x2",
+        ],
+        "TestFloat8Dtype": [
+            "test_cast_round_trip",
+            "test_float8_e8m0fnu_rne_rounding",
         ],
     },
     "test_accelerator": {

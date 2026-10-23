@@ -188,7 +188,6 @@ torch_tpu_torch_test(
 
 torch_tpu_torch_test(
     name = "distributed_pipelining_microbatch_test",
-    notap = "b/563402379",  # NOTAP_OK=torch tests
     torch_test_module = "distributed/pipelining/test_microbatch",
 )
 
@@ -348,7 +347,6 @@ torch_tpu_torch_test(
 
 torch_tpu_torch_test(
     name = "dynamo_streams_test",
-    notap = "b/563402379",  # NOTAP_OK=torch tests
     torch_test_module = "dynamo/test_streams",
 )
 
@@ -418,7 +416,7 @@ torch_tpu_torch_test(
 
 torch_tpu_torch_test(
     name = "functorch_eager_transforms_test",
-    notap = "b/563402379",  # NOTAP_OK=torch tests
+    shard_count = 2,
     torch_test_module = "functorch/test_eager_transforms",
 )
 
@@ -616,7 +614,6 @@ torch_tpu_torch_test(
 
 torch_tpu_torch_test(
     name = "profiler_execution_trace_test",
-    notap = "b/563402379",  # NOTAP_OK=torch tests
     torch_test_module = "profiler/test_execution_trace",
 )
 
@@ -628,7 +625,6 @@ torch_tpu_torch_test(
 
 torch_tpu_torch_test(
     name = "profiler_profiler_test",
-    notap = "b/563402379",  # NOTAP_OK=torch tests
     shard_count = 4,
     torch_test_module = "profiler/test_profiler",
 )
@@ -640,13 +636,11 @@ torch_tpu_torch_test(
 
 torch_tpu_torch_test(
     name = "quantization_core_experimental_bits_test",
-    notap = "b/563402379",  # NOTAP_OK=torch tests
     torch_test_module = "quantization/core/experimental/test_bits",
 )
 
 torch_tpu_torch_test(
     name = "quantization_core_experimental_floatx_test",
-    notap = "b/563402379",  # NOTAP_OK=torch tests
     torch_test_module = "quantization/core/experimental/test_floatx",
 )
 
