@@ -120,6 +120,96 @@ void AppendExecutionTaskReadyFutures(const ExecutionTask& execution_task,
   }
 }
 
+// Attempts to compile one or more eager execution tasks using the given
+// MLIR context.
+// All successfully compiled ExecutionTasks are added to
+// `flattened_execution_tasks` and futures for their execution are added to
+// `materialization_futures`.
+// If any error occurs, the error is stored in `materialization_error` if it is
+// currently not set (OkStatus()).
+void ProcessEagerExecution(
+    EagerExecution eager_execution, mlir::MLIRContext& mlir_context,
+    std::vector<ExecutionTask>& flattened_execution_tasks,
+    std::vector<xla::Future<void>>& materialization_futures,
+    absl::Status& materialization_error) {
+  PrepareTraversalsOptions options{
+      .graph_split_mode = eager_execution.settings.graph_split_mode,
+      .core_pinning_mode = eager_execution.core_pinning_mode,
+      .skinny_sparse_core_offload_mode = GetSkinnySparseCoreOffloadMode(),
+  };
+  auto traversals =
+      PrepareTraversals(std::move(eager_execution.must_execute),
+                        eager_execution.must_materialize, options);
+
+  auto tasks_result =
+      MakeExecutionTasks(std::move(traversals), mlir_context,
+                         *eager_execution.settings.compilation_context,
+                         eager_execution.settings.compilation_mode,
+                         eager_execution.settings.reason);
+
+  if (tasks_result.first_error.ok()) {
+    tasks_result.first_error =
+        VerifyMustMaterialize(eager_execution.must_materialize);
+  }
+  if (!tasks_result.first_error.ok() && materialization_error.ok()) {
+    materialization_error = tasks_result.first_error;
+  }
+  for (auto& execution_task : tasks_result.execution_tasks) {
+    AppendExecutionTaskReadyFutures(execution_task, materialization_futures);
+    flattened_execution_tasks.push_back(std::move(execution_task));
+  }
+}
+
+void ProcessCompiledExecution(
+    CompiledExecution compiled_execution,
+    std::vector<ExecutionTask>& flattened_execution_tasks,
+    std::vector<xla::Future<void>>& materialization_futures) {
+  AppendExecutionTaskReadyFutures(compiled_execution, materialization_futures);
+  flattened_execution_tasks.push_back(std::move(compiled_execution));
+}
+
+void ProcessSnapshotRequest(
+    SnapshotRequest snapshot_request,
+    std::vector<xla::Future<void>>& materialization_futures,
+    absl::Status& materialization_error) {
+  if (materialization_error.ok()) {
+    snapshot_request.futures.insert(
+        snapshot_request.futures.end(),
+        std::make_move_iterator(materialization_futures.begin()),
+        std::make_move_iterator(materialization_futures.end()));
+    auto snapshot = std::make_shared<EventSnapshot>(
+        xla::JoinFutures(snapshot_request.futures));
+    snapshot_request.snapshot_promise.Set(std::move(snapshot));
+  } else {
+    snapshot_request.snapshot_promise.Set(
+        std::make_shared<EventSnapshot>(materialization_error));
+    materialization_error = absl::OkStatus();
+  }
+  snapshot_request.futures.clear();
+  materialization_futures.clear();
+}
+
+void ProcessReadyWorkItem(
+    ReadyWork ready_work_item, mlir::MLIRContext& mlir_context,
+    std::vector<ExecutionTask>& flattened_execution_tasks,
+    std::vector<xla::Future<void>>& materialization_futures,
+    absl::Status& materialization_error) {
+  if (auto* eager_execution = std::get_if<EagerExecution>(&ready_work_item)) {
+    ProcessEagerExecution(std::move(*eager_execution), mlir_context,
+                          flattened_execution_tasks, materialization_futures,
+                          materialization_error);
+  } else if (auto* compiled_execution =
+                 std::get_if<CompiledExecution>(&ready_work_item)) {
+    ProcessCompiledExecution(std::move(*compiled_execution),
+                             flattened_execution_tasks,
+                             materialization_futures);
+  } else {
+    auto& snapshot_request = std::get<SnapshotRequest>(ready_work_item);
+    ProcessSnapshotRequest(std::move(snapshot_request), materialization_futures,
+                           materialization_error);
+  }
+}
+
 // Processes a MaterializationTask, converting it into a sequence of
 // ExecutionTasks.
 std::vector<ExecutionTask> ProcessMaterializationTask(
@@ -130,74 +220,18 @@ std::vector<ExecutionTask> ProcessMaterializationTask(
   std::vector<ExecutionTask> flattened_execution_tasks;
   std::vector<xla::Future<void>> materialization_futures;
   absl::Status materialization_error = absl::OkStatus();
-  auto snapshots_to_materialize =
-      PrepareSnapshotMaterializations(task.device_index, task.stream_id);
-  for (auto& snapshot_to_materialize : snapshots_to_materialize) {
-    PrepareTraversalsOptions options{
-        .graph_split_mode = snapshot_to_materialize.settings.graph_split_mode,
-        .core_pinning_mode = snapshot_to_materialize.core_pinning_mode,
-        .skinny_sparse_core_offload_mode = GetSkinnySparseCoreOffloadMode(),
-    };
-    auto traversals =
-        PrepareTraversals(std::move(snapshot_to_materialize.must_execute),
-                          snapshot_to_materialize.must_materialize, options);
-
-    auto tasks_result = MakeExecutionTasks(
-        std::move(traversals), mlir_context,
-        *snapshot_to_materialize.settings.compilation_context,
-        snapshot_to_materialize.settings.compilation_mode,
-        snapshot_to_materialize.settings.reason);
-
-    if (tasks_result.first_error.ok()) {
-      tasks_result.first_error =
-          VerifyMustMaterialize(snapshot_to_materialize.must_materialize);
-    }
-    for (const auto& execution_task : tasks_result.execution_tasks) {
-      AppendExecutionTaskReadyFutures(execution_task, materialization_futures);
-    }
-    if (snapshot_to_materialize.execution_task.has_value()) {
-      AppendExecutionTaskReadyFutures(*snapshot_to_materialize.execution_task,
-                                      materialization_futures);
-      tasks_result.execution_tasks.push_back(
-          std::move(*snapshot_to_materialize.execution_task));
-    }
-    if (!tasks_result.first_error.ok() && materialization_error.ok()) {
-      materialization_error = tasks_result.first_error;
-    }
-    materialization_futures.insert(
-        materialization_futures.end(),
-        std::make_move_iterator(snapshot_to_materialize.futures.begin()),
-        std::make_move_iterator(snapshot_to_materialize.futures.end()));
-
-    if (snapshot_to_materialize.snapshot_promise.has_value()) {
-      auto& snapshot_promise = *snapshot_to_materialize.snapshot_promise;
-      if (materialization_error.ok()) {
-        auto snapshot = std::make_shared<EventSnapshot>(
-            xla::JoinFutures(materialization_futures));
-        snapshot_promise.Set(std::move(snapshot));
-      } else {
-        snapshot_promise.Set(
-            std::make_shared<EventSnapshot>(materialization_error));
-        materialization_error = absl::OkStatus();
-      }
-      materialization_futures.clear();
-    }
-
-    if (flattened_execution_tasks.empty()) {
-      flattened_execution_tasks = std::move(tasks_result.execution_tasks);
-    } else {
-      flattened_execution_tasks.insert(
-          flattened_execution_tasks.end(),
-          std::make_move_iterator(tasks_result.execution_tasks.begin()),
-          std::make_move_iterator(tasks_result.execution_tasks.end()));
-    }
+  auto ready_work = GetReadyWork(task.device_index, task.stream_id);
+  for (auto& ready_work_item : ready_work) {
+    ProcessReadyWorkItem(std::move(ready_work_item), mlir_context,
+                         flattened_execution_tasks, materialization_futures,
+                         materialization_error);
   }
 
   ABSL_VLOG(2) << "[MaterializationWorker] Created "
                << flattened_execution_tasks.size()
                << " ExecutionTasks for stream " << task.stream_id
                << " on device " << task.device_index << " to satisfy "
-               << snapshots_to_materialize.size() << " snapshots";
+               << ready_work.size() << " ready work blocks";
 
   if (!materialization_error.ok()) {
     materialization_futures.push_back(xla::Future<void>(materialization_error));

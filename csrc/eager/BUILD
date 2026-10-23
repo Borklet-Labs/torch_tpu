@@ -1181,6 +1181,7 @@ torch_tpu_cc_test(
         ":device_buffer_utils",
         ":events_queue",
         ":materialize",
+        ":split_traversal",
         ":structured_log_buffer",
         ":tensor_to_buffer",
         "//csrc/common:cache_key",
