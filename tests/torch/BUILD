@@ -567,27 +567,23 @@ torch_tpu_torch_test(
 
 torch_tpu_torch_test(
     name = "nn_convolution_test",
-    notap = "b/563402379",  # NOTAP_OK=torch tests
     shard_count = 8,
     torch_test_module = "nn/test_convolution",
 )
 
 torch_tpu_torch_test(
     name = "nn_dropout_test",
-    notap = "b/563402379",  # NOTAP_OK=torch tests
     torch_test_module = "nn/test_dropout",
 )
 
 torch_tpu_torch_test(
     name = "nn_embedding_test",
-    notap = "b/563402379",  # NOTAP_OK=torch tests
-    shard_count = 2,
+    shard_count = 8,
     torch_test_module = "nn/test_embedding",
 )
 
 torch_tpu_torch_test(
     name = "nn_init_test",
-    notap = "b/563402379",  # NOTAP_OK=torch tests
     torch_test_module = "nn/test_init",
 )
 
@@ -599,7 +595,6 @@ torch_tpu_torch_test(
 
 torch_tpu_torch_test(
     name = "nn_multihead_attention_test",
-    notap = "b/563402379",  # NOTAP_OK=torch tests
     torch_test_module = "nn/test_multihead_attention",
 )
 
@@ -615,7 +610,6 @@ torch_tpu_torch_test(
 
 torch_tpu_torch_test(
     name = "nn_pooling_test",
-    notap = "b/563402379",  # NOTAP_OK=torch tests
     shard_count = 4,
     torch_test_module = "nn/test_pooling",
 )
