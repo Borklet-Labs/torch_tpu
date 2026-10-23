@@ -16791,6 +16791,28 @@ class OpsGradUnitTest(TorchTpuVsCpuTestBase):
     assert_with_tol(functools.partial(fn, norm=3.0, keepdim=True))
     assert_with_tol(functools.partial(fn, norm=2.0, dim=1, keepdim=True))
 
+  def test_linalg_vector_norm_empty_tensor_nan_ord(self):
+    def fn_1d(device):
+      x = torch.empty((0,), device=device)
+      return torch.linalg.vector_norm(x, ord=float("nan"))
+
+    def fn_1d_keepdim(device):
+      x = torch.empty((0,), device=device)
+      return torch.linalg.vector_norm(x, ord=float("nan"), keepdim=True)
+
+    def fn_3d(device):
+      x = torch.empty((2, 0, 3), device=device)
+      return torch.linalg.vector_norm(x, ord=float("nan"), dim=1)
+
+    def fn_3d_keepdim(device):
+      x = torch.empty((2, 0, 3), device=device)
+      return torch.linalg.vector_norm(x, ord=float("nan"), dim=1, keepdim=True)
+
+    self.assert_close_tpu_vs_cpu(fn_1d)
+    self.assert_close_tpu_vs_cpu(fn_1d_keepdim)
+    self.assert_close_tpu_vs_cpu(fn_3d)
+    self.assert_close_tpu_vs_cpu(fn_3d_keepdim)
+
   def test_norm_out(self):
     def test_fn(
         device, p=2.0, dim=None, keepdim=False, dtype=None, empty_out=False
