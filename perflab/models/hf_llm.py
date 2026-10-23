@@ -117,3 +117,34 @@ def phi_3_mini_4k_instruct_forward(ctx: context_lib.Context):
       num_layers=num_layers,
   )
   return model, (), inputs
+
+
+@registry_lib.register_benchmark(
+    stepper=step_lib.StepperType.TRAINING,
+    presubmit=registry_lib.PresubmitPolicy.RUN,
+)
+def phi_3_mini_4k_instruct_training(ctx: context_lib.Context):
+  """Benchmark factory for Phi-3-mini-4k-instruct training."""
+  if ctx.run_scope == context_lib.RunScope.PRESUBMIT:
+    batch_size = 1
+    seq_len = 128
+    num_layers = 2
+  else:
+    batch_size = 1
+    seq_len = 2048
+    num_layers = None
+  model, inputs = _load_hf_causal_lm(
+      ctx,
+      "microsoft/Phi-3-mini-4k-instruct",
+      is_training=True,
+      batch_size=batch_size,
+      seq_len=seq_len,
+      num_layers=num_layers,
+  )
+  opt = torch.optim.AdamW(
+      model.parameters(),
+      lr=1e-4,
+      capturable=True,
+      fused=True,
+  )
+  return model, (), inputs, opt
