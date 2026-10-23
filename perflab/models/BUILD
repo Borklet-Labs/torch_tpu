@@ -76,6 +76,7 @@ internal_target(
     srcs = ["qwen3_8.py"],
     deps = [
         "//perflab:context",
+        "//perflab:model_helpers",
         "//perflab:registry",
         "//perflab:step_lib",
         "//perflab:torch_device_ops",
@@ -91,6 +92,7 @@ internal_target(
     deps = [
         "//perflab:compile",
         "//perflab:context",
+        "//perflab:model_helpers",
         "//perflab:registry",
         "//perflab:step_lib",
         "//perflab:torch_device_ops",
