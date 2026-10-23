@@ -38,6 +38,7 @@ torch_tpu_py_library(
         "gen_benchmarks.py",
         "gpt.py",
         "hf_llm.py",
+        "hf_multimodal.py",
         "hf_text.py",
         "hf_vision.py",
         "llama.py",

@@ -222,6 +222,14 @@ KNOWN_FAILURES: tuple[KnownFailure, ...] = (
         reason="torch.arange(predicted_lengths.max()) in modeling_vits.py",
     ),
     KnownFailure(
+        benchmark="llava_1_5_7b_forward",
+        framework=mode_lib.Framework.TORCHAX,
+        reason=(
+            "aten::_is_all_true in torch_compilable_check on a traced image"
+            " token count in modeling_llava.py"
+        ),
+    ),
+    KnownFailure(
         benchmark="llava_1_5_7b_hf_forward_gen",
         framework=mode_lib.Framework.TORCHAX,
         reason=(
