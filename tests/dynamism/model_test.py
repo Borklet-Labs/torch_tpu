@@ -81,7 +81,9 @@ class ModelTest(seed_test_utils.RepeatableTest):
 
     self.assertEqual(compiled_seq_len, 20)
     self.assertEqual(compiled_seq_len, eager_seq_len)
-    utils.assert_close(compiled_logits, eager_logits, rtol=2e-2, atol=2e-2)
+    # bfloat16 logits differ by up to ~0.025 between eager and compiled on TPU
+    # v6e.
+    utils.assert_close(compiled_logits, eager_logits, rtol=3e-2, atol=3e-2)
     utils.assert_close(compiled_tokens, eager_tokens)
 
 
