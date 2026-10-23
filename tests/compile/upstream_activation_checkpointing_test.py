@@ -1466,10 +1466,10 @@ class ActivationCheckpointingSharedModuleTests(seed_test_utils.RepeatableTest):
 
   def test_sac_with_bound_method_context_fn(self):
     # Provenance: test_activation_checkpointing.py::ActivationCheckpointingSharedModuleTests.test_sac_with_bound_method_context_fn
-    # TODO: b/576283069 - Remove skip once minimum OSS PyTorch is >= 2.12.0.
-    if test_utils.get_torch_version() < (2, 12):
+    # TODO: b/576283069 - Remove skip once minimum OSS PyTorch is >= 2.15.0.
+    if test_utils.get_torch_version() < (2, 15):
       self.skipTest(
-          "Tracing bound method context_fn in SAC requires PyTorch >= 2.12"
+          "Tracing bound method context_fn in SAC requires PyTorch >= 2.15"
       )
     device = torch.device("tpu")
 
