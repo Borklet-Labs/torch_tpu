@@ -1461,6 +1461,8 @@ presubmit {
   path_expression_exclusion: "torch_tpu/examples/..."
   # Documentation tooling tests don't use RNGs.
   path_expression_exclusion: "torch_tpu/google/docs/..."
+  # Internal tooling tests don't use RNGs.
+  path_expression_exclusion: "torch_tpu/google/tools/..."
   path_expression_exclusion: "torch_tpu/oss/ci/..."
   # go/keep-sorted end
   check_contents {
