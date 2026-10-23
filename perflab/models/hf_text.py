@@ -85,3 +85,22 @@ def bert_base_forward(ctx: context_lib.Context):
       seq_len=seq_len,
   )
   return model, (), inputs
+
+
+@registry_lib.register_benchmark(
+    stepper=step_lib.StepperType.FORWARD,
+    presubmit=registry_lib.PresubmitPolicy.RUN,
+)
+def bart_base_forward(ctx: context_lib.Context):
+  """Benchmark factory for BART-Base (facebook/bart-base) forward."""
+  if ctx.run_scope == context_lib.RunScope.PRESUBMIT:
+    batch_size = 1
+    seq_len = 128
+  else:
+    batch_size = 4
+    # 1024 is the maximum number of BART positions.
+    seq_len = 1024
+  model, inputs = _load_hf_text_model(
+      ctx, "facebook/bart-base", batch_size=batch_size, seq_len=seq_len
+  )
+  return model, (), inputs
