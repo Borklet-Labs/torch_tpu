@@ -61,6 +61,7 @@ torch_tpu_py_library(
         "//perflab:step_lib",
         "//perflab:torch_device_ops",
         "//perflab/gen_utils",
+        "//perflab/model_utils:ragged_moe",
         "//shims/torch:pytorch",
         "//tests:module_registry",
     ],

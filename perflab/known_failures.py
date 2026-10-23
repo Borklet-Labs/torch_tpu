@@ -181,6 +181,13 @@ KNOWN_FAILURES: tuple[KnownFailure, ...] = (
         framework=mode_lib.Framework.TORCHAX,
         reason="aten::_grouped_mm has no lowering",
     ),
+    # `torch.tpu.ops.ragged_dot` is a TorchTPU custom op without a TorchAX
+    # lowering.
+    KnownFailure(
+        benchmark="gemma_4_26b_a4b_ragged_moe_12_layers_forward",
+        framework=mode_lib.Framework.TORCHAX,
+        reason="torch.tpu.ops.ragged_dot has no TorchAX lowering",
+    ),
     # The model forward needs a concrete value from a traced tensor (for a
     # shape or Python control flow), which fails under `jax.jit`.
     KnownFailure(
