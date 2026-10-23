@@ -19111,6 +19111,25 @@ class OpsGradUnitTest(TorchTpuVsCpuTestBase):
 
     self.assert_close_tpu_vs_cpu(run_nondivisible_3d)
 
+    # 7. 2D Adaptive pooling: Zero spatial output_size and zero batch size
+    x_2d_zero = torch.randn(2, 3, 4, 4, dtype=torch.float32)
+    x_2d_zero_batch = torch.randn(0, 3, 4, 4, dtype=torch.float32)
+
+    def run_zero_output_2d(dev):
+      x = x_2d_zero.detach().clone().to(dev)
+      out1 = torch.nn.functional.adaptive_avg_pool2d(x, (0, 0))
+      out2 = torch.empty(0, dtype=torch.float32, device=dev)
+      torch.ops.aten.adaptive_avg_pool2d.out(x, [0, 2], out=out2)
+      out3 = torch.nn.functional.adaptive_avg_pool2d(x[0], (0, 0))
+      x_zero_batch = (
+          x_2d_zero_batch.detach().clone().to(dev).requires_grad_(True)
+      )
+      out4 = torch.nn.functional.adaptive_avg_pool2d(x_zero_batch, (2, 2))
+      out4.backward(torch.ones_like(out4))
+      return out1, out2, out3, out4, x_zero_batch.grad
+
+    self.assert_close_tpu_vs_cpu(run_zero_output_2d)
+
   def test_ldexp_large_exponent(self):
     def compute(device):
       exponent = 127
