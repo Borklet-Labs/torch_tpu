@@ -104,31 +104,6 @@ KNOWN_FAILURES: tuple[KnownFailure, ...] = (
             " (b/574632209)"
         ),
     ),
-    # TODO(b/574560944): Remove once XLA:TPU cl/1000409835 lands. It fixes the
-    # HloDeduplicationKey hash collision from cl/999454734 (b/573904712).
-    #
-    # The ragged-dot custom fusions of the MoE experts fail to compile on v7
-    # with a `program_name_collision` RET_CHECK.
-    KnownFailure(
-        benchmark="gemma_4_26b_a4b_6_layers_training",
-        framework=mode_lib.Framework.TORCH,
-        device_kind=target_lib.DeviceKind.TPU,
-        run_modes=frozenset({common.RunMode.COMPILED}),
-        reason=(
-            "XLA:TPU program_name_collision: HloDeduplicationKey hash collision"
-            " between ragged-dot fusions"
-        ),
-    ),
-    KnownFailure(
-        benchmark="gpt_oss_20b_4_layers_training",
-        framework=mode_lib.Framework.TORCH,
-        device_kind=target_lib.DeviceKind.TPU,
-        run_modes=frozenset({common.RunMode.COMPILED}),
-        reason=(
-            "XLA:TPU program_name_collision: HloDeduplicationKey hash collision"
-            " between ragged-dot fusions"
-        ),
-    ),
     # TODO(b/568037427): Remove the TorchAX entries as their failures are fixed.
     #
     # `torch._grouped_mm`, used by the transformers MoE experts, has no
