@@ -641,8 +641,8 @@ class ActivationCheckpointingTest(seed_test_utils.RepeatableTest):
     self.assertEqual(list(barriers[1].args[0]), [x_2, w_shared, dx_0])
     self.assertEqual(set(w_shared.users.keys()), set(barriers))
 
-  def test_invalid_graphs_raise(self):
-    # 1. Missing `'val'` metadata on a candidate barrier input raises.
+  def test_missing_val_metadata_raises(self):
+    # Missing `'val'` metadata on a candidate barrier input raises.
     gm, nodes = _build_two_layer_graph(include_forward=False)
     del nodes["x_2"].meta["val"]
     with self.assertRaisesRegex(  # ASSERT_RAISES_OK=Compiler pass unit test.
@@ -650,7 +650,7 @@ class ActivationCheckpointingTest(seed_test_utils.RepeatableTest):
     ):
       mark_activation_checkpoints.apply(gm)
 
-    # 2. Interleaved remat regions raise without mutating the graph.
+  def test_interleaved_regions_share_one_barrier(self):
     graph = fx.Graph()
     sample = torch.empty(4, 8)
     x_1 = graph.placeholder("x_1")
@@ -663,14 +663,13 @@ class ActivationCheckpointingTest(seed_test_utils.RepeatableTest):
     b_2 = _add_remat_node(graph, relu, (a_2,), 1, "b_2")
     out = _add_bwd_node(graph, torch.ops.aten.add.Tensor, (a_1, b_2), "out")
     graph.output((out,))
-    nodes_before = [(n.op, n.target, n.args) for n in graph.nodes]
-    with self.assertRaisesRegex(  # ASSERT_RAISES_OK=Compiler pass unit test.
-        ValueError, "Checkpoint regions 1 and 0 have interleaved remat nodes"
-    ):
-      mark_activation_checkpoints.apply(graph)
-    self.assertEqual(
-        nodes_before, [(n.op, n.target, n.args) for n in graph.nodes]
-    )
+
+    mark_activation_checkpoints.apply(graph)
+
+    barriers = _get_barriers(graph)
+    self.assertLen(barriers, 1)
+    self.assertEqual(list(barriers[0].args[0]), [x_2, x_1])
+    self.assertIs(_first_non_getitem_after(barriers[0]), a_2)
 
   def test_selective_activation_checkpointing_with_layernorm_on_tpu(self):
     debug = self._run_and_verify_tpu_model(
