@@ -17584,6 +17584,69 @@ class OpsGradUnitTest(TorchTpuVsCpuTestBase):
     # One static frame, then one dynamic frame that serves all later sizes.
     self.assertEqual(counter.frame_count, 2)
 
+  @parameterized.product(
+      device=["tpu", "cpu"],  # CPU is the upstream control.
+      requires_grad=[False, True],
+      bias_shape=[None, (7,), (5, 7), (1, 5, 7)],
+  )
+  def test_linear_fake_symbolic_shapes(self, device, requires_grad, bias_shape):
+    """Tests linear on symbolic-shape FakeTensors doesn't specialize dims."""
+    # Before PyTorch 2.13, upstream `at::native::matmul` called `numel()` on its
+    # input, which throws on (or specializes) symbolic shapes. Upstream CPU
+    # linear always uses it, and TPU linear falls back to it for a broadcast
+    # bias that requires grad.
+    uses_upstream_matmul = device == "cpu" or (
+        requires_grad and bias_shape is not None and len(bias_shape) > 1
+    )
+    torch_version = utils.parse_version(torch.__version__)
+    if uses_upstream_matmul and torch_version < (2, 13, 0):
+      self.skipTest(
+          "Upstream matmul needs PyTorch >= 2.13 for symbolic shapes."
+      )
+    # Batch, sequence and out_features are dynamic; in_features is static.
+    x = torch.randn(3, 5, 16, device=device, requires_grad=requires_grad)
+    weight = torch.randn(7, 16, device=device, requires_grad=requires_grad)
+    inputs = [(x, (True, True, False)), (weight, (True, False))]
+    if bias_shape is None:
+      fn = lambda x_fake, w_fake: torch.nn.functional.linear(x_fake, w_fake)
+    else:
+      bias = torch.randn(bias_shape, device=device, requires_grad=requires_grad)
+      inputs.append((bias, tuple(size != 1 for size in bias_shape)))
+      fn = torch.nn.functional.linear
+
+    specialized = run_with_dynamic_dims(fn, inputs, no_grad=not requires_grad)
+    self.assertEmpty(specialized)
+
+  @parameterized.product(
+      device=["tpu", "cpu"],  # CPU is the upstream control.
+      broadcast_bias=[False, True],
+  )
+  def test_linear_compile_dynamic_shapes(self, device, broadcast_bias):
+    """Tests compiled linear recompiles only once for dynamic shapes."""
+    torch._dynamo.reset()
+    self.addCleanup(torch._dynamo.reset)
+    counter = dynamo_testing.CompileCounter()
+
+    @torch.compile(backend=counter, fullgraph=True)
+    def fn(x, w, b):
+      return torch.nn.functional.linear(x, w, b)
+
+    torch.manual_seed(42)
+    for n in (3, 5, 7):
+      # Batch, sequence and out_features all change between calls.
+      x = torch.randn(n, n + 2, 16)
+      w = torch.randn(n + 1, 16)
+      b = torch.randn((n + 2, n + 1) if broadcast_bias else (n + 1,))
+      x_dev, w_dev, b_dev = (t.to(device).requires_grad_() for t in (x, w, b))
+      # The compiled graph runs the same ops, so compare it to eager on the
+      # same device.
+      utils.assert_close(
+          fn(x_dev, w_dev, b_dev),
+          torch.nn.functional.linear(x_dev, w_dev, b_dev),
+      )
+    # One static frame, then one dynamic frame that serves all later sizes.
+    self.assertEqual(counter.frame_count, 2)
+
   def test_max_pool2d_with_indices(self):
     """Tests nn.functional.max_pool2d_float32_sample54."""
     device = torch.device("tpu")
