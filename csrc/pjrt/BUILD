@@ -224,14 +224,20 @@ torch_tpu_cc_test(
     exec_properties = {
         "cpp_link.mem": "16g",  # Needed for asan.
     },
+    requires_libtpu = True,
     tags = ["requires-tpu-v5lite"],
     deps = [
         ":pjrt_execute",
         ":pjrt_state",
         "//csrc/common:compilation",
+        "//csrc/common:error_utils",
+        "//csrc/common:mlir_test_modules",
         "//csrc/common:oss_test_main",
         "//csrc/common:shape",
         "//csrc/common:status_test_utils",
+        "@com_google_absl//absl/base:nullability",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
         "@stablehlo//stablehlo/integrations/cpp/builder:attr_type_builder_util",
         "@xla//xla:literal",
@@ -239,6 +245,7 @@ torch_tpu_cc_test(
         "@xla//xla:xla_data_proto_cc",
         "@xla//xla/hlo/builder:xla_builder",
         "@xla//xla/hlo/builder:xla_computation",
+        "@xla//xla/hlo/ir:hlo",
         "@xla//xla/pjrt:pjrt_client",
         "@xla//xla/pjrt:pjrt_executable",
     ],

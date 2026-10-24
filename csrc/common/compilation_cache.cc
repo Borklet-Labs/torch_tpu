@@ -1034,11 +1034,9 @@ void CompilationCache::EnqueueCompilation(
   auto executable_builder = [contexted_module = std::move(contexted_module)](
                                 xla::PjRtClient& client,
                                 UniqueCompileOptions options) mutable {
-    return AdaptXlaError(
-        CompileAndLoadMaybeSubslice(
-            client, std::move(contexted_module).ToMaybeOwningMlirModule(),
-            std::move(*options)),
-        /* context= */ "failed to compile MLIR module");
+    return CompileAndLoadMlirModule(
+        client, std::move(contexted_module).ToMaybeOwningMlirModule(),
+        std::move(*options));
   };
 
   compilation_pool_->Schedule(

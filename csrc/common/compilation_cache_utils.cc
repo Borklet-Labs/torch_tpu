@@ -52,7 +52,7 @@ namespace torch_tpu {
 
 // Remember to increment this whenever TorchTPU's behavior changes enough to
 // invalidate the tier-2 cache.
-constexpr int kTorchTpuBinaryVersion = 5;
+constexpr int kTorchTpuBinaryVersion = 6;
 
 std::ostream& operator<<(std::ostream& os, const CacheTier tier) {
   switch (tier) {
