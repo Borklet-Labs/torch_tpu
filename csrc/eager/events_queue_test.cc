@@ -492,7 +492,7 @@ TEST_F(EventsQueueTest, PrepareStreamTraversals) {
   ExchangeCurrentStreamId(device_index, default_stream_id);
 
   // Ask for a plan to materialize the stream for a and b (but not c).
-  EventSnapshot::Record(device_index, default_stream_id, {});
+  (void)EventSnapshot::Record(device_index, default_stream_id, {});
   auto ready_work = GetReadyWork(device_index, default_stream_id);
   ASSERT_EQ(ready_work.size(), 2);
   ASSERT_TRUE(std::holds_alternative<EagerExecution>(ready_work[0]));
@@ -567,7 +567,7 @@ TEST_F(EventsQueueTest, RetainsFailedCompletedFutures) {
 
   RecordAsyncDeviceToHost(std::move(failed_future));
 
-  EventSnapshot::Record(device_index, stream_id);
+  (void)EventSnapshot::Record(device_index, stream_id);
   auto ready_work = GetReadyWork(device_index, stream_id);
   ASSERT_EQ(ready_work.size(), 1);
   ASSERT_TRUE(std::holds_alternative<SnapshotRequest>(ready_work[0]));
@@ -587,7 +587,7 @@ TEST_F(EventsQueueTest, PrunesSuccessfulCompletedFutures) {
 
   RecordAsyncDeviceToHost(std::move(ok_future));
 
-  EventSnapshot::Record(device_index, stream_id);
+  (void)EventSnapshot::Record(device_index, stream_id);
   auto ready_work = GetReadyWork(device_index, stream_id);
   ASSERT_EQ(ready_work.size(), 1);
   ASSERT_TRUE(std::holds_alternative<SnapshotRequest>(ready_work[0]));
@@ -620,7 +620,7 @@ TEST_F(EventsQueueTest, StreamMustMaterializeEmptyTensors) {
   EXPECT_TRUE(ready_work.empty());
 
   // A stream materialization that must materialize the empty tensor does so.
-  EventSnapshot::Record(device_index, stream_id, {empty_list});
+  (void)EventSnapshot::Record(device_index, stream_id, {empty_list});
   ready_work = GetReadyWork(device_index, stream_id);
   ASSERT_EQ(ready_work.size(), 2);
   ASSERT_TRUE(std::holds_alternative<EagerExecution>(ready_work[0]));
@@ -681,7 +681,7 @@ TEST_F(EventsQueueTest, MultipleSnapshotsPulled) {
   auto list_a = ref_a.device_buffer_list();
   RecordDeferredOpCreated(list_a);
 
-  EventSnapshot::Record(list_a->device_index(), list_a->stream_id(), {});
+  (void)EventSnapshot::Record(list_a->device_index(), list_a->stream_id(), {});
 
   TT_ASSERT_OK_AND_ASSIGN(auto refs_b, DeviceBufferList::CreateDeferred(
                                            OpName::kAdd, DummyBuilder, {},
@@ -690,7 +690,7 @@ TEST_F(EventsQueueTest, MultipleSnapshotsPulled) {
   auto list_b = ref_b.device_buffer_list();
   RecordDeferredOpCreated(list_b);
 
-  EventSnapshot::Record(list_b->device_index(), list_b->stream_id(), {});
+  (void)EventSnapshot::Record(list_b->device_index(), list_b->stream_id(), {});
 
   // Get the pending snapshots.
   auto ready_work = GetReadyWork(list_a->device_index(), list_a->stream_id());
@@ -738,7 +738,7 @@ TEST_F(EventsQueueTest, MultipleEagerExecutionsPulled) {
   auto list_b = ref_b.device_buffer_list();
   RecordDeferredOpCreated(list_b);
 
-  EventSnapshot::Record(list_b->device_index(), list_b->stream_id(), {});
+  (void)EventSnapshot::Record(list_b->device_index(), list_b->stream_id(), {});
 
   // Get the pending snapshots.
   auto ready_work = GetReadyWork(list_a->device_index(), list_a->stream_id());
@@ -775,7 +775,7 @@ TEST_F(EventsQueueTest, NotPulledAfterLastSnapshot) {
   auto list_a = ref_a.device_buffer_list();
   RecordDeferredOpCreated(list_a);
 
-  EventSnapshot::Record(list_a->device_index(), list_a->stream_id(), {});
+  (void)EventSnapshot::Record(list_a->device_index(), list_a->stream_id(), {});
 
   // Enqueue an op after the snapshot, but don't request a second snapshot.
   TT_ASSERT_OK_AND_ASSIGN(auto refs_b, DeviceBufferList::CreateDeferred(
@@ -872,7 +872,7 @@ TEST_F(EventsQueueTest, NodeMatcherAcrossSmallAndLargeSpans) {
       nodes.push_back(refs[0].device_buffer_list());
       RecordDeferredOpCreated(refs[0].device_buffer_list());
     }
-    EventSnapshot::Record(device_index, stream_id, nodes);
+    (void)EventSnapshot::Record(device_index, stream_id, nodes);
     auto ready_work = GetReadyWork(device_index, stream_id);
     ASSERT_EQ(ready_work.size(), 2);
     ASSERT_TRUE(std::holds_alternative<EagerExecution>(ready_work[0]));
@@ -959,7 +959,7 @@ TEST_F(EventsQueueTest, EventSnapshotDropsTrailingNoOpEagerExecution) {
                    GraphSplitMode::kSplitGraph);
 
   // Record an event snapshot.
-  EventSnapshot::Record(device_index, stream_id);
+  (void)EventSnapshot::Record(device_index, stream_id);
 
   auto ready_work = GetReadyWork(device_index, stream_id);
 
@@ -1277,7 +1277,7 @@ TEST(RepeatedOpsTest, DoesNotDetectRepetitionsOverSnapshots) {
 
   // Request an event snapshot.
   auto [device_index, stream_id] = GetCurrentDeviceStreamId();
-  EventSnapshot::Record(device_index, stream_id);
+  (void)EventSnapshot::Record(device_index, stream_id);
 
   // When we push the second repetition, it is not detected, as the state was
   // reset after the snapshot.
