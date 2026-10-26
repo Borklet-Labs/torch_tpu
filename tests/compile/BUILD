@@ -265,6 +265,7 @@ torch_tpu_py_test(
         "requires-net:external",
         "requires-tpu-v5lite",
     ],
+    use_tcmalloc = True,
     deps = [
         "//shims/absl_py/testing:absltest",
         "//shims/torch:pytorch",
