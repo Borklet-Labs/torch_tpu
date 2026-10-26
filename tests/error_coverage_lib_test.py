@@ -19,6 +19,7 @@ from unittest import mock
 
 from absl.testing import absltest
 from tests import error_coverage_lib
+from tests import repo_paths
 
 
 class GetErrorMacroLocsTest(absltest.TestCase):  # ABSLTEST_OK=No RNG used.
@@ -164,6 +165,17 @@ class GetFileToLocsTest(absltest.TestCase):  # ABSLTEST_OK=No RNG used.
         [loc.line_num for loc in file_to_locs["csrc/eager/foo.cc"]], [1]
     )
 
+  def test_skips_internal_files(self):
+    repo_root = self.create_tempdir().full_path
+    macro = "absl::Status F() { return TT_ERROR(error::kInternal); }\n"
+    self._create_file(repo_root, "csrc/eager/foo.cc", macro)
+    self._create_file(repo_root, "google/csrc/foo.cc", macro)
+
+    self.assertCountEqual(
+        error_coverage_lib.get_file_to_locs(repo_root).keys(),
+        ["csrc/eager/foo.cc"],
+    )
+
   def test_rejects_paths_with_the_same_canonical_form(self):
     repo_root = self.create_tempdir().full_path
     macro = "absl::Status F() { return TT_ERROR(error::kInternal); }\n"
@@ -284,6 +296,90 @@ echo "filter=${TESTBRIDGE_TEST_ONLY-unset}" \\
         FileNotFoundError, "errors_test_cov"
     ):
       error_coverage_lib.run_cov_tests(repo_root)
+
+
+class CoverageDataTest(absltest.TestCase):  # ABSLTEST_OK=No RNG used.
+
+  def _write(self, content: str) -> str:
+    return self.create_tempfile("data.yaml", content=content).full_path
+
+  def test_load_reads_the_stats_of_each_file(self):
+    path = self._write(
+        "csrc/a.cc: {infeasible: 0, remaining: 1, total: 2}\n"
+        "csrc/b.cc: {infeasible: 1, remaining: 0, total: 1}\n"
+    )
+
+    self.assertEqual(
+        error_coverage_lib.load_coverage_data(path),
+        {
+            "csrc/a.cc": {"infeasible": 0, "remaining": 1, "total": 2},
+            "csrc/b.cc": {"infeasible": 1, "remaining": 0, "total": 1},
+        },
+    )
+
+  def test_load_raises_if_the_data_file_is_missing(self):
+    with self.assertRaises(  # ASSERT_RAISES_OK=Tests the tool's own errors.
+        FileNotFoundError
+    ):
+      error_coverage_lib.load_coverage_data(
+          os.path.join(self.create_tempdir().full_path, "missing.yaml")
+      )
+
+  def test_load_rejects_a_data_file_that_is_not_a_mapping(self):
+    path = self._write("- csrc/a.cc\n")
+
+    with self.assertRaisesRegex(  # ASSERT_RAISES_OK=Tests the tool's own errors.
+        ValueError, "data.yaml"
+    ):
+      error_coverage_lib.load_coverage_data(path)
+
+  def test_format_file_adds_the_license_header(self):
+    data = {"csrc/a.cc": {"infeasible": 0, "remaining": 3, "total": 4}}
+
+    content = error_coverage_lib.format_coverage_data_file(data)
+
+    self.assertTrue(content.startswith("# Copyright "), content)
+    self.assertIn("Apache License, Version 2.0", content)
+    self.assertTrue(
+        content.endswith(error_coverage_lib.dump_coverage_data(data)), content
+    )
+
+  def test_formatted_file_round_trips_through_load(self):
+    data = {"csrc/a.cc": {"infeasible": 0, "remaining": 3, "total": 4}}
+    path = self._write(error_coverage_lib.format_coverage_data_file(data))
+
+    self.assertEqual(error_coverage_lib.load_coverage_data(path), data)
+
+  def test_dump_writes_one_sorted_line_per_file(self):
+    self.assertEqual(
+        error_coverage_lib.dump_coverage_data({
+            "csrc/b.cc": {"total": 2, "remaining": 1, "infeasible": 0},
+            "csrc/a.cc": {"total": 1, "remaining": 0, "infeasible": 1},
+        }),
+        "csrc/a.cc: {infeasible: 1, remaining: 0, total: 1}\n"
+        "csrc/b.cc: {infeasible: 0, remaining: 1, total: 2}\n",
+    )
+
+
+class UpdateCommandTest(absltest.TestCase):  # ABSLTEST_OK=No RNG used.
+
+  def test_uses_blaze_in_google3(self):
+    command = error_coverage_lib.update_command(
+        os.path.join("/runfiles", repo_paths.G3_REPO_PATH)
+    )
+
+    self.assertStartsWith(command, "blaze test ")
+    self.assertIn(
+        f"//{repo_paths.G3_REPO_PATH}/tests:error_coverage_test", command
+    )
+    self.assertIn("--test_arg=--print_coverage_data", command)
+
+  def test_uses_bazel_in_oss(self):
+    command = error_coverage_lib.update_command("/runfiles/_main")
+
+    self.assertIn("bazel test ", command)
+    self.assertIn("//tests:error_coverage_test", command)
+    self.assertIn("--test_arg=--print_coverage_data", command)
 
 
 if __name__ == "__main__":

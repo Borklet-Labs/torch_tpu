@@ -35,6 +35,7 @@ import subprocess
 
 from absl import logging
 from tests import repo_paths
+import yaml
 
 # The error tests to run in coverage mode, relative to the repository root.
 # They must be data dependencies of the target that runs them.
@@ -85,6 +86,10 @@ _NEED_TO_COVER_MACROS = (
 
 # The prefix of paths in google3, e.g. in `__FILE__`.
 _G3_PREFIX = repo_paths.G3_REPO_PATH + "/"
+
+# The prefix of the internal files, which Copybara doesn't export. Their error
+# macros aren't checked, so that google3 and OSS can share the baseline.
+_INTERNAL_PREFIX = "google/"
 
 # The internal C++ directory that Copybara moves to `csrc/` in OSS.
 _OSS_OVERLAY_CSRC_PREFIX = "oss/torch_tpu/csrc/"
@@ -155,7 +160,7 @@ def get_file_to_locs(repo_root: str) -> dict[str, list[ErrorMacroLine]]:
 
   Returns:
     The error macros in each C++ file that has any, keyed by the canonical
-    path of the file.
+    path of the file. Internal files (under `google/`) are skipped.
 
   Raises:
     ValueError: If two files have the same canonical path.
@@ -169,6 +174,8 @@ def get_file_to_locs(repo_root: str) -> dict[str, list[ErrorMacroLine]]:
       if not locs:
         continue
       path = canonicalize_path(os.path.relpath(cpp_file, repo_root))
+      if path.startswith(_INTERNAL_PREFIX):
+        continue
       if path in canonical_to_file:
         raise ValueError(
             f"{canonical_to_file[path]} and {cpp_file} have the same canonical"
@@ -508,3 +515,96 @@ def get_per_file_coverage(
         )
     )
   return result
+
+
+# The baseline coverage data, relative to the repository root.
+COVERAGE_DATA_PATH = "tests/error_coverage_data.yaml"
+
+
+class _FlowDict(dict):
+  """A dict that PyYAML dumps in the inline (flow) style."""
+
+
+def _represent_flow_dict(
+    dumper: yaml.SafeDumper, data: _FlowDict
+) -> yaml.MappingNode:
+  return dumper.represent_mapping(
+      "tag:yaml.org,2002:map", sorted(data.items()), flow_style=True
+  )
+
+
+yaml.add_representer(_FlowDict, _represent_flow_dict, Dumper=yaml.SafeDumper)
+
+
+def load_coverage_data(path: str) -> dict[str, Mapping[str, int]]:
+  """Loads a coverage data file.
+
+  Args:
+    path: The coverage data file.
+
+  Returns:
+    The coverage statistics of each file, keyed by its canonical path.
+
+  Raises:
+    FileNotFoundError: If the coverage data file doesn't exist.
+    ValueError: If the coverage data file isn't a mapping.
+  """
+  with open(path) as f:
+    data = yaml.safe_load(f) or {}
+  if not isinstance(data, dict):
+    raise ValueError(f"{path} must be a mapping, got {type(data).__name__}.")
+  return data
+
+
+def dump_coverage_data(data: Mapping[str, Mapping[str, int]]) -> str:
+  """Returns the coverage data as YAML, with one line per file, sorted."""
+  return yaml.safe_dump(
+      {path: _FlowDict(stats) for path, stats in sorted(data.items())},
+      # Prevent line breaks - we want one line per entry.
+      width=float("inf"),
+  )
+
+
+# The license header of the coverage data files, which the OSS lint requires.
+_COVERAGE_DATA_HEADER = """\
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""
+
+
+def format_coverage_data_file(data: Mapping[str, Mapping[str, int]]) -> str:
+  """Returns the contents of a coverage data file, with the license header."""
+  return _COVERAGE_DATA_HEADER + dump_coverage_data(data)
+
+
+def update_command(repo_root: str) -> str:
+  """Returns the command that prints the new coverage data.
+
+  Args:
+    repo_root: The repository root in the runfiles, which tells whether this
+      runs in google3 (Blaze) or in OSS (Bazel).
+  """
+  if repo_root.endswith(repo_paths.G3_REPO_PATH):
+    return (
+        "blaze test -c opt"
+        f" //{repo_paths.G3_REPO_PATH}/tests:error_coverage_test"
+        " --test_arg=--print_coverage_data --test_output=all"
+    )
+  return (
+      "bazel test --config=ci_tpu_v5"
+      ' --run_under="$(pwd)/ci/tools/parallel_accelerator_execute.sh"'
+      " //tests:error_coverage_test --test_arg=--print_coverage_data"
+      " --test_output=all"
+  )
