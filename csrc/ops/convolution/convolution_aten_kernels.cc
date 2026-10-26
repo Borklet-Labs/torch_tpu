@@ -32,7 +32,6 @@
 #include "c10/core/ScalarType.h"
 #include "csrc/common/aten_utils.h"
 #include "csrc/common/cache_key.h"
-#include "csrc/common/context_states.h"
 #include "csrc/common/dimension_types.h"
 #include "csrc/common/dtype.h"
 #include "csrc/common/error_utils.h"
@@ -597,7 +596,8 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> AtenConvolutionBackward(
             ConvolutionBackward(grad_output, input, weight, bias_sizes, stride,
                                 padding, dilation, transposed, output_padding,
                                 groups, output_mask, std::move(param_keys)));
-        auto to_tensor = [&](int idx) -> at::Tensor {
+        auto to_tensor =
+            [&](int idx) -> at::Tensor {  // REF_CAPTURE_OK=called locally
           if (!output_mask[idx]) return at::Tensor();
           return MakeTensor(std::move(results[idx]));
         };

@@ -99,7 +99,7 @@ absl::StatusOr<MlirOpResults<2>> BuildComplexL2PivotedLuShlo(
   const int64_t col_dim = rank - 1;
   Dimensions batch_dims(a_shape.begin(), a_shape.begin() + row_dim);
 
-  auto make_shape_1d = [&](int64_t d) {
+  auto make_shape_1d = [&](int64_t d) {  // REF_CAPTURE_OK=called locally
     Dimensions s = batch_dims;
     s.push_back(d);
     return s;
@@ -678,15 +678,17 @@ at::Tensor& AtenLinalgLuSolveOut(const at::Tensor& lu, const at::Tensor& pivots,
                .op_param_cache_keys = std::move(step_keys)});
         };
 
-        const auto l_inversion = [&](at::Tensor& t) {
-          return solve_triangular_step(t, /*upper=*/false,
-                                       /*unitriangular=*/true, "L");
-        };
+        const auto l_inversion =
+            [&](at::Tensor& t) {  // REF_CAPTURE_OK=called locally
+              return solve_triangular_step(t, /*upper=*/false,
+                                           /*unitriangular=*/true, "L");
+            };
 
-        const auto u_inversion = [&](at::Tensor& t) {
-          return solve_triangular_step(t, /*upper=*/true,
-                                       /*unitriangular=*/false, "U");
-        };
+        const auto u_inversion =
+            [&](at::Tensor& t) {  // REF_CAPTURE_OK=called locally
+              return solve_triangular_step(t, /*upper=*/true,
+                                           /*unitriangular=*/false, "U");
+            };
 
         out.copy_(b);
         if (inversion_order_is_p_l_u) {

@@ -163,6 +163,15 @@ class SpmdSafeDecoratorTest(continuous_test_utils.TpuMultiProcContinuousTest):
 
   @classmethod
   def _run_test_given_id(cls, test_id: str, **kwargs: Any) -> None:
+    if dist.is_initialized():
+      # Warm up `dist.barrier()` so its 1-element int64 all_reduce is cached in
+      # the C++ compilation cache before clearing `_DUMP_DIR`. Otherwise, when
+      # non-zero ranks finish a test and enter `finally: dist.barrier()` while
+      # rank 0 is still inspecting `_DUMP_DIR`, `dist.barrier()` compiles and
+      # dumps an extra `all_reduce` MLIR module on those ranks.
+      torch.accelerator.synchronize()
+      dist.barrier()
+      torch.accelerator.synchronize()
     # Clear compiler MLIR dumps from previous tests on this worker rank.
     shutil.rmtree(f"{_DUMP_DIR}/rank_{cls.rank}", ignore_errors=True)
     # Flush Dynamo cache so subsequent tests trigger fresh compilation passes.

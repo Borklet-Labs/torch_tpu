@@ -16005,6 +16005,75 @@ class MaskedSoftmaxErrorTest(et.ErrorTestBase):
           dim=1,
       )
 
+  def test_unique_dim_zero_rank(self):
+    with et.assert_raises_message(
+        IndexError,
+        tpu="""unique_dim(): expected tensor with at least 1 dimension, got 0""",
+        gpu="""Dimension specified as 0 but tensor has no dimensions""",
+    ):
+      torch.unique(
+          torch.tensor(0.0, device=et.device()),
+          dim=0,
+      )
+
+  def test_unique_dim_out_of_bounds(self):
+    with et.assert_raises_message(
+        IndexError,
+        tpu="""unique_dim(): expected dimension to be in range [-2, 1], got 5""",
+        gpu="""Dimension out of range (expected to be in range of [-2, 1], but got 5)""",
+    ):
+      torch.unique(
+          torch.ones(2, 3, device=et.device()),
+          dim=5,
+      )
+
+  def test_unique_dim_multiple_zero_dims(self):
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""unique_dim(): expected at most 1 zero sized dimension when applying unique on a zero sized dimension, got 2""",
+        gpu="""Number of zero sized dimensions is more than one, so unique cannot be applied """,
+    ):
+      torch.unique(
+          torch.empty(0, 0, 3, device=et.device()),
+          dim=0,
+      )
+
+  def test_unique_dim_unselected_zero_dim(self):
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""unique_dim(): expected 0 unselected zero sized dimensions, got 1""",
+        gpu="""There are 0 sized dimensions, and they aren't selected, so unique cannot be applied""",
+    ):
+      torch.unique(
+          torch.empty(0, 3, device=et.device()),
+          dim=1,
+      )
+
+  @parameterized.named_parameters(
+      dict(
+          testcase_name="complex64",
+          dtype=torch.complex64,
+          tpu_dtype="complex64",
+          gpu_dtype="ComplexFloat",
+      ),
+      dict(
+          testcase_name="float8_e4m3fn",
+          dtype=torch.float8_e4m3fn,
+          tpu_dtype="float8_e4m3fn",
+          gpu_dtype="Float8_e4m3fn",
+      ),
+  )
+  def test_unique_dim_unsupported_dtypes(self, dtype, tpu_dtype, gpu_dtype):
+    with et.assert_raises_message(
+        NotImplementedError,
+        tpu=f"""unique_dim(): not implemented for {tpu_dtype}""",
+        gpu=f""""unique_dim" not implemented for '{gpu_dtype}'""",
+    ):
+      torch.unique(
+          torch.empty(0, 3, dtype=dtype, device=et.device()),
+          dim=0,
+      )
+
   def test_pow_unsupported_dtypes(self):
     """Tests that pow with unsupported bool tensor inputs fails with expected error."""
     base = torch.tensor([True, False], dtype=torch.bool, device=et.device())

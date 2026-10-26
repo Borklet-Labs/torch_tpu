@@ -70,24 +70,6 @@ class KnownFailure:
 KNOWN_FAILURES: tuple[KnownFailure, ...] = (
     # TorchTPU.
     #
-    # TODO(b/571695076): Remove once the 4096 parameter training step fits.
-    #
-    # The eager-default, eager-optimized and compiled training steps exceed the
-    # XLA:TPU entry computation parameter limit.
-    KnownFailure(
-        benchmark="synthetic_4096_params_training",
-        framework=mode_lib.Framework.TORCH,
-        device_kind=target_lib.DeviceKind.TPU,
-        run_modes=frozenset({
-            common.RunMode.EAGER_DEFAULT,
-            common.RunMode.EAGER_OPTIMIZED,
-            common.RunMode.COMPILED,
-        }),
-        reason=(
-            "the fused forward, backward and AdamW step needs more XLA"
-            " parameters (~20.5k) than supported (~16.3k)"
-        ),
-    ),
     # TODO(b/574632209): Remove once XLA:TPU cl/1001433059 lands. It fixes
     # `TpuConvolutionRewriter` for non-`f0b_i0o->0bf` dimension orders.
     # Repro: //perflab:distributed_dev_benchmarks_ws8
@@ -102,31 +84,6 @@ KNOWN_FAILURES: tuple[KnownFailure, ...] = (
             " instruction to have shape equal to bf16[2048,2048,2048], actual"
             " shape is bf16[2048,2048,1] on multiply(%slice, %silu_backward)"
             " (b/574632209)"
-        ),
-    ),
-    # TODO(b/574560944): Remove once XLA:TPU cl/1000409835 lands. It fixes the
-    # HloDeduplicationKey hash collision from cl/999454734 (b/573904712).
-    #
-    # The ragged-dot custom fusions of the MoE experts fail to compile on v7
-    # with a `program_name_collision` RET_CHECK.
-    KnownFailure(
-        benchmark="gemma_4_26b_a4b_6_layers_training",
-        framework=mode_lib.Framework.TORCH,
-        device_kind=target_lib.DeviceKind.TPU,
-        run_modes=frozenset({common.RunMode.COMPILED}),
-        reason=(
-            "XLA:TPU program_name_collision: HloDeduplicationKey hash collision"
-            " between ragged-dot fusions"
-        ),
-    ),
-    KnownFailure(
-        benchmark="gpt_oss_20b_4_layers_training",
-        framework=mode_lib.Framework.TORCH,
-        device_kind=target_lib.DeviceKind.TPU,
-        run_modes=frozenset({common.RunMode.COMPILED}),
-        reason=(
-            "XLA:TPU program_name_collision: HloDeduplicationKey hash collision"
-            " between ragged-dot fusions"
         ),
     ),
     # TODO(b/568037427): Remove the TorchAX entries as their failures are fixed.

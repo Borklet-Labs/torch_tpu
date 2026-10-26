@@ -39,7 +39,6 @@
 #include "absl/types/span.h"
 #include "c10/util/Exception.h"
 #include "csrc/common/cache_key.h"
-#include "csrc/common/context_states.h"
 #include "csrc/common/env_vars.h"
 #include "csrc/common/status_builder.h"
 #include "csrc/common/status_test_utils.h"
@@ -1510,6 +1509,33 @@ TEST(ErrorMessageGuidelinesDeathTest, StartsWithUppercaseLetter) {
       HasSubstr("start with a lowercase character"));
 }
 
+TEST(ErrorMessageGuidelinesDeathTest,
+     StartsWithUppercaseLetterDoesNotSuggestReplacement) {
+  // Lowercasing the first word may produce a wrong suggestion (e.g. for
+  // acronyms), so the check must not suggest a replacement: the message ends
+  // right after the sentence.
+  EXPECT_DEATH(
+      ThrowWithMessage("CPU tensors are not supported"),
+      HasSubstr(
+          "The error message should start with a lowercase character.\n"));
+}
+
+TEST(ErrorMessageGuidelinesDeathTest,
+     StartsWithAllowedUppercaseWordAsPrefixOfLongerWord) {
+  // Allowed uppercase words must only match at a word boundary.
+  EXPECT_DEATH(ThrowWithMessage("XLAB is not supported"),
+               HasSubstr("start with a lowercase character"));
+  EXPECT_DEATH(ThrowWithMessage("PjRtClient must be initialized"),
+               HasSubstr("start with a lowercase character"));
+  EXPECT_DEATH(ThrowWithMessage("TorchTPUs are not supported"),
+               HasSubstr("start with a lowercase character"));
+  EXPECT_DEATH(ThrowWithMessage("XLA_FLAGS is not set"),
+               HasSubstr("start with a lowercase character"));
+  // After context prefix.
+  EXPECT_DEATH(ThrowWithMessage("failed to compile: XLAB is not supported"),
+               HasSubstr("start with a lowercase character"));
+}
+
 TEST(ErrorMessageGuidelinesDeathTest, NoSpaceSurroundingXlaErrorSentinel) {
   // Missing space before.
   EXPECT_DEATH(
@@ -1611,10 +1637,22 @@ TEST(ErrorMessageGuidelinesPassTest, StartsWithNonLetter) {
   EXPECT_THROW(ThrowWithMessage("-1 is not a valid dimension"), c10::Error);
 }
 
+TEST(ErrorMessageGuidelinesPassTest, StartsWithAllowedUppercaseWord) {
+  EXPECT_THROW(ThrowWithMessage("TorchTPU does not support this"), c10::Error);
+  EXPECT_THROW(ThrowWithMessage("TorchTPU's cache is full"), c10::Error);
+  EXPECT_THROW(ThrowWithMessage("PjRt client must be initialized"), c10::Error);
+  EXPECT_THROW(ThrowWithMessage("XLA compilation is not supported"),
+               c10::Error);
+  EXPECT_THROW(ThrowWithMessage("XLA"), c10::Error);
+  // After context prefix.
+  EXPECT_THROW(ThrowWithMessage("failed to compile: XLA is not supported"),
+               c10::Error);
+}
+
 TEST(ErrorMessageGuidelinesPassTest, ArbitraryAllowedFormats) {
   // Has 'must', but no 'got'.
   EXPECT_THROW(ThrowWithMessage("the dtype must not be float32"), c10::Error);
-  EXPECT_THROW(ThrowWithMessage("PjRtClient must be initialized"), c10::Error);
+  EXPECT_THROW(ThrowWithMessage("PjRt client must be initialized"), c10::Error);
   // Starts with 'failed to', but no following ': '.
   EXPECT_THROW(ThrowWithMessage("failed to compile MLIR module"), c10::Error);
   EXPECT_THROW(ThrowWithMessage("failed to match label:Torch"), c10::Error);
@@ -1638,6 +1676,28 @@ TEST(ErrorMessageGuidelinesPassTest, MultilineErrorMessage) {
 }
 
 #endif  // TT_CHECKS_ERROR_FORMAT
+
+TEST(AdaptExternalErrorMessage, KeepsAllowedUppercaseStartingWords) {
+  EXPECT_EQ(AdaptExternalErrorMessage("TorchTPU does not support this"),
+            "TorchTPU does not support this");
+  EXPECT_EQ(AdaptExternalErrorMessage("PjRt client is not initialized."),
+            "PjRt client is not initialized");
+  EXPECT_EQ(AdaptExternalErrorMessage("XLA: compilation failed"),
+            "XLA: compilation failed");
+  EXPECT_EQ(AdaptExternalErrorMessage("XLA"), "XLA");
+}
+
+TEST(AdaptExternalErrorMessage,
+     LowercasesAllowedUppercaseWordPrefixOfLongerWord) {
+  EXPECT_EQ(AdaptExternalErrorMessage("XLAB is not supported"),
+            "xLAB is not supported");
+  EXPECT_EQ(AdaptExternalErrorMessage("PjRtClient is not initialized"),
+            "pjRtClient is not initialized");
+  EXPECT_EQ(AdaptExternalErrorMessage("TorchTPUs are not supported"),
+            "torchTPUs are not supported");
+  EXPECT_EQ(AdaptExternalErrorMessage("XLA_FLAGS is not set"),
+            "xLA_FLAGS is not set");
+}
 
 TEST(ErrorUtilsTest, GetRequiredEnvOnceReturnsValueWhenSet) {
   setenv(kTorchTpuTopologyEnvVar, "2x2x1", 1);

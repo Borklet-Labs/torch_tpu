@@ -1088,6 +1088,7 @@ TORCH_LIBRARY_IMPL(aten, PrivateUse1, m) {
   ImplStable<OpName::kUniform_>(m, AtenUniform_);
   ImplStable<OpName::kUnique2>(m, AtenUnique2);
   ImplStable<OpName::kUniqueConsecutive>(m, AtenUniqueConsecutive);
+  ImplStable<OpName::kUniqueDim>(m, AtenUniqueDim);
   ImplStable<OpName::kUniqueDimConsecutive>(m, AtenUniqueDimConsecutive);
   ImplStable<OpName::kUpsampleBicubic2dAaOut>(m, AtenUpsampleBicubic2dAaOut);
   ImplStable<OpName::kUpsampleBicubic2dBackwardGradInput>(
@@ -1595,7 +1596,8 @@ TORCH_LIBRARY_IMPL(tpu, Meta, m) {
           int64_t max_non_zeroes_per_row) -> at::Tensor {
         TT_THROW_IF_ERROR(ValidateSparseGatherInputs(
             row_pointers, indices, operand, max_non_zeroes_per_row));
-        return at::empty({indices.size(0), operand.size(1)}, operand.options());
+        return at::empty_symint({indices.sym_size(0), operand.sym_size(1)},
+                                operand.options());
       });
   ImplInternal<OpName::kSparseGatherBackward>(
       m,
@@ -1652,9 +1654,9 @@ TORCH_LIBRARY_IMPL(tpu, Meta, m) {
         std::vector<at::Tensor> results;
         results.reserve(dummy_outputs.size());
         for (const auto& dummy : dummy_outputs) {
-          results.push_back(
-              at::empty(dummy.sizes(),
-                        csr_tensors[0].options().dtype(dummy.scalar_type())));
+          results.push_back(at::empty_symint(
+              dummy.sym_sizes(),
+              csr_tensors[0].options().dtype(dummy.scalar_type())));
         }
         return results;
       });

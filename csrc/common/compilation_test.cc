@@ -30,14 +30,18 @@
 #include "csrc/common/compilation_test_helper.h"
 #include "csrc/common/error_utils.h"
 #include "csrc/common/excess_precision.h"
+#include "csrc/common/mlir_test_modules.h"
 #include "csrc/common/status_test_utils.h"
 #include "csrc/pjrt/pjrt_state.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "xla/hlo/builder/xla_builder.h"
 #include "xla/hlo/builder/xla_computation.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/layout_util.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_executable.h"
+#include "xla/service/computation_layout.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/xla.pb.h"
@@ -177,6 +181,97 @@ TEST_F(TupleArgumentsTest, RejectsOrFlattensNestedTupledArguments) {
     return;
   }
   ExpectDeviceShapesOfThreeArguments(*std::move(loaded_executable));
+}
+
+// TPU programs with more than 2000 arguments take them as a single tuple.
+constexpr int kFlatArguments = 2000;
+constexpr int kTupledArguments = kFlatArguments + 1;
+
+// Returns the parameter shapes of the entry computation of `executable`.
+std::vector<xla::Shape> GetEntryParameterShapes(
+    const xla::PjRtLoadedExecutable& executable) {
+  absl::StatusOr<std::vector<std::shared_ptr<xla::HloModule>>> modules =
+      executable.GetHloModules();
+  ABSL_CHECK_OK(modules);             // CRASH_OK
+  ABSL_CHECK_EQ(modules->size(), 1);  // CRASH_OK
+  const xla::ComputationLayout& layout =
+      (*modules)[0]->entry_computation_layout();
+  std::vector<xla::Shape> shapes;
+  for (int i = 0; i < layout.parameter_count(); ++i) {
+    shapes.push_back(layout.parameter_shape(i));
+  }
+  return shapes;
+}
+
+TEST_F(TupleArgumentsTest, TuplesArgumentsAboveThreshold) {
+  TT_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<xla::PjRtLoadedExecutable> executable,
+      CompileAndLoadMlirModule(*client_,
+                               MakeSumOfArgumentsModule(kTupledArguments),
+                               xla::CompileOptions()));
+
+  const std::vector<xla::Shape> parameter_shapes =
+      GetEntryParameterShapes(*executable);
+  ASSERT_EQ(parameter_shapes.size(), 1);
+  ASSERT_TRUE(parameter_shapes[0].IsTuple());
+  EXPECT_EQ(parameter_shapes[0].tuple_shapes().size(), kTupledArguments);
+}
+
+TEST_F(TupleArgumentsTest, KeepsArgumentsFlatAtThreshold) {
+  TT_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<xla::PjRtLoadedExecutable> executable,
+      CompileAndLoadMlirModule(*client_,
+                               MakeSumOfArgumentsModule(kFlatArguments),
+                               xla::CompileOptions()));
+
+  const std::vector<xla::Shape> parameter_shapes =
+      GetEntryParameterShapes(*executable);
+  ASSERT_EQ(parameter_shapes.size(), kFlatArguments);
+  for (const xla::Shape& shape : parameter_shapes) {
+    EXPECT_TRUE(shape.IsArray());
+  }
+}
+
+TEST_F(TupleArgumentsTest, TuplesExplicitArgumentLayouts) {
+  xla::Shape shape = xla::ShapeUtil::MakeShape(xla::F32, {128, 128});
+  *shape.mutable_layout() = xla::LayoutUtil::MakeLayout({1, 0});
+  xla::CompileOptions options;
+  options.argument_layouts = std::vector<xla::Shape>(kTupledArguments, shape);
+
+  TT_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<xla::PjRtLoadedExecutable> executable,
+      CompileAndLoadMlirModule(*client_,
+                               MakeSumOfArgumentsModule(kTupledArguments),
+                               std::move(options)));
+
+  const std::vector<xla::Shape> parameter_shapes =
+      GetEntryParameterShapes(*executable);
+  ASSERT_EQ(parameter_shapes.size(), 1);
+  ASSERT_TRUE(parameter_shapes[0].IsTuple());
+  EXPECT_EQ(parameter_shapes[0].tuple_shapes().size(), kTupledArguments);
+}
+
+TEST_F(TupleArgumentsTest, KeepsArgumentLayoutsOfAlreadyTupledArguments) {
+  xla::Shape shape = xla::ShapeUtil::MakeShape(xla::F32, {128, 128});
+  *shape.mutable_layout() = xla::LayoutUtil::MakeLayout({1, 0});
+  xla::CompileOptions options;
+  options.parameter_is_tupled_arguments = true;
+  options.argument_layouts =
+      std::vector<xla::Shape>{xla::ShapeUtil::MakeTupleShape(
+          std::vector<xla::Shape>(kTupledArguments, shape))};
+
+  // The layouts aren't wrapped into a nested tuple again.
+  TT_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<xla::PjRtLoadedExecutable> executable,
+      CompileAndLoadMlirModule(*client_,
+                               MakeSumOfArgumentsModule(kTupledArguments),
+                               std::move(options)));
+
+  const std::vector<xla::Shape> parameter_shapes =
+      GetEntryParameterShapes(*executable);
+  ASSERT_EQ(parameter_shapes.size(), 1);
+  ASSERT_TRUE(parameter_shapes[0].IsTuple());
+  EXPECT_EQ(parameter_shapes[0].tuple_shapes().size(), kTupledArguments);
 }
 
 }  // namespace

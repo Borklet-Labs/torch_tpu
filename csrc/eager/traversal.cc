@@ -357,7 +357,8 @@ GraphKey Traversal::BuildGraphKey() const {
                  << ToString(deferred_op.op_name()) << ") | inputs: ["
                  << absl::StrJoin(
                         deferred_op.inputs(), ", ",
-                        [&](std::string* out, const DeviceBufferRef& op_input) {
+                        [&]  // REF_CAPTURE_OK=called synchronously
+                        (std::string* out, const DeviceBufferRef& op_input) {
                           absl::StrAppend(out, tensor_index_map.at(op_input));
                         })
                  << "] | params: {"
@@ -395,7 +396,8 @@ GraphKey Traversal::BuildGraphKey() const {
         cloned_param_keys.has_value() ? *cloned_param_keys : orig_param_keys;
     graph.AddOp(
         deferred_op.op_name(), op_param_keys, deferred_op.donated_indices(),
-        [&](GraphSignature::OpSignatureBuilder& op) {
+        [&]  // REF_CAPTURE_OK=called synchronously
+        (GraphSignature::OpSignatureBuilder& op) {
           for (const DeviceBufferRef& op_input : deferred_op.inputs()) {
             op.AddInput(tensor_index_map.at(op_input));
           }

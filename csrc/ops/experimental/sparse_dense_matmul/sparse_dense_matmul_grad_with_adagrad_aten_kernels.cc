@@ -141,10 +141,11 @@ auto SparseDenseMatmulGradWithAdagradBuilder(
       if (is_rowwise) {
         auto zero = MakeScalarConstant(builder, 0.0f, mlir::ElementType::F32);
         auto dtype = torch_tpu::GetTensorTypeOrDie(grad_sq).getElementType();
-        auto reduce_builder = [&](mlir::RegionBuilder& rb) {
-          mlir::stablehlo::buildReduceBody<mlir::stablehlo::AddOp>(
-              dtype, rb.getRegion(), rb.getOpBuilder());
-        };
+        auto reduce_builder = [&]  // REF_CAPTURE_OK=called synchronously
+            (mlir::RegionBuilder& rb) {
+              mlir::stablehlo::buildReduceBody<mlir::stablehlo::AddOp>(
+                  dtype, rb.getRegion(), rb.getOpBuilder());
+            };
         auto dim_size = mlir::stablehlo::GetDimensionSize(grad, 1);
         auto dim_size_f32 = mlir::stablehlo::ConvertElementType(
             dim_size, op_builder.getF32Type());

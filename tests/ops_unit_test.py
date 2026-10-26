@@ -16791,6 +16791,28 @@ class OpsGradUnitTest(TorchTpuVsCpuTestBase):
     assert_with_tol(functools.partial(fn, norm=3.0, keepdim=True))
     assert_with_tol(functools.partial(fn, norm=2.0, dim=1, keepdim=True))
 
+  def test_linalg_vector_norm_empty_tensor_nan_ord(self):
+    def fn_1d(device):
+      x = torch.empty((0,), device=device)
+      return torch.linalg.vector_norm(x, ord=float("nan"))
+
+    def fn_1d_keepdim(device):
+      x = torch.empty((0,), device=device)
+      return torch.linalg.vector_norm(x, ord=float("nan"), keepdim=True)
+
+    def fn_3d(device):
+      x = torch.empty((2, 0, 3), device=device)
+      return torch.linalg.vector_norm(x, ord=float("nan"), dim=1)
+
+    def fn_3d_keepdim(device):
+      x = torch.empty((2, 0, 3), device=device)
+      return torch.linalg.vector_norm(x, ord=float("nan"), dim=1, keepdim=True)
+
+    self.assert_close_tpu_vs_cpu(fn_1d)
+    self.assert_close_tpu_vs_cpu(fn_1d_keepdim)
+    self.assert_close_tpu_vs_cpu(fn_3d)
+    self.assert_close_tpu_vs_cpu(fn_3d_keepdim)
+
   def test_norm_out(self):
     def test_fn(
         device, p=2.0, dim=None, keepdim=False, dtype=None, empty_out=False
@@ -17558,6 +17580,69 @@ class OpsGradUnitTest(TorchTpuVsCpuTestBase):
           torch.nn.functional.rms_norm(x, (16,), w, 1e-6),
           rtol=1e-5,
           atol=1e-5,
+      )
+    # One static frame, then one dynamic frame that serves all later sizes.
+    self.assertEqual(counter.frame_count, 2)
+
+  @parameterized.product(
+      device=["tpu", "cpu"],  # CPU is the upstream control.
+      requires_grad=[False, True],
+      bias_shape=[None, (7,), (5, 7), (1, 5, 7)],
+  )
+  def test_linear_fake_symbolic_shapes(self, device, requires_grad, bias_shape):
+    """Tests linear on symbolic-shape FakeTensors doesn't specialize dims."""
+    # Before PyTorch 2.13, upstream `at::native::matmul` called `numel()` on its
+    # input, which throws on (or specializes) symbolic shapes. Upstream CPU
+    # linear always uses it, and TPU linear falls back to it for a broadcast
+    # bias that requires grad.
+    uses_upstream_matmul = device == "cpu" or (
+        requires_grad and bias_shape is not None and len(bias_shape) > 1
+    )
+    torch_version = utils.parse_version(torch.__version__)
+    if uses_upstream_matmul and torch_version < (2, 13, 0):
+      self.skipTest(
+          "Upstream matmul needs PyTorch >= 2.13 for symbolic shapes."
+      )
+    # Batch, sequence and out_features are dynamic; in_features is static.
+    x = torch.randn(3, 5, 16, device=device, requires_grad=requires_grad)
+    weight = torch.randn(7, 16, device=device, requires_grad=requires_grad)
+    inputs = [(x, (True, True, False)), (weight, (True, False))]
+    if bias_shape is None:
+      fn = lambda x_fake, w_fake: torch.nn.functional.linear(x_fake, w_fake)
+    else:
+      bias = torch.randn(bias_shape, device=device, requires_grad=requires_grad)
+      inputs.append((bias, tuple(size != 1 for size in bias_shape)))
+      fn = torch.nn.functional.linear
+
+    specialized = run_with_dynamic_dims(fn, inputs, no_grad=not requires_grad)
+    self.assertEmpty(specialized)
+
+  @parameterized.product(
+      device=["tpu", "cpu"],  # CPU is the upstream control.
+      broadcast_bias=[False, True],
+  )
+  def test_linear_compile_dynamic_shapes(self, device, broadcast_bias):
+    """Tests compiled linear recompiles only once for dynamic shapes."""
+    torch._dynamo.reset()
+    self.addCleanup(torch._dynamo.reset)
+    counter = dynamo_testing.CompileCounter()
+
+    @torch.compile(backend=counter, fullgraph=True)
+    def fn(x, w, b):
+      return torch.nn.functional.linear(x, w, b)
+
+    torch.manual_seed(42)
+    for n in (3, 5, 7):
+      # Batch, sequence and out_features all change between calls.
+      x = torch.randn(n, n + 2, 16)
+      w = torch.randn(n + 1, 16)
+      b = torch.randn((n + 2, n + 1) if broadcast_bias else (n + 1,))
+      x_dev, w_dev, b_dev = (t.to(device).requires_grad_() for t in (x, w, b))
+      # The compiled graph runs the same ops, so compare it to eager on the
+      # same device.
+      utils.assert_close(
+          fn(x_dev, w_dev, b_dev),
+          torch.nn.functional.linear(x_dev, w_dev, b_dev),
       )
     # One static frame, then one dynamic frame that serves all later sizes.
     self.assertEqual(counter.frame_count, 2)

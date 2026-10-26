@@ -19,6 +19,7 @@ from unittest import mock
 
 from absl.testing import absltest
 import torch
+from torch.fx import traceback as fx_traceback
 from torch_tpu._internal.compile.fx_passes import mark_activation_checkpoints
 from torch_tpu._internal.distributed import multiprocessing
 from tests import seed_test_utils
@@ -166,6 +167,10 @@ class ActivationCheckpointingMemoryTest(
     )
 
   def test_fused_step_activation_checkpointing_memory_savings(self):
+    if not hasattr(fx_traceback, "_set_autograd_backward"):
+      # The barriers need the `autograd_backward` tags on the backward ops of
+      # combined forward-loss-backward graphs, which PyTorch 2.11 doesn't set.
+      self.skipTest("This PyTorch doesn't tag backward ops in fused steps.")
     mem_no_ac = self._run_sub_test(use_ac=False, fuse_step=True)
     mem_ac_no_barrier = self._run_sub_test(
         use_ac=True, fuse_step=True, use_barrier=False

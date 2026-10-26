@@ -71,7 +71,7 @@ absl::StatusOr<mlir::MlirOp> BuildEqualShlo(mlir::MlirOp self_input,
 
   return mlir::stablehlo::Reduce(
       builder, {compare_op}, {init_val},
-      [&](mlir::RegionBuilder& rb) {
+      [&](mlir::RegionBuilder& rb) {  // REF_CAPTURE_OK=called synchronously
         mlir::stablehlo::buildReduceBody<mlir::stablehlo::AndOp>(
             bool_type, rb.getRegion(), rb.getOpBuilder());
       },

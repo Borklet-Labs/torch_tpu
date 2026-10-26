@@ -347,7 +347,8 @@ absl::Status DispatchNormal2Out(c10::optional<at::Generator> generator,
                                 llvm::ArrayRef<int64_t> out_dims,
                                 OpParamCacheKeys param_keys) {
   return DispatchRngOpOut(out, generator, mlir_type,
-                          [&](at::Tensor rng_input_state) -> absl::Status {
+                          [&]  // REF_CAPTURE_OK=called synchronously
+                          (at::Tensor rng_input_state) -> absl::Status {
                             return DispatchOpOut<2, 1>(
                                 std::move(builder),
                                 {input_tensor, rng_input_state}, out,
@@ -421,7 +422,8 @@ absl::Status DispatchNormal3Out(c10::optional<at::Generator> generator,
                                 llvm::ArrayRef<int64_t> out_dims,
                                 OpParamCacheKeys param_keys) {
   return DispatchRngOpOut(out, generator, mlir_type,
-                          [&](at::Tensor rng_input_state) -> absl::Status {
+                          [&]  // REF_CAPTURE_OK=called synchronously
+                          (at::Tensor rng_input_state) -> absl::Status {
                             return DispatchOpOut<3, 1>(
                                 std::move(builder),
                                 {input_tensor1, input_tensor2, rng_input_state},

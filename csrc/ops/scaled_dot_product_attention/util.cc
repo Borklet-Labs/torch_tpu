@@ -197,7 +197,9 @@ kiln::Tile ApplyStructuredMask(kiln::Tile s, kiln::Scalar row_block,
   kiln::Tile col = kiln::Iota(i32_shape, 1) + col_start;
 
   std::optional<kiln::Tile> valid;
-  auto also = [&](kiln::Tile m) { valid = valid ? (*valid & m) : m; };
+  auto also = [&](kiln::Tile m) {  // REF_CAPTURE_OK=called locally
+    valid = valid ? (*valid & m) : m;
+  };
   if (config.is_causal) {
     also(row >= col);
     if (config.sliding_window_size.has_value()) {

@@ -363,6 +363,45 @@ def _hoist_tuple_getitems(
         cursor = user
 
 
+def _merge_interleaved_regions(
+    remat_by_region: dict[int, set[fx.Node]],
+    ordered_regions: list[int],
+    node_order: dict[fx.Node, int],
+) -> tuple[dict[int, set[fx.Node]], list[int]]:
+  """Merges each region whose remat nodes reach past the next region's entry.
+
+  Some PyTorch versions (such as 2.11 and 2.14) schedule the remat ops of
+  different checkpoint regions interleaved in the backward graph. The
+  `[entry_idx, next_remat_min)` intervals of such regions would overlap, so the
+  later region is merged into the earlier one, and a single barrier gates both.
+
+  Args:
+    remat_by_region: Mapping from each region's `ac_graph_id` to its remat
+      nodes.
+    ordered_regions: `ac_graph_id`s ordered by their first remat node.
+    node_order: Mapping from each FX Node to its linear graph execution index.
+
+  Returns:
+    The merged `(remat_by_region, ordered_regions)`, with the same meaning.
+  """
+  merged: dict[int, set[fx.Node]] = {}
+  merged_order: list[int] = []
+  max_remat_idx = -1
+  for region_id in ordered_regions:
+    nodes = remat_by_region[region_id]
+    entry_idx = min(node_order[n] for n in nodes)
+    region_max_idx = max(
+        (node_order[n] for n in nodes if _is_remat_node(n)), default=entry_idx
+    )
+    if merged_order and entry_idx <= max_remat_idx:
+      merged[merged_order[-1]] |= nodes
+    else:
+      merged[region_id] = set(nodes)
+      merged_order.append(region_id)
+    max_remat_idx = max(max_remat_idx, region_max_idx)
+  return merged, merged_order
+
+
 def apply(gm_or_graph: fx.GraphModule | fx.Graph) -> None:
   """Inserts a variadic optimization barrier at each checkpoint region entry.
 
@@ -370,8 +409,7 @@ def apply(gm_or_graph: fx.GraphModule | fx.Graph) -> None:
     gm_or_graph: The FX GraphModule or Graph to modify in-place.
 
   Raises:
-    ValueError: If checkpoint regions have interleaved remat nodes in the FX
-      graph, or if a candidate barrier input node is missing `"val"` metadata.
+    ValueError: If a candidate barrier input node is missing `"val"` metadata.
   """
   graph = (
       gm_or_graph.graph
@@ -383,22 +421,14 @@ def apply(gm_or_graph: fx.GraphModule | fx.Graph) -> None:
     return
 
   initial_order = {node: idx for idx, node in enumerate(graph.nodes)}
+  remat_by_region, ordered_regions = _merge_interleaved_regions(
+      remat_by_region, ordered_regions, initial_order
+  )
   entry_nodes = [
       min(remat_by_region[region_id], key=lambda n: initial_order[n])
       for region_id in ordered_regions
   ]
   entry_indices = [initial_order[node] for node in entry_nodes]
-  for i, region_id in enumerate(ordered_regions[:-1]):
-    max_remat_idx = max(
-        initial_order[n]
-        for n in remat_by_region[region_id]
-        if _is_remat_node(n)
-    )
-    if max_remat_idx >= entry_indices[i + 1]:
-      raise ValueError(
-          f"Checkpoint regions {region_id} and {ordered_regions[i + 1]} have "
-          "interleaved remat nodes in the FX graph."
-      )
 
   _hoist_tuple_getitems(graph, entry_indices, initial_order)
 

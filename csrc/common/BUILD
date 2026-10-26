@@ -232,7 +232,6 @@ torch_tpu_cc_library(
     srcs = ["error_utils.cc"],
     hdrs = ["error_utils.h"],
     deps = [
-        ":context_states",
         ":device_type",
         ":env_vars",
         ":macro_utils",
@@ -298,7 +297,6 @@ torch_tpu_cc_test(
     srcs = ["error_utils_test.cc"],
     deps = [
         ":cache_key",
-        ":context_states",
         ":env_vars",
         ":error_utils",
         ":status_builder",
@@ -374,6 +372,7 @@ torch_tpu_cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
+        "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
         "@xla//xla:shape_util",
         "@xla//xla:xla_proto_cc",
@@ -1450,6 +1449,21 @@ torch_tpu_cc_library(
     ],
 )
 
+torch_tpu_cc_library(
+    name = "mlir_test_modules",
+    testonly = True,
+    srcs = ["mlir_test_modules.cc"],
+    hdrs = ["mlir_test_modules.h"],
+    deps = [
+        ":compilation",
+        "@com_google_absl//absl/log:absl_check",
+        "@com_google_absl//absl/strings",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Parser",
+        "@xla//xla/pjrt:maybe_owning_mlir_module",
+    ],
+)
+
 # Since GetAllowExcessPrecision() memoizes the value of XLA_FLAGS in a static
 # variable, we need three separate test targets to verify different
 # environment configurations in fresh processes.
@@ -1508,6 +1522,7 @@ torch_tpu_cc_test(
         ":compilation_test_helper",
         ":error_utils",
         ":excess_precision",
+        ":mlir_test_modules",
         ":status_test_utils",
         "//csrc/common:oss_test_main",
         "//csrc/pjrt:pjrt_state",
@@ -1521,9 +1536,11 @@ torch_tpu_cc_test(
         "@xla//xla:xla_proto_cc",
         "@xla//xla/hlo/builder:xla_builder",
         "@xla//xla/hlo/builder:xla_computation",
+        "@xla//xla/hlo/ir:hlo",
         "@xla//xla/pjrt:pjrt_client",
         "@xla//xla/pjrt:pjrt_executable",
         "@xla//xla/pjrt/plugin/xla_tpu:xla_tpu_pjrt_client",  # buildcleaner: keep
+        "@xla//xla/service:computation_layout",
     ],
 )
 
@@ -1874,6 +1891,7 @@ torch_tpu_cc_test(
         ":context_manager",
         ":context_states",
         "//csrc/common:oss_test_main",
+        "//csrc/eager:eager_mode",
         "//shims/torch",
         "@com_google_absl//absl/cleanup",
     ],

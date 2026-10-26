@@ -294,11 +294,11 @@ absl::StatusOr<kiln::Kernel> CreateKernel(const FlashAttnConfig& config,
           kiln::ScratchSpec{kiln::f32(qt, d_vo)},
           kiln::ScratchSpec{kiln::f32(qt, kLanes)},
           kiln::ScratchSpec{kiln::f32(qt, kLanes)},
-          [&](std::optional<kiln::Ref> seed_ref, kiln::Ref q_ref,
-              kiln::Ref k_ref, kiln::Ref v_ref,
-              std::optional<kiln::Ref> bias_ref, kiln::Ref o_ref,
-              std::optional<kiln::Ref> lse_ref, kiln::Ref acc_ref,
-              kiln::Ref m_ref, kiln::Ref l_ref) {
+          [&]  // REF_CAPTURE_OK=called synchronously
+          (std::optional<kiln::Ref> seed_ref, kiln::Ref q_ref, kiln::Ref k_ref,
+           kiln::Ref v_ref, std::optional<kiln::Ref> bias_ref, kiln::Ref o_ref,
+           std::optional<kiln::Ref> lse_ref, kiln::Ref acc_ref, kiln::Ref m_ref,
+           kiln::Ref l_ref) {
             KernelArgs args{
                 .seed_ref = seed_ref,
                 .q_ref = q_ref,
@@ -314,16 +314,16 @@ absl::StatusOr<kiln::Kernel> CreateKernel(const FlashAttnConfig& config,
                 .ki = kiln::ProgramId(3),
             };
 
-            auto emit_causal_step = [&] {
+            auto emit_causal_step = [&] {  // REF_CAPTURE_OK=called locally
               kiln::If(
                   IntersectsDiagonal(args.qi, args.ki, config,
                                      normalized_tiling),
-                  [&] {
+                  [&] {  // REF_CAPTURE_OK=called synchronously
                     EmitGridStep(config, normalized_tiling, args,
                                  single_kv_step, has_padding,
                                  /*intersects_causal_diag=*/true);
                   },
-                  [&] {
+                  [&] {  // REF_CAPTURE_OK=called synchronously
                     EmitGridStep(config, normalized_tiling, args,
                                  single_kv_step, has_padding,
                                  /*intersects_causal_diag=*/false);
@@ -333,12 +333,14 @@ absl::StatusOr<kiln::Kernel> CreateKernel(const FlashAttnConfig& config,
             if (config.is_causal && !config.sliding_window_size.has_value()) {
               kiln::If(BelowOrOnDiagonal(args.qi, args.ki, config,
                                          normalized_tiling),
-                       [&] {
+                       [&] {  // REF_CAPTURE_OK=called synchronously
                          if (!single_kv_step) {
-                           kiln::If(args.ki == 0, [&] {
-                             InitSoftmaxScratch(config, normalized_tiling,
-                                                args);
-                           });
+                           kiln::If(
+                               args.ki == 0,
+                               [&] {  // REF_CAPTURE_OK=called synchronously
+                                 InitSoftmaxScratch(config, normalized_tiling,
+                                                    args);
+                               });
                          }
                          emit_causal_step();
                        });
@@ -347,9 +349,10 @@ absl::StatusOr<kiln::Kernel> CreateKernel(const FlashAttnConfig& config,
               // `ki == 0`. With a sliding window, `ki == 0` can be outside the
               // window and skipped, so reset before the causal guard.
               if (!single_kv_step) {
-                kiln::If(args.ki == 0, [&] {
-                  InitSoftmaxScratch(config, normalized_tiling, args);
-                });
+                kiln::If(args.ki == 0,
+                         [&] {  // REF_CAPTURE_OK=called synchronously
+                           InitSoftmaxScratch(config, normalized_tiling, args);
+                         });
               }
               if (config.is_causal) {
                 kiln::If(BelowOrOnDiagonal(args.qi, args.ki, config,
@@ -362,15 +365,17 @@ absl::StatusOr<kiln::Kernel> CreateKernel(const FlashAttnConfig& config,
             }
 
             if (!single_kv_step) {
-              kiln::If(args.ki == num_kv_blocks - 1, [&] {
-                StoreNormalizedOutput(config, args,
-                                      SoftmaxState{
-                                          .m = kiln::Tile(args.m_ref),
-                                          .l = kiln::Tile(args.l_ref),
-                                          .acc = kiln::Tile(args.acc_ref),
-                                      },
-                                      /*row_offset=*/0);
-              });
+              kiln::If(args.ki == num_kv_blocks - 1,
+                       [&] {  // REF_CAPTURE_OK=called synchronously
+                         StoreNormalizedOutput(
+                             config, args,
+                             SoftmaxState{
+                                 .m = kiln::Tile(args.m_ref),
+                                 .l = kiln::Tile(args.l_ref),
+                                 .acc = kiln::Tile(args.acc_ref),
+                             },
+                             /*row_offset=*/0);
+                       });
             }
           }));
 

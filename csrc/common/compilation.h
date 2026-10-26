@@ -297,6 +297,16 @@ absl::StatusOr<LoadedExecutableBuilder>
 MlirComputationBuilderToExecutableBuilder(
     const MlirComputationBuilder& computation_builder);
 
+// Compiles and loads `module` with `options` on `client`.
+//
+// On TPU, if the main function of `module` takes many arguments, the program is
+// compiled to take them as a single tuple. Callers still pass one buffer per
+// argument.
+absl::StatusOr<std::unique_ptr<xla::PjRtLoadedExecutable>>
+CompileAndLoadMlirModule(xla::PjRtClient& client,
+                         xla::MaybeOwningMlirModule module,
+                         xla::CompileOptions options);
+
 // Creates an MLIR context and registers all required TPU dialects.
 absl_nonnull std::unique_ptr<mlir::MLIRContext> MakeMlirContext();
 
