@@ -22,7 +22,6 @@
 #include <vector>
 
 #include "ATen/core/ATen_fwd.h"
-#include "ATen/core/CachingHostAllocator.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
@@ -193,16 +192,13 @@ absl::Status AssignBufferAsStorageBase(DeviceBufferRef new_base,
                                        const at::Tensor& tensor);
 
 // Returns the C10 allocator singleton for TPU.
+// Not to be confused with TpuPinnedAllocator (see host_allocator.h) which is
+// the host-side allocator; this allocator is for device-side memory that is
+// managed by the TPU backend.
 c10::Allocator* GetTpuAllocator();
 
-// Returns the Tpu pinned memory allocator.
-at::HostAllocator* GetTpuPinnedAllocator();
-
-// Returns true if the given pointer was allocated by the Tpu pinned memory
-// allocator.
-bool IsTpuPinnedPtr(const void* ptr);
-
-// Registers the TpuAllocator as the allocator for the PrivateUse1 device.
+// Registers the TpuAllocator as the allocator for the PrivateUse1 device,
+// and the TpuPinnedAllocator as the pinned host allocator.
 // This must be called before using the allocator for any device operations.
 void RegisterTpuAllocator();
 

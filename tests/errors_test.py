@@ -15664,6 +15664,21 @@ Device-side assertion tracking was not enabled by user.""",
     ):
       torch.ops.ao.reload(x, torch.device("cpu"))
 
+  def test_pinned_host_oom(self):
+    if et.is_on_gpu():
+      # GPU test raises this error:
+      # RuntimeError: pin_memory=True requires a CUDA or other accelerator
+      # backend; no pinned memory allocator is available on this system.
+      self.skipTest("GPU allocation can't find host allocator")
+    ONE_HUNDRED_TB = 100 * 1024 * 1024 * 1024 * 1024
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""failed to allocate 109951162777600 bytes of pinned host memory""",
+    ):
+      torch.zeros(
+          ONE_HUNDRED_TB, dtype=torch.uint8, device="cpu", pin_memory=True
+      )
+
 
 class InputPreprocessingErrorTest(et.ErrorTestBase):
 
@@ -15787,7 +15802,6 @@ class ComputeStatsErrorTest(et.ErrorTestBase):
         tpu="""Invalid offsets range [0, 10) for indices size 3""",
     ):
       torch.ops.tpu.compute_sparse_dense_matmul_stats(indices, offsets, 1, 4)
-
 
 class MaskedSoftmaxErrorTest(et.ErrorTestBase):
 
