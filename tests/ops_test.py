@@ -3696,7 +3696,10 @@ class TestOps(op_testing.OpInfoTestBase):
             not op_testing._CHECK_DYNAMISM_USING_SEED.value
             and (
                 op_testing.is_compiled_mode()
-                or not op_input.kwargs.get("sorted", True)
+                or (
+                    not op_input.kwargs.get("sorted", True)
+                    and op_input.kwargs.get("dim") is None
+                )
                 or (
                     op_input.input_value.ndim == 0
                     and op_input.kwargs.get("return_inverse", False)
@@ -3705,7 +3708,7 @@ class TestOps(op_testing.OpInfoTestBase):
         ),
         # Override _OSS_SAMPLE_LIMIT (5) since the first 13 golden samples have
         # sorted=False and are filtered out by skip_if.
-        max_samples_per_op_dtype=16,
+        max_samples_per_op_dtype=20,
     )
 
   def test_unique_consecutive(self):

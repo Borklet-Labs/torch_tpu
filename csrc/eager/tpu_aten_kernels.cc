@@ -1088,6 +1088,7 @@ TORCH_LIBRARY_IMPL(aten, PrivateUse1, m) {
   ImplStable<OpName::kUniform_>(m, AtenUniform_);
   ImplStable<OpName::kUnique2>(m, AtenUnique2);
   ImplStable<OpName::kUniqueConsecutive>(m, AtenUniqueConsecutive);
+  ImplStable<OpName::kUniqueDim>(m, AtenUniqueDim);
   ImplStable<OpName::kUniqueDimConsecutive>(m, AtenUniqueDimConsecutive);
   ImplStable<OpName::kUpsampleBicubic2dAaOut>(m, AtenUpsampleBicubic2dAaOut);
   ImplStable<OpName::kUpsampleBicubic2dBackwardGradInput>(
