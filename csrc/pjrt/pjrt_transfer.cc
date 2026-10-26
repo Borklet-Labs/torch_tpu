@@ -246,15 +246,20 @@ void StartD2H(absl::Status materialization_status,
 
   // When the transfer completes we will:
   //   1. Pack FP4 data if necessary.
-  //   2. Format the transfer error using AdaptXlaError.
-  //   3. Set the chained promise.
-  // `literal` is kept alive until the transfer completes.
-  future.OnReady([literal = std::move(literal), promise = std::move(promise),
+  //   2. Release the underlying DeviceBufferList.
+  //   3. Format the transfer error using AdaptXlaError.
+  //   4. Set the chained promise.
+  // `literal` and `device_buffer_list` are kept alive until the transfer
+  // completes.
+  future.OnReady([literal = std::move(literal),
+                  device_buffer_list = buffer_ref.device_buffer_list(),
+                  promise = std::move(promise),
                   fp4_receiver = std::move(fp4_receiver),
                   dst_ptr](absl::Status s) mutable {
     if (s.ok() && !fp4_receiver.empty()) {
       PackFp4Vector(fp4_receiver, static_cast<uint8_t*>(dst_ptr));
     }
+    device_buffer_list.reset();
     promise.Set(
         AdaptXlaError(s,
                       /*context=*/"failed to copy buffer from device to host"));
