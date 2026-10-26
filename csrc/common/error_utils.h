@@ -31,6 +31,7 @@
 #include <vector>
 
 #include "ATen/core/ATen_fwd.h"
+#include "absl/algorithm/container.h"
 #include "absl/base/no_destructor.h"
 #include "absl/base/optimization.h"
 #include "absl/log/absl_check.h"

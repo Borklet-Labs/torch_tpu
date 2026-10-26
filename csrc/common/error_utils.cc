@@ -39,7 +39,6 @@
 
 #include "ATen/core/ATen_fwd.h"
 #include "ATen/core/TensorBody.h"
-#include "absl/algorithm/container.h"
 #include "absl/base/const_init.h"
 #include "absl/base/no_destructor.h"
 #include "absl/base/optimization.h"
@@ -75,19 +74,16 @@
 namespace torch_tpu {
 namespace {
 
-// Words that are allowed to start an error message with an uppercase letter.
-// This is an exception to the rule that error messages must start with a
-// lowercase letter.
-constexpr std::array<std::string_view, 3> kAllowedStartingWords{"TorchTPU",
-                                                                "PjRt", "XLA"};
-
-// Helper to check if a message starts with any of the allowed words.
+// Returns whether `message` starts with one of the words that are allowed to
+// start an error message with an uppercase letter. This is an exception to the
+// rule that error messages must start with a lowercase letter.
+//
+// The allowed word must be matched as a whole word. For example, "XLA" matches
+// "XLA compiler" and "XLA's", but not "XLAB".
 [[nodiscard]] bool StartsWithAllowedWord(const std::string_view message) {
-  return absl::c_any_of(
-      kAllowedStartingWords,
-      [&](const std::string_view word) {  // REF_CAPTURE_OK=called synchronously
-        return message.starts_with(word);
-      });
+  static const LazyRE2 kAllowedStartingWordPattern = {
+      R"(^(TorchTPU|PjRt|XLA)\b)"};
+  return RE2::PartialMatch(message, *kAllowedStartingWordPattern);
 }
 
 #if TT_CHECKS_ERROR_FORMAT
@@ -225,26 +221,10 @@ absl::Status StartsWithNonUppercaseLetter(const std::string_view message) {
     return absl::OkStatus();
   }
 
-  // Returns the first word of `message`.
-  //
-  // If `to_lower` parameter is set to `true`, convert the first word to
-  // lower-case, and return it.
-  auto get_first_word = [message](const bool to_lower = false) -> std::string {
-    const size_t first_word_end = message.find_first_of(' ');
-    // If there is no blank space in the whole message, first_word_end will be
-    // string_view::npos. So, the expression below will return the whole trimmed
-    // error message.
-    const std::string_view first_word = message.substr(0, first_word_end);
-    return std::string(to_lower ? absl::AsciiStrToLower(first_word)
-                                : first_word);
-  };
-
   TT_RET_CHECK(  // ERROR_COV_INFEASIBLE=Error message checks crash and are
                  // unreachable from Python.
       !absl::ascii_isupper(message.front()), error::kInternal)
-      << "The error message should start with a lowercase character. Replace '"
-      << get_first_word() << "' with '" << get_first_word(/* to_lower= */ true)
-      << "'.";
+      << "The error message should start with a lowercase character.";
 
   return absl::OkStatus();
 }
