@@ -1567,6 +1567,22 @@ TEST_F(ErrorMessageGuidelinesDeathTest, ContainsStableHloTypeName) {
                HasSubstr("StableHLO type names"));
 }
 
+TEST_F(ErrorMessageGuidelinesDeathTest,
+       StableHloTypeNameIsNotMatchedInsideLongerTypeName) {
+  // "f16" is a substring of "bf16", and "f32" is a substring of "complexf32".
+  // Only the whole type name should be reported, regardless of the order of
+  // entries in the dtype names table.
+  EXPECT_DEATH(ThrowWithMessage("unsupported type bf16"),
+               AllOf(HasSubstr("show 'bfloat16' instead of 'bf16'"),
+                     Not(HasSubstr("instead of 'f16'"))));
+  EXPECT_DEATH(ThrowWithMessage("unsupported type complexf32"),
+               AllOf(HasSubstr("show 'complex64' instead of 'complexf32'"),
+                     Not(HasSubstr("instead of 'f32'"))));
+  EXPECT_DEATH(ThrowWithMessage("unsupported type ui8"),
+               AllOf(HasSubstr("show 'uint8' instead of 'ui8'"),
+                     Not(HasSubstr("instead of 'i8'"))));
+}
+
 TEST_F(ErrorMessageGuidelinesDeathTest, NonAlphaNumTrailingChar) {
   EXPECT_DEATH(ThrowWithMessage("dimension size negative."),
                HasSubstr("end with either an alpha-numeric"));
@@ -1600,7 +1616,7 @@ TEST_F(ErrorMessageGuidelinesDeathTest, InvalidExpectedGotFormat) {
       HasSubstr("expected ..., got ..."));
 }
 
-TEST_F(ErrorMessageGuidelinesDeathTest, MultipleViolationsIncludingEnforced) {
+TEST_F(ErrorMessageGuidelinesDeathTest, MultipleViolations) {
   EXPECT_DEATH(ThrowWithMessage("Dimension size negative with f32"),
                AllOf(HasSubstr("start with a lowercase"),
                      HasSubstr("StableHLO type names")));
