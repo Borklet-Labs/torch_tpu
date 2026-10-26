@@ -1950,6 +1950,18 @@ class OpsUnitTest(TorchTpuVsCpuTestBase):
         torch.logit(x).to(torch.float64),
     )
 
+  def test_logit_backward_nan_propagation(self):
+    device = torch.device("tpu")
+    grad_out = torch.tensor([1.0, 1.0, float("nan")], dtype=torch.float32)
+    x = torch.tensor([float("nan"), 0.5, 0.0], dtype=torch.float32)
+    for eps in (1e-6, 0.0):
+      res_tpu = torch.ops.aten.logit_backward(
+          grad_out.to(device), x.to(device), eps
+      ).cpu()
+      res_cpu = torch.ops.aten.logit_backward(grad_out, x, eps)
+      self.assertTrue(torch.isnan(res_tpu[0]))
+      utils.assert_close(res_tpu, res_cpu)
+
   def test_complex_and_polar_out(self):
     device = torch.device("tpu")
     # complex: float32 -> complex64 out
