@@ -41,6 +41,7 @@
 #include "absl/log/absl_log.h"
 #include "absl/log/log.h"
 #include "c10/core/ScalarType.h"
+#include "c10/core/SymInt.h"
 #include "csrc/common/error_utils.h"
 #include "csrc/common/to_string.h"
 #include "csrc/common/warnings.h"
@@ -1486,8 +1487,8 @@ TORCH_LIBRARY(tpu, m) {
       "int[] "
       "per_feature_batch_sizes, int[] per_feature_dims) -> Tensor[]");
   m.def(
-      "_sparse_dense_matmul_gradient_stack(Tensor[] unstacked_gradients, int "
-      "stacked_batch_size, int stacked_feature_dim) -> Tensor");
+      "_sparse_dense_matmul_gradient_stack(Tensor[] unstacked_gradients, "
+      "SymInt stacked_batch_size, SymInt stacked_feature_dim) -> Tensor");
   m.def(
       "_sparse_map_row(Tensor[] csr_tensors, int[] csr_lengths, Tensor[] "
       "dense_args, str body_mlir, Tensor[] dummy_outputs, int "
@@ -1633,12 +1634,12 @@ TORCH_LIBRARY_IMPL(tpu, Meta, m) {
       });
   ImplInternal<OpName::kSparseDenseMatmulGradientStack>(
       m,
-      +[](at::TensorList unstacked_gradients, int64_t stacked_batch_size,
-          int64_t stacked_feature_dim) -> at::Tensor {
+      +[](at::TensorList unstacked_gradients, c10::SymInt stacked_batch_size,
+          c10::SymInt stacked_feature_dim) -> at::Tensor {
         TT_THROW_IF_ERROR(ValidateSparseDenseMatmulGradientStackInputs(
             unstacked_gradients, stacked_batch_size, stacked_feature_dim));
-        return at::empty({stacked_batch_size, stacked_feature_dim},
-                         unstacked_gradients[0].options());
+        return at::empty_symint({stacked_batch_size, stacked_feature_dim},
+                                unstacked_gradients[0].options());
       });
   ImplInternal<OpName::kSparseMapRow>(
       m,
