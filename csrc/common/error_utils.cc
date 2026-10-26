@@ -86,8 +86,6 @@ namespace {
   return RE2::PartialMatch(message, *kAllowedStartingWordPattern);
 }
 
-#if TT_CHECKS_ERROR_FORMAT
-
 // Pair of corresponding type names.
 struct TypeNamePair {
   std::string_view torch;
@@ -754,8 +752,6 @@ void CheckErrorMessageFollowsGuidelines(const TtError& error) {
       << GetLogMessage(error, result.failure_reasons);
 }
 
-#endif  // TT_CHECKS_ERROR_FORMAT
-
 }  // namespace
 
 // Adapts an external error message (e.g., from PyTorch or OpenXLA) to conform
@@ -1213,11 +1209,11 @@ TtError::TtError(absl::Status status, c10::SourceLocation thrown_from)
 }
 
 void TranslateToC10ErrorAndThrow(const TtError& e) {
-#if TT_CHECKS_ERROR_FORMAT
-  // Check that the error message format follows the TorchTPU guidelines
-  // (go/tt-error-guide) only if we are in an internal debug build.
-  CheckErrorMessageFollowsGuidelines(e);
-#endif
+  if constexpr (kCheckErrorFormat) {
+    // Check that the error message format follows the TorchTPU guidelines
+    // (go/tt-error-guide).
+    CheckErrorMessageFollowsGuidelines(e);
+  }
 
   const std::string message =
       MakeErrorMessage(e.status(), e.thrown_from(), ExceptionType::kC10Error);

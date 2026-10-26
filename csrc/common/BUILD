@@ -301,7 +301,6 @@ torch_tpu_cc_test(
         ":error_utils",
         ":status_builder",
         ":status_test_utils",
-        ":utils",
         "//csrc/common:oss_test_main",
         "//csrc/eager:eager_mode",
         "//csrc/ops:op_names",
@@ -328,7 +327,6 @@ torch_tpu_cc_test(
     deps = [
         ":error_utils",
         ":pybind_error_utils",
-        ":utils",
         "//csrc/common:oss_test_main",
         "//shims/torch/c10/util:base_headers",
     ],
