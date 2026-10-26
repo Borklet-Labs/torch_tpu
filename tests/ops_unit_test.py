@@ -12158,6 +12158,61 @@ class OpsUnitTest(TorchTpuVsCpuTestBase):
 
     self.assert_close_tpu_vs_cpu(test_broadcasting_fn)
 
+  def test_xlogy_scalar_and_cpu_scalar_tensors(self):
+    """Tests xlogy scalar overloads and 0-D CPU scalar tensors."""
+    # Scalar self
+    self.assert_close_tpu_vs_cpu(
+        lambda device: torch.xlogy(2.0, torch.tensor([1.0, 2.0], device=device))
+    )
+
+    # Scalar other
+    self.assert_close_tpu_vs_cpu(
+        lambda device: torch.xlogy(torch.tensor([1.0, 2.0], device=device), 2.0)
+    )
+
+    # In-place scalar other
+    def run_inplace(device):
+      t = torch.tensor([1.0, 2.0], device=device)
+      t.xlogy_(2.0)
+      return t
+
+    self.assert_close_tpu_vs_cpu(run_inplace)
+
+    # Out scalar self
+    def run_out_self(device):
+      out = torch.empty(2, device=device)
+      torch.xlogy(2.0, torch.tensor([1.0, 2.0], device=device), out=out)
+      return out
+
+    self.assert_close_tpu_vs_cpu(run_out_self)
+
+    # Out scalar other
+    def run_out_other(device):
+      out = torch.empty(2, device=device)
+      torch.xlogy(torch.tensor([1.0, 2.0], device=device), 2.0, out=out)
+      return out
+
+    self.assert_close_tpu_vs_cpu(run_out_other)
+
+    # 0-D CPU tensor self
+    self.assert_close_tpu_vs_cpu(
+        lambda device: torch.xlogy(
+            torch.tensor(2.0), torch.tensor([1.0, 2.0], device=device)
+        )
+    )
+
+    # 0-D CPU tensor other
+    self.assert_close_tpu_vs_cpu(
+        lambda device: torch.xlogy(
+            torch.tensor([1.0, 2.0], device=device), torch.tensor(2.0)
+        )
+    )
+
+    # Integer tensor with scalar promotes to default float
+    self.assert_close_tpu_vs_cpu(
+        lambda device: torch.xlogy(2, torch.tensor([1, 2], device=device))
+    )
+
   # ============================================================================
   # aten::_assert_async and aten::_assert_async.msg tests
   # ============================================================================
