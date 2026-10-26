@@ -18265,6 +18265,105 @@ class OpsGradUnitTest(TorchTpuVsCpuTestBase):
 
     self.assert_close_tpu_vs_cpu(test_fn, rtol=1e-2, atol=1e-2)
 
+  @parameterized.named_parameters(
+      (
+          "conv1d_bfloat16",
+          "conv1d",
+          torch.bfloat16,
+          (16, 8, 256),
+          (8, 8, 3),
+      ),
+      (
+          "conv2d_bfloat16",
+          "conv2d",
+          torch.bfloat16,
+          (16, 8, 32, 32),
+          (8, 8, 3, 3),
+      ),
+      (
+          "conv3d_bfloat16",
+          "conv3d",
+          torch.bfloat16,
+          (4, 8, 16, 16, 16),
+          (8, 8, 3, 3, 3),
+      ),
+      (
+          "conv_transpose1d_bfloat16",
+          "conv_transpose1d",
+          torch.bfloat16,
+          (16, 8, 256),
+          (8, 8, 3),
+      ),
+      (
+          "conv_transpose2d_bfloat16",
+          "conv_transpose2d",
+          torch.bfloat16,
+          (16, 8, 32, 32),
+          (8, 8, 3, 3),
+      ),
+      (
+          "conv1d_float16",
+          "conv1d",
+          torch.float16,
+          (16, 8, 256),
+          (8, 8, 3),
+      ),
+      (
+          "conv2d_float16",
+          "conv2d",
+          torch.float16,
+          (16, 8, 32, 32),
+          (8, 8, 3, 3),
+      ),
+      (
+          "conv3d_float16",
+          "conv3d",
+          torch.float16,
+          (4, 8, 16, 16, 16),
+          (8, 8, 3, 3, 3),
+      ),
+      (
+          "conv_transpose1d_float16",
+          "conv_transpose1d",
+          torch.float16,
+          (16, 8, 256),
+          (8, 8, 3),
+      ),
+      (
+          "conv_transpose2d_float16",
+          "conv_transpose2d",
+          torch.float16,
+          (16, 8, 32, 32),
+          (8, 8, 3, 3),
+      ),
+  )
+  def test_convolution_backward_bias_precision(
+      self,
+      op_name: str,
+      dtype: torch.dtype,
+      x_shape: tuple[int, ...],
+      w_shape: tuple[int, ...],
+  ) -> None:
+    """Verifies that convolution backward bias accumulates in float32."""
+    fn = getattr(torch.nn.functional, op_name)
+    torch.manual_seed(42)
+    out_channels = w_shape[1] if "transpose" in op_name else w_shape[0]
+    input_ = torch.randn(x_shape, dtype=dtype)
+    weight = torch.randn(w_shape, dtype=dtype)
+    bias = torch.randn(out_channels, dtype=dtype)
+    dummy_out = fn(input_, weight, bias)
+    grad_output = (torch.randn_like(dummy_out) + 0.5).to(dtype)
+
+    def test_fn(device: torch.device) -> torch.Tensor:
+      in_dev = input_.to(device).detach().requires_grad_(True)
+      w_dev = weight.to(device).detach().requires_grad_(True)
+      b_dev = bias.to(device).detach().requires_grad_(True)
+      out = fn(in_dev, w_dev, bias=b_dev)
+      out.backward(grad_output.to(device))
+      return b_dev.grad
+
+    self.assert_close_tpu_vs_cpu(test_fn, rtol=1e-4, atol=1e-4)
+
   @parameterized.product(
       kernel_size=[3],
       stride=[2],
