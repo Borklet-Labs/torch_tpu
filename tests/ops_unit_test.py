@@ -7929,6 +7929,18 @@ class OpsUnitTest(TorchTpuVsCpuTestBase):
 
     self.assert_close_tpu_vs_cpu(compute)
 
+  def test_tanh_backward_grad_input_cross_dtype(self):
+    g = torch.ones((4,), dtype=torch.float32)
+    o = torch.full((4,), 0.5, dtype=torch.float32)
+
+    def compute(device):
+      grad_in = torch.empty((4,), dtype=torch.bfloat16, device=device)
+      return torch.ops.aten.tanh_backward.grad_input(
+          to(g, device=device), to(o, device=device), grad_input=grad_in
+      )
+
+    self.assert_close_tpu_vs_cpu(compute)
+
   def test_repeat_interleave_self_int(self):
     t = torch.tensor([1, 2, 3])
     self.assert_close_tpu_vs_cpu(

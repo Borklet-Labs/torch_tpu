@@ -9684,6 +9684,82 @@ Device-side assertion tracking was not enabled by user.""",
           grad, self_val, grad_input=grad_input
       )
 
+  @parameterized.named_parameters(
+      dict(
+          testcase_name="bool",
+          dtype=torch.bool,
+          tpu_dtype="bool",
+          gpu_dtype="Bool",
+      ),
+      dict(
+          testcase_name="int32",
+          dtype=torch.int32,
+          tpu_dtype="int32",
+          gpu_dtype="Int",
+      ),
+      dict(
+          testcase_name="int64",
+          dtype=torch.int64,
+          tpu_dtype="int64",
+          gpu_dtype="Long",
+      ),
+  )
+  def test_tanh_backward_unsupported_dtypes(
+      self, dtype: torch.dtype, tpu_dtype: str, gpu_dtype: str
+  ):
+    grad = torch.ones(4, device=et.device(), dtype=dtype)
+    output = torch.zeros(4, device=et.device(), dtype=dtype)
+
+    with et.assert_raises_message(
+        NotImplementedError,
+        tpu=f"""tanh_backward(): not implemented for {tpu_dtype}""",
+        gpu=f""""tanh_backward_cuda" not implemented for '{gpu_dtype}'""",
+        message_reviewed_by="gunhyun",
+    ):
+      torch.ops.aten.tanh_backward(grad, output)
+
+  def test_tanh_backward_grad_input_dtype_mismatch(self):
+    grad = torch.ones(4, device=et.device(), dtype=torch.float32)
+    output = torch.full((4,), 0.5, device=et.device(), dtype=torch.float32)
+    grad_input = torch.empty(4, device=et.device(), dtype=torch.int32)
+
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""tanh_backward(): result type float32 can't be cast to the desired output type int32""",
+        gpu="""result type Float can't be cast to the desired output type Int""",
+        message_reviewed_by="gunhyun",
+    ):
+      torch.ops.aten.tanh_backward.grad_input(
+          grad, output, grad_input=grad_input
+      )
+
+  def test_tanh_backward_grad_input_broadcast_alias(self):
+    grad = torch.ones((2, 3), device=et.device(), dtype=torch.float32)
+    output = torch.full((1, 3), 0.5, device=et.device(), dtype=torch.float32)
+
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""tanh_backward(): output with shape [2, 3] doesn't match the broadcast shape of the tensor being operated on in-place, which has shape [1, 3]""",
+        gpu="""output with shape [1, 3] doesn't match the broadcast shape [2, 3]""",
+        message_reviewed_by="gunhyun",
+    ):
+      torch.ops.aten.tanh_backward.grad_input(grad, output, grad_input=output)
+
+  def test_tanh_backward_grad_input_cpu_tensor(self):
+    grad = torch.ones((2, 3), device=et.device(), dtype=torch.float32)
+    output = torch.full((2, 3), 0.5, device=et.device(), dtype=torch.float32)
+    grad_input_cpu = torch.empty((2, 3), device="cpu", dtype=torch.float32)
+
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""tanh_backward(): expected out tensor to be on tpu, got cpu""",
+        gpu="""Expected all tensors to be on the same device, but got grad_output is on cuda:0, different from other tensors on cpu (when checking argument in method wrapper_CUDA_tanh_backward_out_grad_input)""",
+        message_reviewed_by="gunhyun",
+    ):
+      torch.ops.aten.tanh_backward.grad_input(
+          grad, output, grad_input=grad_input_cpu
+      )
+
   def test_acos_out_dtype_mismatch(self):
     t = torch.ones(5, device=et.device())
 
