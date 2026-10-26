@@ -19,6 +19,8 @@
 
 #include <memory>
 #include <optional>
+#include <string>
+#include <vector>
 
 #include "absl/base/nullability.h"
 #include "csrc/common/compilation_spec.h"
@@ -79,6 +81,11 @@ using CustomCompilerOptionsContextState =
 
 // The state of the `layout` context manager.
 using LayoutContextState = absl_nonnull std::shared_ptr<const xla::Layout>;
+
+// The state of `name_scope` (and `nn.Module` hierarchy scopes), ordered from
+// outer to inner (root -> leaf).
+using NameScopeContextState =
+    absl_nonnull std::shared_ptr<const std::vector<std::string>>;
 
 }  // namespace torch_tpu
 
