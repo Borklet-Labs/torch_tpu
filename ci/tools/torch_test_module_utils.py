@@ -101,7 +101,6 @@ DISABLED_TEST_MODULES: Final[frozenset[str]] = frozenset({
     "test_spectral_ops",
     "test_stateless_rng",
     "test_tensor_creation_ops",
-    "test_torch",
     "test_unary_ufuncs",
     # go/keep-sorted end
 })
@@ -142,7 +141,7 @@ TEST_MODULE_SHARDS: Final[Mapping[str, int]] = {
     "test_sort_and_select": 4,
     "test_tensor_creation_ops": 8,
     "test_testing": 4,
-    "test_torch": 8,
+    "test_torch": 4,
     "test_type_promotion": 4,
     "test_unary_ufuncs": 50,
     "test_view_ops": 4,

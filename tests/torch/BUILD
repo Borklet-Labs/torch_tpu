@@ -30,7 +30,10 @@ torch_tpu_py_library(
     name = "torch_test_configs",
     testonly = True,
     srcs = ["torch_test_configs.py"],
-    deps = ["//shims/torch:testing_internal"],
+    deps = [
+        "//shims/torch:pytorch",
+        "//shims/torch:testing_internal",
+    ],
 )
 
 pytype_strict_binary(
@@ -1059,8 +1062,7 @@ torch_tpu_torch_test(
 
 torch_tpu_torch_test(
     name = "torch_test",
-    notap = "b/563402379",  # NOTAP_OK=torch tests
-    shard_count = 8,
+    shard_count = 4,
     torch_test_module = "test_torch",
 )
 
