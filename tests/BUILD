@@ -2442,6 +2442,11 @@ torch_tpu_py_test(
 torch_tpu_py_test(
     name = "tracebacks_precedence_test",
     srcs = ["tracebacks_precedence_test.py"],
+    # The flag is memoized on first use, so it's set on the command line rather
+    # than at runtime.
+    args = ["--torch_tpu_internal_mlir_tracebacks=true"],
+    # In OSS, C++ flags can't be passed to Python tests on the command line.
+    notest_oss = True,  # NOTEST_OSS_OK=The tested flag is only meant for Google internal use, and thus doesn't need to work in OSS.
     tags = [
         "requires-tpu-v5lite",
     ],
@@ -2450,7 +2455,6 @@ torch_tpu_py_test(
         "//shims/absl_py/testing:absltest",
         "//shims/torch:pytorch",
         "//src/torch_tpu",
-        "//src/torch_tpu/_internal:testing",
         "//src/torch_tpu/_internal/export",
     ],
 )

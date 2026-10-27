@@ -15,12 +15,10 @@
  */
 
 #include <exception>
-#include <optional>
 #include <string>
 #include <string_view>
 
 #include "ATen/core/ATen_fwd.h"
-#include "absl/flags/flag.h"
 #include "c10/util/Exception.h"
 #include "csrc/common/error_utils.h"
 #include "csrc/common/pybind_error_utils.h"
@@ -209,13 +207,6 @@ TT_PYBIND11_MODULE(testing, m) {
       "pjrt_init_attempted",
       []() -> bool { return PjrtBackend::GetInstance().InitAttempted(); },
       "Returns whether PjRt runtime initialization has been attempted.");
-  m.def(
-      "enable_mlir_tracebacks",
-      [](std::optional<bool> enabled) {
-        absl::SetFlag(&FLAGS_torch_tpu_internal_mlir_tracebacks, enabled);
-      },
-      py::arg("enabled"),
-      "Sets FLAGS_torch_tpu_internal_mlir_tracebacks in C++ for testing.");
 }
 
 }  // namespace torch_tpu
