@@ -26,6 +26,7 @@ from torch_tpu._internal.distributed import collective_ops
 from torch_tpu._internal.utils import test_utils as utils
 from torch_tpu._internal.distributed import multiprocessing
 from tests.distributed import continuous_test_utils
+from tests.distributed import distributed_utils
 
 CompiledArtifact = torch_tpu_compiled_executable.CompiledArtifact
 _SplitCompiledExecutable = split_compiler._SplitCompiledExecutable
@@ -121,6 +122,7 @@ def stablehlo_instructions_count(mlir: str) -> int:
 
 def run_compile_all_reduce_and_serdes_test():
   debugs: list[TpuCompileDebug] = []
+  world_size = dist.get_world_size()
 
   def f(x):
     y = x * 2
@@ -139,7 +141,7 @@ def run_compile_all_reduce_and_serdes_test():
   res = compiled_f(x)
 
   # Expected: (1.0 * 2.0 + 5.0) * world_size + 3.0 = 7.0 * world_size + 3.0
-  expected = torch.full((2, 2), 59.0, device="cpu")
+  expected = torch.full((2, 2), 7.0 * world_size + 3.0, device="cpu")
   utils.assert_close(res.cpu(), expected)
 
   # Verify splitting in backend.
@@ -199,6 +201,7 @@ def run_compile_all_reduce_and_serdes_test():
 
 def run_compile_no_splits_with_spmd_safe_test():
   debugs: list[TpuCompileDebug] = []
+  world_size = dist.get_world_size()
 
   @torch.tpu.distributed.spmd_safe
   def f(x):
@@ -218,7 +221,7 @@ def run_compile_no_splits_with_spmd_safe_test():
   res = compiled_f(x)
 
   # Expected: (1.0 * 2.0 + 5.0) * world_size + 3.0 = 7.0 * world_size + 3.0
-  expected = torch.full((2, 2), 59.0, device="cpu")
+  expected = torch.full((2, 2), 7.0 * world_size + 3.0, device="cpu")
   utils.assert_close(res.cpu(), expected)
 
   assert len(debugs[0].compiled_executables) == 1, (
@@ -237,6 +240,7 @@ def run_compile_two_collectives_test():
   """Test that two collectives are compiled separately."""
 
   debugs: list[TpuCompileDebug] = []
+  world_size = dist.get_world_size()
 
   def f(x, y):
     dist.all_reduce(x)
@@ -254,7 +258,7 @@ def run_compile_two_collectives_test():
   res = compiled_f(x, y)
 
   # Expected: (1 * world_size) + (1 * world_size) + 3 = 2 * world_size + 3
-  expected = torch.full((2, 2), 19.0, device="cpu")
+  expected = torch.full((2, 2), 2.0 * world_size + 3.0, device="cpu")
   utils.assert_close(res.cpu(), expected)
 
   assert len(debugs[0].compiled_executables) == 1
@@ -310,6 +314,7 @@ class CollectiveModule(torch.nn.Module):
 
 def run_torch_compile_fullgraph_no_break_test():
   debugs: list[TpuCompileDebug] = []
+  world_size = dist.get_world_size()
   with torch.device("tpu"):
     model = CollectiveModule()
   compiled_model = torch.compile(
@@ -323,7 +328,7 @@ def run_torch_compile_fullgraph_no_break_test():
   res = compiled_model(x)
 
   # Expected: ((1.0 + 1.0) * world_size) * 2.0 = 4.0 * world_size
-  expected = torch.full((2, 2), 32.0, device="cpu")
+  expected = torch.full((2, 2), 4.0 * world_size, device="cpu")
   utils.assert_close(res.cpu(), expected)
 
   # Verify splitting in backend.
@@ -573,13 +578,7 @@ class DummyBaseCompiler(compiler.Compiler):
 
 
 class SplitCollectiveOpsTest(continuous_test_utils.TpuMultiProcContinuousTest):
-  # Using world_size = 4 has flakiness on 8-chip TPU v5e CI runners:
-  # initializing only 4 chips leaves the rest of the physical interconnect ring
-  # idle, causing process group init to intermittently hang for ~20s and fail
-  # with SIGTERM (ProcessExitedException). Setting this to 8 ensures all chips
-  # on the host participate, allowing the physical ring to close and sync
-  # deterministically.
-  world_size = 8
+  world_size = distributed_utils.get_tpu_device_count()
 
   def test_compile_all_reduce_and_serdes(self):
     run_compile_all_reduce_and_serdes_test()
