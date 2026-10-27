@@ -1848,6 +1848,19 @@ TEST(KilnTest, DmaOperations) {
   )"));
 }
 
+TEST(KilnTest, SyncCopyScopesItsSemaphore) {
+  absl::StatusOr<Kernel> kernel = CreateKernel(
+      GridSpec{.name = "sync_copy"}, InSpec::Hbm(f32(8, 128)),
+      OutSpec::Vmem(f32(8, 128)),
+      [](Ref hbm_in, Ref vmem_out) { SyncCopy(hbm_in, vmem_out); });
+  EXPECT_THAT(kernel, IsOkAndMatchesIr(R"(
+    CHECK:      "tpu.region"() ({
+    CHECK-NEXT:   %[[SEM:.*]] = tpu.sem_alloc : memref<!tpu.dma_semaphore
+    CHECK-NEXT:   tpu.enqueue_dma {{.*}} target_semaphore(%[[SEM]]
+    CHECK-NEXT:   tpu.wait_dma {{.*}} target_semaphore(%[[SEM]]
+  )"));
+}
+
 TEST(KilnTest, UnboundedDynamicDma) {
   // Unbounded-dynamic HBM <-> VMEM tiled copy loop.
   absl::StatusOr<Kernel> dyn_kernel = CreateKernel(

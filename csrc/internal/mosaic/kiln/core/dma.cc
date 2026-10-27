@@ -18,7 +18,9 @@
 
 #include "absl/log/absl_check.h"
 #include "csrc/internal/mosaic/kiln/core/context.h"
+#include "csrc/internal/mosaic/kiln/core/control_flow.h"
 #include "csrc/internal/mosaic/kiln/core/dtype.h"
+#include "csrc/internal/mosaic/kiln/core/memory.h"
 #include "csrc/internal/mosaic/kiln/core/mlir_utils.h"
 #include "csrc/internal/mosaic/kiln/core/ref.h"
 #include "csrc/internal/mosaic/kiln/core/scalar.h"
@@ -149,6 +151,12 @@ AsyncCopyDescriptor AsyncCopy(Ref src_ref, Ref dst_ref, Semaphore sem,
   AsyncCopyDescriptor desc = MakeAsyncCopy(src_ref, dst_ref, sem, options);
   desc.Start();
   return desc;
+}
+
+void SyncCopy(Ref src_ref, Ref dst_ref) {
+  RunScoped([&src_ref, &dst_ref] {
+    AsyncCopy(src_ref, dst_ref, AllocaDmaSemaphore()).Wait();
+  });
 }
 
 AsyncRemoteCopyDescriptor MakeAsyncRemoteCopy(Ref src_ref, Ref dst_ref,
