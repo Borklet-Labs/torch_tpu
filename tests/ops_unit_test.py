@@ -1890,6 +1890,27 @@ class OpsUnitTest(TorchTpuVsCpuTestBase):
         res_i8_i32.cpu(), torch.tensor([10000, 10000], dtype=torch.int32)
     )
 
+  def test_addcdiv_default_value_build_mlir(self):
+    """Verifies addcdiv with value=1 traces without extra parameter."""
+    for value_kwargs in ({}, {"value": 1}, {"value": 1.0}):
+      with self.subTest(value_kwargs=value_kwargs):
+        s = torch.ones(2, 2, device="tpu")
+        t1 = torch.ones(2, 2, device="tpu")
+        t2 = torch.ones(2, 2, device="tpu")
+        torch.accelerator.synchronize()
+        with execution_mode.set_eager_mode(
+            execution_mode.EagerMode.DEFER_AND_FUSE
+        ):
+          z = torch.addcdiv(s, t1, t2, **value_kwargs)
+        mlir_text = tpu_torch_compile.serialize_mlir_text(
+            tpu_torch_compile.build_mlir([z], [s, t1, t2])
+        )
+        self.assertIn("stablehlo.divide", mlir_text)
+        self.assertNotIn("stablehlo.multiply", mlir_text)
+        utils.assert_close(
+            z.cpu(), torch.full((2, 2), 2.0, dtype=torch.float32)
+        )
+
   def test_binary_arithmetic_out_upcast(self):
     device = torch.device("tpu")
     a = torch.tensor([1.0, 2.0, 3.0], dtype=torch.float32, device=device)
