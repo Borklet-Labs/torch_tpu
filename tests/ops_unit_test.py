@@ -22239,6 +22239,40 @@ class OpsGradUnitTest(TorchTpuVsCpuTestBase):
               )
           )
 
+  def test_polygamma_integral_default_dtype(self):
+    # Test integral inputs under default_dtype=float64 compute in float64
+    # matching CPU (b/568040996).
+    prev_default = torch.get_default_dtype()
+    try:
+      torch.set_default_dtype(torch.float64)
+      for n in (0, 1):
+        for dtype in (torch.int64, torch.int32):
+          with self.subTest(n=n, dtype=dtype):
+            self.assert_close_tpu_vs_cpu(
+                lambda device, n=n, dtype=dtype: torch.polygamma(
+                    n, to(torch.tensor([1, 2, 3], dtype=dtype), device=device)
+                )
+            )
+    finally:
+      torch.set_default_dtype(prev_default)
+
+  def test_polygamma_out_dtype_rounding(self):
+    # Test polygamma with out= preserves intermediate rounding matching CPU
+    # (b/568040996).
+    for in_dtype, out_dtype in (
+        (torch.bfloat16, torch.float32),
+        (torch.float64, torch.float32),
+    ):
+      with self.subTest(in_dtype=in_dtype, out_dtype=out_dtype):
+
+        def test_fn(device, in_dtype=in_dtype, out_dtype=out_dtype):
+          x = to(torch.tensor([1.5, 2.5], dtype=in_dtype), device=device)
+          out = to(torch.zeros(2, dtype=out_dtype), device=device)
+          torch.polygamma(1, x, out=out)
+          return out
+
+        self.assert_close_tpu_vs_cpu(test_fn)
+
   def test_masked_softmax(self):
     def test_fn(device):
       results = []
