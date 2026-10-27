@@ -13707,7 +13707,7 @@ Device-side assertion tracking was not enabled by user.""",
     out = torch.empty(4, device="cpu")
     with et.assert_raises_message(
         RuntimeError,
-        tpu="""add(): expected output tensor to be on 'tpu' device, got 'cpu'""",
+        tpu="""add(): expected out tensor to be on tpu, got cpu""",
         gpu="""Expected all tensors to be on the same device, but found at least two devices, cuda:0 and cpu!""",
         message_reviewed_by="wan",
     ):
@@ -13728,6 +13728,86 @@ Device-side assertion tracking was not enabled by user.""",
         message_reviewed_by="wan",
     ):
       torch.add(tpu_tensor1, tpu_tensor2, out=cpu_tensor)
+
+  def test_add_alpha_dtype_mismatch(self):
+    a_i32 = torch.ones(2, dtype=torch.int32, device=et.device())
+    b_i32 = torch.ones(2, dtype=torch.int32, device=et.device())
+    out_i32 = torch.empty(2, dtype=torch.int32, device=et.device())
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""add(): for integral input tensors, argument alpha must not be a floating point number""",
+        gpu="""For integral input tensors, argument alpha must not be a floating point number.""",
+        message_reviewed_by="gunhyun",
+    ):
+      torch.add(a_i32, b_i32, alpha=2.5, out=out_i32)
+
+    a_f32 = torch.ones(2, dtype=torch.float32, device=et.device())
+    b_f32 = torch.ones(2, dtype=torch.float32, device=et.device())
+    out_f32 = torch.empty(2, dtype=torch.float32, device=et.device())
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""add(): boolean alpha only supported for boolean results""",
+        gpu="""Boolean alpha only supported for Boolean results.""",
+        message_reviewed_by="gunhyun",
+    ):
+      torch.add(a_f32, b_f32, alpha=True, out=out_f32)
+
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""add(): for non-complex input tensors, argument alpha must not be a complex number""",
+        gpu="""For non-complex input tensors, argument alpha must not be a complex number.""",
+        message_reviewed_by="gunhyun",
+    ):
+      torch.add(a_f32, b_f32, alpha=1 + 2j, out=out_f32)
+
+  def test_add_alpha_overflow(self):
+    a_i8 = torch.ones(2, dtype=torch.int8, device=et.device())
+    b_i8 = torch.ones(2, dtype=torch.int8, device=et.device())
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""add(): value cannot be converted to type int8 without overflow""",
+        gpu="""value cannot be converted to type int8_t without overflow""",
+        message_reviewed_by="gunhyun",
+    ):
+      torch.add(a_i8, b_i8, alpha=1000)
+
+    for dtype in (torch.float32, torch.float16, torch.bfloat16):
+      with self.subTest(dtype=dtype):
+        a = torch.ones(2, dtype=dtype, device=et.device())
+        b = torch.ones(2, dtype=dtype, device=et.device())
+        with et.assert_raises_message(
+            RuntimeError,
+            tpu="""add(): value cannot be converted to type float32 without overflow""",
+            gpu="""value cannot be converted to type float without overflow""",
+            message_reviewed_by="gunhyun",
+        ):
+          torch.add(a, b, alpha=1e40)
+
+  def test_add_out_non_0d_cpu_tensor(self):
+    out = torch.empty(0, dtype=torch.float32, device=et.device())
+    tpu_0d = torch.tensor(1.0, device=et.device())
+    cpu_2d = torch.ones(1, 1, device="cpu")
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""add(): expected tensor to be on tpu, got cpu""",
+        gpu="""Expected all tensors to be on the same device, but found at least two devices, cuda:0 and cpu!""",
+        message_reviewed_by="gunhyun",
+    ):
+      torch.add(tpu_0d, cpu_2d, out=out)
+
+  def test_add_out_all_cpu_scalars(self):
+    out = torch.empty((), dtype=torch.float32, device=et.device())
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""add(): expected tensor to be on tpu, got cpu""",
+        gpu="""Trying to pass too many CPU scalars to non-CPU kernel!""",
+        message_reviewed_by="gunhyun",
+    ):
+      torch.add(
+          torch.tensor(1.0, device="cpu"),
+          torch.tensor(2.0, device="cpu"),
+          out=out,
+      )
 
   def test_add_dev_and_cpu_tensors(self):
     dev_tensor = torch.tensor([1, 2, 3], device=et.device())

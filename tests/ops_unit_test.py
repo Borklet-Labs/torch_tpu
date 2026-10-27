@@ -23776,6 +23776,21 @@ class OpTestingFrameworkTest(op_testing.OpInfoTestBase):
 
       self.assert_close_tpu_vs_cpu(compute_f32_c64)
 
+  def test_add_float16_opmath_alpha(self):
+    a = torch.zeros(2, dtype=torch.float16, device="tpu")
+    b = torch.full((2,), 1e-4, dtype=torch.float16, device="tpu")
+    # PyTorch CUDA/TPU cast alpha to opmath_type (float32 for float16), whereas
+    # PyTorch CPU casts alpha directly to float16 and overflows for 70000.0.
+    expected = (a.cpu().float() + 70000.0 * b.cpu().float()).to(torch.float16)
+    res = torch.add(a, b, alpha=70000.0)
+    self.assertEqual(res.dtype, torch.float16)
+    utils.assert_close(actual=res.cpu(), expected=expected)
+
+    out = torch.empty_like(a)
+    torch.add(a, b, alpha=70000.0, out=out)
+    self.assertEqual(out.dtype, torch.float16)
+    utils.assert_close(actual=out.cpu(), expected=expected)
+
 
 if __name__ == "__main__":
   absltest.main()
