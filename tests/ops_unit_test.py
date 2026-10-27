@@ -1212,6 +1212,62 @@ class OpsUnitTest(TorchTpuVsCpuTestBase):
       self.assertEqual(pivots_tpu, pivots_cpu)
       self.assertEqual(info_tpu, info_cpu)
 
+  def test_linalg_lu_zero_sized_matrix(self):
+    device = torch.device("tpu")
+    shapes = [
+        (0, 0),
+        (0, 3),
+        (3, 0),
+        (2, 3, 0),
+        (2, 0, 3),
+        (0, 3, 5),
+        (0, 0, 0),
+    ]
+    for shape in shapes:
+      with self.subTest(shape=shape):
+        a_cpu = torch.empty(shape, dtype=torch.float32)
+        a_tpu = a_cpu.to(device)
+        p_cpu, l_cpu, u_cpu = torch.linalg.lu(a_cpu)
+        p_tpu, l_tpu, u_tpu = torch.linalg.lu(a_tpu)
+        self.assertEqual(p_tpu.shape, p_cpu.shape)
+        self.assertEqual(l_tpu.shape, l_cpu.shape)
+        self.assertEqual(u_tpu.shape, u_cpu.shape)
+        utils.assert_close(p_tpu.cpu(), p_cpu)
+        utils.assert_close(l_tpu.cpu(), l_cpu)
+        utils.assert_close(u_tpu.cpu(), u_cpu)
+
+        lu_cpu, piv_cpu = torch.linalg.lu_factor(a_cpu)
+        lu_tpu, piv_tpu = torch.linalg.lu_factor(a_tpu)
+        for unpack_data, unpack_pivots in [
+            (True, True),
+            (True, False),
+            (False, True),
+            (False, False),
+        ]:
+          with self.subTest(
+              shape=shape,
+              unpack_data=unpack_data,
+              unpack_pivots=unpack_pivots,
+          ):
+            p_cpu, l_cpu, u_cpu = torch.lu_unpack(
+                lu_cpu,
+                piv_cpu,
+                unpack_data=unpack_data,
+                unpack_pivots=unpack_pivots,
+            )
+            p_tpu, l_tpu, u_tpu = torch.lu_unpack(
+                lu_tpu,
+                piv_tpu,
+                unpack_data=unpack_data,
+                unpack_pivots=unpack_pivots,
+            )
+            self.assertEqual(p_tpu.shape, p_cpu.shape)
+            self.assertEqual(l_tpu.shape, l_cpu.shape)
+            self.assertEqual(u_tpu.shape, u_cpu.shape)
+            utils.assert_close(p_tpu.cpu(), p_cpu)
+            utils.assert_close(l_tpu.cpu(), l_cpu)
+            utils.assert_close(u_tpu.cpu(), u_cpu)
+
   def test_assert_close_partial_override(self):
     """Tests that utils.assert_close works with partial numeric overrides.
 
