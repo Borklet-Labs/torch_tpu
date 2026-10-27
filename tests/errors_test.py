@@ -6463,6 +6463,51 @@ Supported combinations for non-constant padding:
     ):
       torch.bmm(a, b, out=out)
 
+  def test_bmm_invalid_out_dtype(self):
+    for in_dtype, bad_dtypes in (
+        (
+            torch.float32,
+            (
+                (torch.int32, "int32"),
+                (torch.bool, "bool"),
+                (torch.float64, "float64"),
+                (torch.bfloat16, "bfloat16"),
+            ),
+        ),
+        (torch.float16, ((torch.bfloat16, "bfloat16"),)),
+        (torch.bfloat16, ((torch.float16, "float16"),)),
+    ):
+      a = torch.ones(1, 2, 3, dtype=in_dtype, device=et.device())
+      b = torch.ones(1, 3, 2, dtype=in_dtype, device=et.device())
+
+      for bad_dtype, tpu_dtype in bad_dtypes:
+        with et.assert_raises_message(
+            RuntimeError,
+            tpu=f"""bmm(): expected out_dtype to be the same as input dtype or float32 for float16/bfloat16 inputs, got {tpu_dtype}""",
+            gpu="""out_dtype must be the same as input dtype or fp32 for fp16/bf16 inputs""",
+            message_reviewed_by="gunhyun",
+        ):
+          torch.bmm(a, b, out_dtype=bad_dtype)
+
+        out = torch.empty(1, 2, 2, dtype=bad_dtype, device=et.device())
+        with et.assert_raises_message(
+            RuntimeError,
+            tpu=f"""bmm(): expected out_dtype to be the same as input dtype or float32 for float16/bfloat16 inputs, got {tpu_dtype}""",
+            gpu="""out_dtype must be the same as input dtype or fp32 for fp16/bf16 inputs""",
+            message_reviewed_by="gunhyun",
+        ):
+          torch.bmm(a, b, out_dtype=bad_dtype, out=out)
+
+    empty_a = torch.empty(1, 2, 0, dtype=torch.float32, device=et.device())
+    empty_b = torch.empty(1, 0, 2, dtype=torch.float32, device=et.device())
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""bmm(): expected out_dtype to be the same as input dtype or float32 for float16/bfloat16 inputs, got int32""",
+        gpu="""out_dtype must be the same as input dtype or fp32 for fp16/bf16 inputs""",
+        message_reviewed_by="gunhyun",
+    ):
+      torch.bmm(empty_a, empty_b, out_dtype=torch.int32)
+
   def test_grouped_mm_unsupported_bias(self):
     a = torch.randn(3, 4, device=et.device())
     b = torch.randn(3, 4, 8, device=et.device())
