@@ -17046,6 +17046,89 @@ class OpsGradUnitTest(TorchTpuVsCpuTestBase):
     self.assert_close_tpu_vs_cpu(fn_3d)
     self.assert_close_tpu_vs_cpu(fn_3d_keepdim)
 
+  def test_linalg_vector_norm_single_element_reduction(self):
+    # Tests single element reduction fast path for ord != 0 (b/568044911).
+    def fn_1d_large_pos(device):
+      x = torch.tensor([5.0], device=device)
+      return torch.linalg.vector_norm(x, ord=100.0)
+
+    def fn_1d_large_neg(device):
+      x = torch.tensor([5.0], device=device)
+      return torch.linalg.vector_norm(x, ord=-100.0)
+
+    def fn_1d_neg_large_pos(device):
+      x = torch.tensor([-5.0], device=device)
+      return torch.linalg.vector_norm(x, ord=100.0)
+
+    def fn_1d_neg_large_neg(device):
+      x = torch.tensor([-5.0], device=device)
+      return torch.linalg.vector_norm(x, ord=-100.0)
+
+    def fn_0d_large_ord(device):
+      x = torch.tensor(5.0, device=device)
+      return torch.linalg.vector_norm(x, ord=100.0)
+
+    def fn_0d_neg_large_ord(device):
+      x = torch.tensor(-5.0, device=device)
+      return torch.linalg.vector_norm(x, ord=100.0)
+
+    def fn_2d_dim1(device):
+      x = torch.tensor([[5.0], [3.0]], device=device)
+      return torch.linalg.vector_norm(x, ord=100.0, dim=1)
+
+    def fn_2d_dim1_keepdim(device):
+      x = torch.tensor([[5.0], [3.0]], device=device)
+      return torch.linalg.vector_norm(x, ord=100.0, dim=1, keepdim=True)
+
+    def fn_2d_neg_dim1(device):
+      x = torch.tensor([[-5.0], [3.0]], device=device)
+      return torch.linalg.vector_norm(x, ord=100.0, dim=1)
+
+    def fn_2d_neg_dim_neg1(device):
+      x = torch.tensor([[-5.0], [3.0]], device=device)
+      return torch.linalg.vector_norm(x, ord=100.0, dim=-1)
+
+    def fn_2d_neg_dim1_keepdim(device):
+      x = torch.tensor([[-5.0], [3.0]], device=device)
+      return torch.linalg.vector_norm(x, ord=100.0, dim=1, keepdim=True)
+
+    def fn_2d_multidim(device):
+      x = torch.tensor([[-5.0]], device=device)
+      return torch.linalg.vector_norm(x, ord=100.0, dim=(0, 1))
+
+    def fn_2d_multidim_keepdim(device):
+      x = torch.tensor([[-5.0]], device=device)
+      return torch.linalg.vector_norm(x, ord=100.0, dim=(-2, -1), keepdim=True)
+
+    def fn_complex64_large_components(device):
+      x = torch.tensor([3e20 + 4e20j], dtype=torch.complex64, device=device)
+      return torch.linalg.vector_norm(x, ord=2.0)
+
+    def fn_1d_nan_ord(device):
+      x = torch.tensor([5.0], device=device)
+      return torch.linalg.vector_norm(x, ord=float("nan"))
+
+    def fn_0d_nan_ord(device):
+      x = torch.tensor(5.0, device=device)
+      return torch.linalg.vector_norm(x, ord=float("nan"))
+
+    self.assert_close_tpu_vs_cpu(fn_1d_large_pos)
+    self.assert_close_tpu_vs_cpu(fn_1d_large_neg)
+    self.assert_close_tpu_vs_cpu(fn_1d_neg_large_pos)
+    self.assert_close_tpu_vs_cpu(fn_1d_neg_large_neg)
+    self.assert_close_tpu_vs_cpu(fn_0d_large_ord)
+    self.assert_close_tpu_vs_cpu(fn_0d_neg_large_ord)
+    self.assert_close_tpu_vs_cpu(fn_2d_dim1)
+    self.assert_close_tpu_vs_cpu(fn_2d_dim1_keepdim)
+    self.assert_close_tpu_vs_cpu(fn_2d_neg_dim1)
+    self.assert_close_tpu_vs_cpu(fn_2d_neg_dim_neg1)
+    self.assert_close_tpu_vs_cpu(fn_2d_neg_dim1_keepdim)
+    self.assert_close_tpu_vs_cpu(fn_2d_multidim)
+    self.assert_close_tpu_vs_cpu(fn_2d_multidim_keepdim)
+    self.assert_close_tpu_vs_cpu(fn_complex64_large_components)
+    self.assert_close_tpu_vs_cpu(fn_1d_nan_ord)
+    self.assert_close_tpu_vs_cpu(fn_0d_nan_ord)
+
   def test_norm_out(self):
     def test_fn(
         device, p=2.0, dim=None, keepdim=False, dtype=None, empty_out=False

@@ -2639,6 +2639,7 @@ class TestOps(op_testing.OpInfoTestBase):
     )
 
   def test_linalg_vector_norm_other_dtypes(self):
+    # b/568044911: covers all dtypes, grad, and dynamism for vector norm.
     self.do_test_op(
         "linalg.vector_norm",
         exclude_dtypes=(torch.int4,),
