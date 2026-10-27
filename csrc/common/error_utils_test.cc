@@ -1499,7 +1499,7 @@ TEST_F(ErrorMessageGuidelinesDeathTest, LeadingWhitespace) {
   // After context prefix.
   EXPECT_DEATH(
       ThrowWithMessage("failed to materialize:  dimension size negative"),
-      HasSubstr("should not start with whitespace"));
+      HasSubstr("must not start with whitespace"));
 }
 
 TEST_F(ErrorMessageGuidelinesDeathTest, TrailingWhitespace) {
@@ -1508,7 +1508,8 @@ TEST_F(ErrorMessageGuidelinesDeathTest, TrailingWhitespace) {
 }
 
 TEST_F(ErrorMessageGuidelinesDeathTest, MessageContainsOnlyWhitespace) {
-  EXPECT_DEATH(ThrowWithMessage("   "), HasSubstr("should not be empty"));
+  EXPECT_DEATH(ThrowWithMessage("   "),
+               HasSubstr("must not be whitespace only"));
 }
 
 TEST_F(ErrorMessageGuidelinesDeathTest, StartsWithUppercaseLetter) {
@@ -1527,8 +1528,7 @@ TEST_F(ErrorMessageGuidelinesDeathTest,
   // right after the sentence.
   EXPECT_DEATH(
       ThrowWithMessage("CPU tensors are not supported"),
-      HasSubstr(
-          "The error message should start with a lowercase character.\n"));
+      HasSubstr("The error message must start with a lowercase character.\n"));
 }
 
 TEST_F(ErrorMessageGuidelinesDeathTest,
@@ -1642,6 +1642,47 @@ TEST_F(ErrorMessageGuidelinesPassTest, StableHloTypeNameOnXlaError) {
                    /* context= */ "the task has failed",
                    /* xla_error_message= */ "the dtype cannot be f32"),
                c10::Error);
+}
+
+TEST_F(ErrorMessageGuidelinesPassTest, NonAlphaNumTrailingCharOnXlaError) {
+  // The XLA compiler error is not under our control, so its last character is
+  // not checked.
+  EXPECT_THROW(ThrowWithContextForXlaError(
+                   /* context= */ "the task has failed",
+                   /* xla_error_message= */ "the dtype is invalid."),
+               c10::Error);
+}
+
+TEST_F(ErrorMessageGuidelinesDeathTest, NonAlphaNumTrailingCharBeforeXlaError) {
+  // The last character of the TorchTPU part of the message is checked, even if
+  // an XLA compiler error follows.
+  EXPECT_DEATH(ThrowWithContextForXlaError(
+                   /* context= */ "the task has failed.",
+                   /* xla_error_message= */ "error"),
+               HasSubstr("After removing the XLA compiler error: The error "
+                         "message must end with either an alpha-numeric"));
+}
+
+TEST_F(ErrorMessageGuidelinesDeathTest,
+       NonAlphaNumTrailingCharAfterContextPrefix) {
+  // Violations found after removing the context prefixes are labeled as such.
+  EXPECT_DEATH(
+      ThrowWithMessage("failed to materialize: dimension size negative."),
+      HasSubstr("After removing all context prefixes: The error message must "
+                "end with either an alpha-numeric"));
+}
+
+TEST_F(ErrorMessageGuidelinesDeathTest,
+       NonAlphaNumTrailingCharAfterContextPrefixAndBeforeXlaError) {
+  // Violations found after removing both the context prefixes and the XLA
+  // compiler error are labeled as such.
+  EXPECT_DEATH(
+      ThrowWithContextForXlaError(
+          /* context= */ "failed to compile: the task has failed.",
+          /* xla_error_message= */ "error"),
+      HasSubstr("After removing all context prefixes and the XLA compiler "
+                "error: The error message must end with either an "
+                "alpha-numeric"));
 }
 
 TEST_F(ErrorMessageGuidelinesPassTest, ExpectedGotFormat) {

@@ -106,7 +106,7 @@ TEST(PyBindErrorUtilsInternalDeathTest, ImplThrowsInvalidMessageCrashes) {
   }
   EXPECT_DEATH(internal::ErrorHandlingHelper<void()>::impl("test_prefix",
                                                            ThrowInvalidMessage),
-               "Improper error message format");
+               "Bad error message format");
 }
 
 }  // namespace
