@@ -88,22 +88,17 @@ std::string_view PyGetMemoryKind(const at::Tensor& tensor) {
 // handling and error translation wrappers.
 struct TestErrorClass {
   void ThrowTtErrorInMemberFunction() {
-    TT_CHECK_THROW(  // ERROR_COV_INFEASIBLE=Covered by pybind_error_utils_test.
-        false, error::kInvalidArgument)
+    TT_CHECK_THROW(false, error::kInvalidArgument)
         << "class throwing invalid argument";
   }
 };
 
 void ThrowTtErrorInFreeFunction() {
-  TT_CHECK_THROW(  // ERROR_COV_INFEASIBLE=Covered by pybind_error_utils_test.
-      false, error::kInvalidArgument)
-      << "throwing invalid argument";
+  TT_CHECK_THROW(false, error::kInvalidArgument) << "throwing invalid argument";
 }
 
 void ThrowTtErrorIndexError() {
-  TT_CHECK_THROW(  // ERROR_COV_INFEASIBLE=Covered by pybind_error_utils_test.
-      false, error::kPythonIndexError)
-      << "throwing index error";
+  TT_CHECK_THROW(false, error::kPythonIndexError) << "throwing index error";
 }
 
 // Test struct used by pybind_error_utils_test to verify correct forwarding of
