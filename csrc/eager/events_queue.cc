@@ -371,7 +371,7 @@ class StreamState {
   void RecordCompiledExecutionTask(ExecutionTask&& execution_task,
                                    EagerMode eager_mode) {
     absl::MutexLock lock(mu_);
-    InsertGraphBreakLocked(
+    (void)InsertGraphBreakLocked(
         /*must_materialize=*/{}, MaterializationReason::kCompileModeExecution,
         GraphSplitMode::kSplitGraph, eager_mode, std::move(execution_task));
   }

@@ -301,7 +301,6 @@ torch_tpu_cc_test(
         ":error_utils",
         ":status_builder",
         ":status_test_utils",
-        ":utils",
         "//csrc/common:oss_test_main",
         "//csrc/eager:eager_mode",
         "//csrc/ops:op_names",
@@ -328,7 +327,6 @@ torch_tpu_cc_test(
     deps = [
         ":error_utils",
         ":pybind_error_utils",
-        ":utils",
         "//csrc/common:oss_test_main",
         "//shims/torch/c10/util:base_headers",
     ],
@@ -1057,11 +1055,17 @@ torch_tpu_cc_test(
 
 torch_tpu_cc_library(
     name = "flags",
+    srcs = ["flags.cc"],
     hdrs = ["flags.h"],
     deps = [
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:no_destructor",
         "@com_google_absl//absl/base:nullability",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/flags:commandlineflag",
         "@com_google_absl//absl/flags:flag",
+        "@com_google_absl//absl/log:absl_check",
+        "@com_google_absl//absl/synchronization",
     ],
 )
 

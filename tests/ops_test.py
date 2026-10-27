@@ -3172,8 +3172,8 @@ class TestOps(op_testing.OpInfoTestBase):
   def test_polygamma(self):
     self.do_test_op(
         "polygamma",
-        # TODO(b/568080282): Fix aten::polygamma_ alias annotation error in
-        # torch.compile functionalization.
+        # Inplace polygamma_ has alias annotation issues in torch.compile
+        # (b/568080282).
         skip_if=lambda variant, _: (
             op_testing.is_compiled_mode()
             and variant == op_testing.OpVariant.INPLACE

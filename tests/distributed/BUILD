@@ -316,7 +316,7 @@ torch_tpu_py_test(
     env = {
         "TORCH_TPU_TIER3_COMPILATION_CACHE_ROOT": "/tmp/collective_ops_test",
     },
-    shard_count = 12,
+    shard_count = if_oss(16, 12),
     tags = if_oss(
         ["exclusive"],
         [],
@@ -502,7 +502,7 @@ torch_tpu_py_test(
     ],
     env = TEST_COV_ENV,
     main = "collective_errors_test.py",
-    notap = "Run as a data dep by error_coverage_test in TAP opt presubmit.",
+    notap = "Run as a data dep by //tests:error_coverage_test.",
     tags = if_oss(
         ["exclusive"],
         [],
@@ -780,7 +780,7 @@ torch_tpu_py_test(
         "noasan",  # Disabled due to b/497035517.
         "nomsan",  # Disabled due to b/516945438.
         "notsan",  # Disabled due to b/497035517.
-        "requires-tpu-v5lite:8",
+        REQUIRES_V5_MULTI_DEVICE,
     ],
     deps = [
         ":distributed_utils",
@@ -884,7 +884,6 @@ torch_tpu_py_test(
     name = "ragged_all_to_all_test",
     timeout = "long",
     srcs = ["ragged_all_to_all_test.py"],
-    shard_count = 3,
     tags = if_oss(
         ["exclusive"],
         [],
@@ -895,13 +894,12 @@ torch_tpu_py_test(
         "requires-tpu-v5lite:8",
     ],
     deps = [
-        ":distributed_utils",
+        ":continuous_test_utils",
         "//shims/absl_py/testing:absltest",
         "//shims/torch:pytorch",
         "//src/torch_tpu",
         "//src/torch_tpu/_internal/distributed:multiprocessing",
         "//src/torch_tpu/_internal/utils:test_utils",
-        "//tests:seed_test_utils",
     ],
 )
 
@@ -957,18 +955,16 @@ torch_tpu_py_test(
     exec_properties = {
         "test.mem": "28g",
     },
-    shard_count = 4,
     tags = if_oss(
         ["exclusive"],
         [],
     ) + [
+        REQUIRES_V5_MULTI_DEVICE,
         "noasan",  # TODO(b/555734615): fix the test in asan mode.
         "notsan",  # TODO(b/555734615): fix the time-out in tsan mode.
-        # Exactly 8 chips are required because the test hardcodes _world_size = 8 to match the
-        # topology and avoid uninitialized chips in OSS CI.
-        "requires-tpu-v5lite:8",
     ],
     deps = [
+        ":continuous_test_utils",
         ":distributed_utils",
         "//shims/absl_py/testing:absltest",
         "//shims/torch:pytorch",
@@ -980,7 +976,6 @@ torch_tpu_py_test(
         "//src/torch_tpu/_internal/distributed:collective_ops",
         "//src/torch_tpu/_internal/distributed:multiprocessing",
         "//src/torch_tpu/_internal/utils:test_utils",
-        "//tests:seed_test_utils",
     ],
 )
 

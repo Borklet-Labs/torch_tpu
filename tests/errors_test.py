@@ -3597,20 +3597,34 @@ Device-side assertion tracking was not enabled by user.""",
 
   def test_logit_unsupported_complex(self):
     t = torch.tensor([1 + 1j], device=et.device(), dtype=torch.complex64)
+    real_t = torch.tensor([0.5], device=et.device(), dtype=torch.float32)
     out = torch.tensor([1 + 1j], device=et.device(), dtype=torch.complex64)
     funcs = [
         (lambda: torch.logit(t), "logit()"),
         (lambda: torch.logit(t, out=out), "logit()"),
         (lambda: torch.logit_(t), "logit_()"),
         (lambda: torch.ops.aten.logit_backward(t, t), "logit_backward()"),
+        (lambda: torch.ops.aten.logit_backward(real_t, t), "logit_backward()"),
+        (lambda: torch.ops.aten.logit_backward(t, real_t), "logit_backward()"),
     ]
     for func, op_prefix in funcs:
       with et.assert_raises_message(
           RuntimeError,
           tpu=f"{op_prefix}: expected non-complex dtype, got complex64",
           gpu=""""logit_cuda" not implemented for 'ComplexFloat'""",
+          message_reviewed_by="gunhyun",
       ):
         func()
+
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""logit_backward(): expected non-complex dtype, got complex64""",
+        gpu="""result type ComplexFloat can't be cast to the desired output type Float""",
+        message_reviewed_by="gunhyun",
+    ):
+      torch.ops.aten.logit_backward.grad_input(
+          t, real_t, grad_input=torch.empty_like(real_t)
+      )
 
   @parameterized.named_parameters(
       ("bool", torch.bool, "bool", "Bool"),
@@ -5867,6 +5881,23 @@ Supported combinations for non-constant padding:
           message_reviewed_by="wan",
       ):
         torch.erfinv(t)
+
+  def test_lgamma_unsupported_complex(self):
+    for dtype in (torch.complex64, torch.complex128):
+      with self.subTest(dtype=dtype):
+        t = torch.randn(2, 2, dtype=dtype, device=et.device())
+        with et.assert_raises_message(
+            RuntimeError,
+            tpu=re.compile(
+                r"lgamma(\.out)?\(\): expected self not to be complex, got"
+                r" complex(64|128)"
+            ),
+            gpu=re.compile(
+                r".*not implemented for ('ComplexFloat'|'ComplexDouble')"
+            ),
+            message_reviewed_by="gunhyun",
+        ):
+          torch.lgamma(t)
 
   def test_cat_out_invalid_cast(self):
     """Tests that cat fails when the out tensor has an incompatible dtype."""
@@ -9667,6 +9698,82 @@ Device-side assertion tracking was not enabled by user.""",
           grad, self_val, grad_input=grad_input
       )
 
+  @parameterized.named_parameters(
+      dict(
+          testcase_name="bool",
+          dtype=torch.bool,
+          tpu_dtype="bool",
+          gpu_dtype="Bool",
+      ),
+      dict(
+          testcase_name="int32",
+          dtype=torch.int32,
+          tpu_dtype="int32",
+          gpu_dtype="Int",
+      ),
+      dict(
+          testcase_name="int64",
+          dtype=torch.int64,
+          tpu_dtype="int64",
+          gpu_dtype="Long",
+      ),
+  )
+  def test_tanh_backward_unsupported_dtypes(
+      self, dtype: torch.dtype, tpu_dtype: str, gpu_dtype: str
+  ):
+    grad = torch.ones(4, device=et.device(), dtype=dtype)
+    output = torch.zeros(4, device=et.device(), dtype=dtype)
+
+    with et.assert_raises_message(
+        NotImplementedError,
+        tpu=f"""tanh_backward(): not implemented for {tpu_dtype}""",
+        gpu=f""""tanh_backward_cuda" not implemented for '{gpu_dtype}'""",
+        message_reviewed_by="gunhyun",
+    ):
+      torch.ops.aten.tanh_backward(grad, output)
+
+  def test_tanh_backward_grad_input_dtype_mismatch(self):
+    grad = torch.ones(4, device=et.device(), dtype=torch.float32)
+    output = torch.full((4,), 0.5, device=et.device(), dtype=torch.float32)
+    grad_input = torch.empty(4, device=et.device(), dtype=torch.int32)
+
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""tanh_backward(): result type float32 can't be cast to the desired output type int32""",
+        gpu="""result type Float can't be cast to the desired output type Int""",
+        message_reviewed_by="gunhyun",
+    ):
+      torch.ops.aten.tanh_backward.grad_input(
+          grad, output, grad_input=grad_input
+      )
+
+  def test_tanh_backward_grad_input_broadcast_alias(self):
+    grad = torch.ones((2, 3), device=et.device(), dtype=torch.float32)
+    output = torch.full((1, 3), 0.5, device=et.device(), dtype=torch.float32)
+
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""tanh_backward(): output with shape [2, 3] doesn't match the broadcast shape of the tensor being operated on in-place, which has shape [1, 3]""",
+        gpu="""output with shape [1, 3] doesn't match the broadcast shape [2, 3]""",
+        message_reviewed_by="gunhyun",
+    ):
+      torch.ops.aten.tanh_backward.grad_input(grad, output, grad_input=output)
+
+  def test_tanh_backward_grad_input_cpu_tensor(self):
+    grad = torch.ones((2, 3), device=et.device(), dtype=torch.float32)
+    output = torch.full((2, 3), 0.5, device=et.device(), dtype=torch.float32)
+    grad_input_cpu = torch.empty((2, 3), device="cpu", dtype=torch.float32)
+
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""tanh_backward(): expected out tensor to be on tpu, got cpu""",
+        gpu="""Expected all tensors to be on the same device, but got grad_output is on cuda:0, different from other tensors on cpu (when checking argument in method wrapper_CUDA_tanh_backward_out_grad_input)""",
+        message_reviewed_by="gunhyun",
+    ):
+      torch.ops.aten.tanh_backward.grad_input(
+          grad, output, grad_input=grad_input_cpu
+      )
+
   def test_acos_out_dtype_mismatch(self):
     t = torch.ones(5, device=et.device())
 
@@ -10664,6 +10771,41 @@ Device-side assertion tracking was not enabled by user.""",
         tpu="""xlogy(): expected non-complex dtypes, got x dtype complex64 and y dtype complex64""",
     ):
       torch.ops.aten.xlogy.OutTensor(x, y, out=out)
+
+  def test_xlogy_out_dtype_mismatch(self):
+    x = torch.tensor([1.0, 2.0], device=et.device(), dtype=torch.float32)
+    y = torch.tensor([2.0, 3.0], device=et.device(), dtype=torch.float32)
+    out = torch.empty(2, device=et.device(), dtype=torch.int32)
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""xlogy(): result type float32 can't be cast to the desired output type int32""",
+        gpu="""result type Float can't be cast to the desired output type Int""",
+        message_reviewed_by="gunhyun",
+    ):
+      torch.xlogy(x, y, out=out)
+
+  def test_xlogy_out_device_mismatch(self):
+    x = torch.tensor([1.0, 2.0], device=et.device(), dtype=torch.float32)
+    y = torch.tensor([2.0, 3.0], device=et.device(), dtype=torch.float32)
+    out = torch.empty(2, device="cpu", dtype=torch.float32)
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""xlogy(): expected out tensor to be on tpu, got cpu""",
+        gpu="""Expected all tensors to be on the same device, but found at least two devices, cuda:0 and cpu!""",
+        message_reviewed_by="gunhyun",
+    ):
+      torch.xlogy(x, y, out=out)
+
+  def test_xlogy_smaller_out_alias(self):
+    x = torch.ones((2, 1), device=et.device(), dtype=torch.float32)
+    y = torch.ones((2, 3), device=et.device(), dtype=torch.float32)
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""xlogy(): output with shape [2, 1] doesn't match the broadcast shape of the tensor being operated on in-place, which has shape [2, 3]""",
+        gpu="""output with shape [2, 1] doesn't match the broadcast shape [2, 3]""",
+        message_reviewed_by="gunhyun",
+    ):
+      torch.xlogy(x, y, out=x)
 
   def test_linalg_qr_insufficient_dims(self):
     input_tensor = torch.ones(1, device=et.device(), dtype=torch.float32)
@@ -13600,7 +13742,7 @@ Device-side assertion tracking was not enabled by user.""",
     out = torch.empty(4, device="cpu")
     with et.assert_raises_message(
         RuntimeError,
-        tpu="""add(): expected output tensor to be on 'tpu' device, got 'cpu'""",
+        tpu="""add(): expected out tensor to be on tpu, got cpu""",
         gpu="""Expected all tensors to be on the same device, but found at least two devices, cuda:0 and cpu!""",
         message_reviewed_by="wan",
     ):
@@ -13621,6 +13763,86 @@ Device-side assertion tracking was not enabled by user.""",
         message_reviewed_by="wan",
     ):
       torch.add(tpu_tensor1, tpu_tensor2, out=cpu_tensor)
+
+  def test_add_alpha_dtype_mismatch(self):
+    a_i32 = torch.ones(2, dtype=torch.int32, device=et.device())
+    b_i32 = torch.ones(2, dtype=torch.int32, device=et.device())
+    out_i32 = torch.empty(2, dtype=torch.int32, device=et.device())
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""add(): for integral input tensors, argument alpha must not be a floating point number""",
+        gpu="""For integral input tensors, argument alpha must not be a floating point number.""",
+        message_reviewed_by="gunhyun",
+    ):
+      torch.add(a_i32, b_i32, alpha=2.5, out=out_i32)
+
+    a_f32 = torch.ones(2, dtype=torch.float32, device=et.device())
+    b_f32 = torch.ones(2, dtype=torch.float32, device=et.device())
+    out_f32 = torch.empty(2, dtype=torch.float32, device=et.device())
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""add(): boolean alpha only supported for boolean results""",
+        gpu="""Boolean alpha only supported for Boolean results.""",
+        message_reviewed_by="gunhyun",
+    ):
+      torch.add(a_f32, b_f32, alpha=True, out=out_f32)
+
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""add(): for non-complex input tensors, argument alpha must not be a complex number""",
+        gpu="""For non-complex input tensors, argument alpha must not be a complex number.""",
+        message_reviewed_by="gunhyun",
+    ):
+      torch.add(a_f32, b_f32, alpha=1 + 2j, out=out_f32)
+
+  def test_add_alpha_overflow(self):
+    a_i8 = torch.ones(2, dtype=torch.int8, device=et.device())
+    b_i8 = torch.ones(2, dtype=torch.int8, device=et.device())
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""add(): value cannot be converted to type int8 without overflow""",
+        gpu="""value cannot be converted to type int8_t without overflow""",
+        message_reviewed_by="gunhyun",
+    ):
+      torch.add(a_i8, b_i8, alpha=1000)
+
+    for dtype in (torch.float32, torch.float16, torch.bfloat16):
+      with self.subTest(dtype=dtype):
+        a = torch.ones(2, dtype=dtype, device=et.device())
+        b = torch.ones(2, dtype=dtype, device=et.device())
+        with et.assert_raises_message(
+            RuntimeError,
+            tpu="""add(): value cannot be converted to type float32 without overflow""",
+            gpu="""value cannot be converted to type float without overflow""",
+            message_reviewed_by="gunhyun",
+        ):
+          torch.add(a, b, alpha=1e40)
+
+  def test_add_out_non_0d_cpu_tensor(self):
+    out = torch.empty(0, dtype=torch.float32, device=et.device())
+    tpu_0d = torch.tensor(1.0, device=et.device())
+    cpu_2d = torch.ones(1, 1, device="cpu")
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""add(): expected tensor to be on tpu, got cpu""",
+        gpu="""Expected all tensors to be on the same device, but found at least two devices, cuda:0 and cpu!""",
+        message_reviewed_by="gunhyun",
+    ):
+      torch.add(tpu_0d, cpu_2d, out=out)
+
+  def test_add_out_all_cpu_scalars(self):
+    out = torch.empty((), dtype=torch.float32, device=et.device())
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""add(): expected tensor to be on tpu, got cpu""",
+        gpu="""Trying to pass too many CPU scalars to non-CPU kernel!""",
+        message_reviewed_by="gunhyun",
+    ):
+      torch.add(
+          torch.tensor(1.0, device="cpu"),
+          torch.tensor(2.0, device="cpu"),
+          out=out,
+      )
 
   def test_add_dev_and_cpu_tensors(self):
     dev_tensor = torch.tensor([1, 2, 3], device=et.device())
@@ -15664,6 +15886,27 @@ Device-side assertion tracking was not enabled by user.""",
     ):
       torch.ops.ao.reload(x, torch.device("cpu"))
 
+  def test_pinned_host_oom(self):
+    if et.is_on_gpu():
+      # GPU test raises this error:
+      # RuntimeError: pin_memory=True requires a CUDA or other accelerator
+      # backend; no pinned memory allocator is available on this system.
+      self.skipTest("GPU allocation can't find host allocator")
+    # Request more bytes than the user virtual address space can map (at most
+    # 2^57 bytes on x86-64), so that the allocation fails up front without
+    # touching physical memory. A smaller size (e.g. 100 TB) can fit
+    # in the address space, and then pinning it consumes physical memory until
+    # the OOM killer stops the test, or the whole machine on hosts without a
+    # memory limit.
+    too_many_bytes = 1 << 62
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""failed to allocate 4611686018427387904 bytes of pinned host memory""",
+    ):
+      torch.zeros(
+          too_many_bytes, dtype=torch.uint8, device="cpu", pin_memory=True
+      )
+
 
 class InputPreprocessingErrorTest(et.ErrorTestBase):
 
@@ -15787,7 +16030,6 @@ class ComputeStatsErrorTest(et.ErrorTestBase):
         tpu="""Invalid offsets range [0, 10) for indices size 3""",
     ):
       torch.ops.tpu.compute_sparse_dense_matmul_stats(indices, offsets, 1, 4)
-
 
 class MaskedSoftmaxErrorTest(et.ErrorTestBase):
 
@@ -16084,6 +16326,27 @@ class MaskedSoftmaxErrorTest(et.ErrorTestBase):
         gpu=""""pow_cuda" not implemented for 'Bool'""",
     ):
       torch.pow(base, exp)
+
+  def test_pow_negative_integer_scalar_exponent(self):
+    for dtype in (torch.int32, torch.int64):
+      with self.subTest(dtype=dtype):
+        base = torch.tensor([2, 3], dtype=dtype, device=et.device())
+        out = torch.empty_like(base)
+        with et.assert_raises_message(
+            RuntimeError,
+            tpu="""pow(): integers to negative integer powers are not allowed""",
+            gpu="""Integers to negative integer powers are not allowed.""",
+            message_reviewed_by="gunhyun",
+        ):
+          torch.pow(base, -2, out=out)
+
+        with et.assert_raises_message(
+            RuntimeError,
+            tpu="""Integers to negative integer powers are not allowed.""",
+            gpu="""Integers to negative integer powers are not allowed.""",
+            message_reviewed_by="gunhyun",
+        ):
+          base.pow_(-2)
 
   def test_gather_out_dtype_mismatch(self):
     inp = torch.ones(2, 2, device=et.device(), dtype=torch.float32)

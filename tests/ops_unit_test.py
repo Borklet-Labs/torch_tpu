@@ -1212,6 +1212,62 @@ class OpsUnitTest(TorchTpuVsCpuTestBase):
       self.assertEqual(pivots_tpu, pivots_cpu)
       self.assertEqual(info_tpu, info_cpu)
 
+  def test_linalg_lu_zero_sized_matrix(self):
+    device = torch.device("tpu")
+    shapes = [
+        (0, 0),
+        (0, 3),
+        (3, 0),
+        (2, 3, 0),
+        (2, 0, 3),
+        (0, 3, 5),
+        (0, 0, 0),
+    ]
+    for shape in shapes:
+      with self.subTest(shape=shape):
+        a_cpu = torch.empty(shape, dtype=torch.float32)
+        a_tpu = a_cpu.to(device)
+        p_cpu, l_cpu, u_cpu = torch.linalg.lu(a_cpu)
+        p_tpu, l_tpu, u_tpu = torch.linalg.lu(a_tpu)
+        self.assertEqual(p_tpu.shape, p_cpu.shape)
+        self.assertEqual(l_tpu.shape, l_cpu.shape)
+        self.assertEqual(u_tpu.shape, u_cpu.shape)
+        utils.assert_close(p_tpu.cpu(), p_cpu)
+        utils.assert_close(l_tpu.cpu(), l_cpu)
+        utils.assert_close(u_tpu.cpu(), u_cpu)
+
+        lu_cpu, piv_cpu = torch.linalg.lu_factor(a_cpu)
+        lu_tpu, piv_tpu = torch.linalg.lu_factor(a_tpu)
+        for unpack_data, unpack_pivots in [
+            (True, True),
+            (True, False),
+            (False, True),
+            (False, False),
+        ]:
+          with self.subTest(
+              shape=shape,
+              unpack_data=unpack_data,
+              unpack_pivots=unpack_pivots,
+          ):
+            p_cpu, l_cpu, u_cpu = torch.lu_unpack(
+                lu_cpu,
+                piv_cpu,
+                unpack_data=unpack_data,
+                unpack_pivots=unpack_pivots,
+            )
+            p_tpu, l_tpu, u_tpu = torch.lu_unpack(
+                lu_tpu,
+                piv_tpu,
+                unpack_data=unpack_data,
+                unpack_pivots=unpack_pivots,
+            )
+            self.assertEqual(p_tpu.shape, p_cpu.shape)
+            self.assertEqual(l_tpu.shape, l_cpu.shape)
+            self.assertEqual(u_tpu.shape, u_cpu.shape)
+            utils.assert_close(p_tpu.cpu(), p_cpu)
+            utils.assert_close(l_tpu.cpu(), l_cpu)
+            utils.assert_close(u_tpu.cpu(), u_cpu)
+
   def test_assert_close_partial_override(self):
     """Tests that utils.assert_close works with partial numeric overrides.
 
@@ -1834,6 +1890,56 @@ class OpsUnitTest(TorchTpuVsCpuTestBase):
         res_i8_i32.cpu(), torch.tensor([10000, 10000], dtype=torch.int32)
     )
 
+  def test_addcdiv_default_value_build_mlir(self):
+    """Verifies addcdiv with value=1 traces without extra parameter."""
+    for value_kwargs in ({}, {"value": 1}, {"value": 1.0}):
+      with self.subTest(value_kwargs=value_kwargs):
+        s = torch.ones(2, 2, device="tpu")
+        t1 = torch.ones(2, 2, device="tpu")
+        t2 = torch.ones(2, 2, device="tpu")
+        torch.accelerator.synchronize()
+        with execution_mode.set_eager_mode(
+            execution_mode.EagerMode.DEFER_AND_FUSE
+        ):
+          z = torch.addcdiv(s, t1, t2, **value_kwargs)
+        mlir_text = tpu_torch_compile.serialize_mlir_text(
+            tpu_torch_compile.build_mlir([z], [s, t1, t2])
+        )
+        self.assertIn("stablehlo.divide", mlir_text)
+        self.assertNotIn("stablehlo.multiply", mlir_text)
+        utils.assert_close(
+            z.cpu(), torch.full((2, 2), 2.0, dtype=torch.float32)
+        )
+
+  def test_addcmul_default_value_build_mlir(self) -> None:
+    """Verifies addcmul with default value=1 traces without extra parameter."""
+    for value_kwargs in ({}, {"value": 1}, {"value": 1.0}):
+      with self.subTest(value_kwargs=value_kwargs):
+        s = torch.ones(2, 2, device="tpu")
+        t1 = torch.ones(2, 2, device="tpu")
+        t2 = torch.ones(2, 2, device="tpu")
+        torch.accelerator.synchronize()
+        with execution_mode.set_eager_mode(
+            execution_mode.EagerMode.DEFER_AND_FUSE
+        ):
+          z = torch.addcmul(s, t1, t2, **value_kwargs)
+        mlir_text = tpu_torch_compile.serialize_mlir_text(
+            tpu_torch_compile.build_mlir([z], [s, t1, t2])
+        )
+        self.assertEqual(mlir_text.count("stablehlo.multiply"), 1)
+        self.assertEqual(mlir_text.count("stablehlo.add"), 1)
+        self.assertNotIn("%arg3", mlir_text)
+        utils.assert_close(
+            z.cpu(), torch.full((2, 2), 2.0, dtype=torch.float32)
+        )
+    s = torch.ones(2, 2, device="tpu")
+    t1 = torch.ones(2, 2, device="tpu")
+    t2 = torch.ones(2, 2, device="tpu")
+    z_val2 = torch.addcmul(s, t1, t2, value=2)
+    utils.assert_close(
+        z_val2.cpu(), torch.full((2, 2), 3.0, dtype=torch.float32)
+    )
+
   def test_binary_arithmetic_out_upcast(self):
     device = torch.device("tpu")
     a = torch.tensor([1.0, 2.0, 3.0], dtype=torch.float32, device=device)
@@ -1949,6 +2055,18 @@ class OpsUnitTest(TorchTpuVsCpuTestBase):
         out,
         torch.logit(x).to(torch.float64),
     )
+
+  def test_logit_backward_nan_propagation(self):
+    device = torch.device("tpu")
+    grad_out = torch.tensor([1.0, 1.0, float("nan")], dtype=torch.float32)
+    x = torch.tensor([float("nan"), 0.5, 0.0], dtype=torch.float32)
+    for eps in (1e-6, 0.0):
+      res_tpu = torch.ops.aten.logit_backward(
+          grad_out.to(device), x.to(device), eps
+      ).cpu()
+      res_cpu = torch.ops.aten.logit_backward(grad_out, x, eps)
+      self.assertTrue(torch.isnan(res_tpu[0]))
+      utils.assert_close(res_tpu, res_cpu)
 
   def test_complex_and_polar_out(self):
     device = torch.device("tpu")
@@ -4999,6 +5117,30 @@ class OpsUnitTest(TorchTpuVsCpuTestBase):
     golden_result = torch.bitwise_left_shift(input_long, 1)
     self.assert_close(golden_result=golden_result, torch_tpu_result=tpu_result)
 
+    # Test bitwise shift with mixed bool and integer inputs (b/478955517).
+    int_a = torch.tensor([1, 2, 4], dtype=torch.int32)
+    bool_b = torch.tensor([True, False, True], dtype=torch.bool)
+    tpu_res = torch.bitwise_left_shift(
+        int_a.to(tpu_device), bool_b.to(tpu_device)
+    ).cpu()
+    golden_res = torch.bitwise_left_shift(int_a, bool_b)
+    self.assert_close(golden_result=golden_res, torch_tpu_result=tpu_res)
+
+    tpu_res = torch.bitwise_left_shift(
+        bool_b.to(tpu_device), int_a.to(tpu_device)
+    ).cpu()
+    golden_res = torch.bitwise_left_shift(bool_b, int_a)
+    self.assert_close(golden_result=golden_res, torch_tpu_result=tpu_res)
+
+    int64_a = torch.tensor([1, 2, 4], dtype=torch.int64)
+    tpu_res = (int64_a.to(tpu_device) << bool_b.to(tpu_device)).cpu()
+    golden_res = int64_a << bool_b
+    self.assert_close(golden_result=golden_res, torch_tpu_result=tpu_res)
+
+    tpu_res = (bool_b.to(tpu_device) << int64_a.to(tpu_device)).cpu()
+    golden_res = bool_b << int64_a
+    self.assert_close(golden_result=golden_res, torch_tpu_result=tpu_res)
+
   def test_upsample_bilinear2d_precision_edge_case(self):
     # This test targets a specific case where floating point precision issues
     # in coordinate calculation can cause out-of-bounds access if not clamped.
@@ -5714,6 +5856,30 @@ class OpsUnitTest(TorchTpuVsCpuTestBase):
     tpu_result = torch.bitwise_right_shift(input_long_tpu, 1).cpu()
     golden_result = torch.bitwise_right_shift(input_long, 1)
     self.assert_close(golden_result=golden_result, torch_tpu_result=tpu_result)
+
+    # Test bitwise shift with mixed bool and integer inputs (b/478955517).
+    int_a = torch.tensor([8, 16, 32], dtype=torch.int32)
+    bool_b = torch.tensor([True, False, True], dtype=torch.bool)
+    tpu_res = torch.bitwise_right_shift(
+        int_a.to(tpu_device), bool_b.to(tpu_device)
+    ).cpu()
+    golden_res = torch.bitwise_right_shift(int_a, bool_b)
+    self.assert_close(golden_result=golden_res, torch_tpu_result=tpu_res)
+
+    tpu_res = torch.bitwise_right_shift(
+        bool_b.to(tpu_device), int_a.to(tpu_device)
+    ).cpu()
+    golden_res = torch.bitwise_right_shift(bool_b, int_a)
+    self.assert_close(golden_result=golden_res, torch_tpu_result=tpu_res)
+
+    int64_a = torch.tensor([8, 16, 32], dtype=torch.int64)
+    tpu_res = (int64_a.to(tpu_device) >> bool_b.to(tpu_device)).cpu()
+    golden_res = int64_a >> bool_b
+    self.assert_close(golden_result=golden_res, torch_tpu_result=tpu_res)
+
+    tpu_res = (bool_b.to(tpu_device) >> int64_a.to(tpu_device)).cpu()
+    golden_res = bool_b >> int64_a
+    self.assert_close(golden_result=golden_res, torch_tpu_result=tpu_res)
 
   def test_bitwise_or(self):
     # tensor-tensor
@@ -7914,6 +8080,18 @@ class OpsUnitTest(TorchTpuVsCpuTestBase):
       out = torch.atanh(x)
       out.backward(to(grad_out, device=device))
       return x.grad
+
+    self.assert_close_tpu_vs_cpu(compute)
+
+  def test_tanh_backward_grad_input_cross_dtype(self):
+    g = torch.ones((4,), dtype=torch.float32)
+    o = torch.full((4,), 0.5, dtype=torch.float32)
+
+    def compute(device):
+      grad_in = torch.empty((4,), dtype=torch.bfloat16, device=device)
+      return torch.ops.aten.tanh_backward.grad_input(
+          to(g, device=device), to(o, device=device), grad_input=grad_in
+      )
 
     self.assert_close_tpu_vs_cpu(compute)
 
@@ -12133,6 +12311,61 @@ class OpsUnitTest(TorchTpuVsCpuTestBase):
       return torch.xlogy(x, y)
 
     self.assert_close_tpu_vs_cpu(test_broadcasting_fn)
+
+  def test_xlogy_scalar_and_cpu_scalar_tensors(self):
+    """Tests xlogy scalar overloads and 0-D CPU scalar tensors."""
+    # Scalar self
+    self.assert_close_tpu_vs_cpu(
+        lambda device: torch.xlogy(2.0, torch.tensor([1.0, 2.0], device=device))
+    )
+
+    # Scalar other
+    self.assert_close_tpu_vs_cpu(
+        lambda device: torch.xlogy(torch.tensor([1.0, 2.0], device=device), 2.0)
+    )
+
+    # In-place scalar other
+    def run_inplace(device):
+      t = torch.tensor([1.0, 2.0], device=device)
+      t.xlogy_(2.0)
+      return t
+
+    self.assert_close_tpu_vs_cpu(run_inplace)
+
+    # Out scalar self
+    def run_out_self(device):
+      out = torch.empty(2, device=device)
+      torch.xlogy(2.0, torch.tensor([1.0, 2.0], device=device), out=out)
+      return out
+
+    self.assert_close_tpu_vs_cpu(run_out_self)
+
+    # Out scalar other
+    def run_out_other(device):
+      out = torch.empty(2, device=device)
+      torch.xlogy(torch.tensor([1.0, 2.0], device=device), 2.0, out=out)
+      return out
+
+    self.assert_close_tpu_vs_cpu(run_out_other)
+
+    # 0-D CPU tensor self
+    self.assert_close_tpu_vs_cpu(
+        lambda device: torch.xlogy(
+            torch.tensor(2.0), torch.tensor([1.0, 2.0], device=device)
+        )
+    )
+
+    # 0-D CPU tensor other
+    self.assert_close_tpu_vs_cpu(
+        lambda device: torch.xlogy(
+            torch.tensor([1.0, 2.0], device=device), torch.tensor(2.0)
+        )
+    )
+
+    # Integer tensor with scalar promotes to default float
+    self.assert_close_tpu_vs_cpu(
+        lambda device: torch.xlogy(2, torch.tensor([1, 2], device=device))
+    )
 
   # ============================================================================
   # aten::_assert_async and aten::_assert_async.msg tests
@@ -18241,6 +18474,105 @@ class OpsGradUnitTest(TorchTpuVsCpuTestBase):
 
     self.assert_close_tpu_vs_cpu(test_fn, rtol=1e-2, atol=1e-2)
 
+  @parameterized.named_parameters(
+      (
+          "conv1d_bfloat16",
+          "conv1d",
+          torch.bfloat16,
+          (16, 8, 256),
+          (8, 8, 3),
+      ),
+      (
+          "conv2d_bfloat16",
+          "conv2d",
+          torch.bfloat16,
+          (16, 8, 32, 32),
+          (8, 8, 3, 3),
+      ),
+      (
+          "conv3d_bfloat16",
+          "conv3d",
+          torch.bfloat16,
+          (4, 8, 16, 16, 16),
+          (8, 8, 3, 3, 3),
+      ),
+      (
+          "conv_transpose1d_bfloat16",
+          "conv_transpose1d",
+          torch.bfloat16,
+          (16, 8, 256),
+          (8, 8, 3),
+      ),
+      (
+          "conv_transpose2d_bfloat16",
+          "conv_transpose2d",
+          torch.bfloat16,
+          (16, 8, 32, 32),
+          (8, 8, 3, 3),
+      ),
+      (
+          "conv1d_float16",
+          "conv1d",
+          torch.float16,
+          (16, 8, 256),
+          (8, 8, 3),
+      ),
+      (
+          "conv2d_float16",
+          "conv2d",
+          torch.float16,
+          (16, 8, 32, 32),
+          (8, 8, 3, 3),
+      ),
+      (
+          "conv3d_float16",
+          "conv3d",
+          torch.float16,
+          (4, 8, 16, 16, 16),
+          (8, 8, 3, 3, 3),
+      ),
+      (
+          "conv_transpose1d_float16",
+          "conv_transpose1d",
+          torch.float16,
+          (16, 8, 256),
+          (8, 8, 3),
+      ),
+      (
+          "conv_transpose2d_float16",
+          "conv_transpose2d",
+          torch.float16,
+          (16, 8, 32, 32),
+          (8, 8, 3, 3),
+      ),
+  )
+  def test_convolution_backward_bias_precision(
+      self,
+      op_name: str,
+      dtype: torch.dtype,
+      x_shape: tuple[int, ...],
+      w_shape: tuple[int, ...],
+  ) -> None:
+    """Verifies that convolution backward bias accumulates in float32."""
+    fn = getattr(torch.nn.functional, op_name)
+    torch.manual_seed(42)
+    out_channels = w_shape[1] if "transpose" in op_name else w_shape[0]
+    input_ = torch.randn(x_shape, dtype=dtype)
+    weight = torch.randn(w_shape, dtype=dtype)
+    bias = torch.randn(out_channels, dtype=dtype)
+    dummy_out = fn(input_, weight, bias)
+    grad_output = (torch.randn_like(dummy_out) + 0.5).to(dtype)
+
+    def test_fn(device: torch.device) -> torch.Tensor:
+      in_dev = input_.to(device).detach().requires_grad_(True)
+      w_dev = weight.to(device).detach().requires_grad_(True)
+      b_dev = bias.to(device).detach().requires_grad_(True)
+      out = fn(in_dev, w_dev, bias=b_dev)
+      out.backward(grad_output.to(device))
+      return b_dev.grad
+
+    self.assert_close_tpu_vs_cpu(test_fn, rtol=1e-4, atol=1e-4)
+
   @parameterized.product(
       kernel_size=[3],
       stride=[2],
@@ -21907,6 +22239,40 @@ class OpsGradUnitTest(TorchTpuVsCpuTestBase):
               )
           )
 
+  def test_polygamma_integral_default_dtype(self):
+    # Test integral inputs under default_dtype=float64 compute in float64
+    # matching CPU (b/568040996).
+    prev_default = torch.get_default_dtype()
+    try:
+      torch.set_default_dtype(torch.float64)
+      for n in (0, 1):
+        for dtype in (torch.int64, torch.int32):
+          with self.subTest(n=n, dtype=dtype):
+            self.assert_close_tpu_vs_cpu(
+                lambda device, n=n, dtype=dtype: torch.polygamma(
+                    n, to(torch.tensor([1, 2, 3], dtype=dtype), device=device)
+                )
+            )
+    finally:
+      torch.set_default_dtype(prev_default)
+
+  def test_polygamma_out_dtype_rounding(self):
+    # Test polygamma with out= preserves intermediate rounding matching CPU
+    # (b/568040996).
+    for in_dtype, out_dtype in (
+        (torch.bfloat16, torch.float32),
+        (torch.float64, torch.float32),
+    ):
+      with self.subTest(in_dtype=in_dtype, out_dtype=out_dtype):
+
+        def test_fn(device, in_dtype=in_dtype, out_dtype=out_dtype):
+          x = to(torch.tensor([1.5, 2.5], dtype=in_dtype), device=device)
+          out = to(torch.zeros(2, dtype=out_dtype), device=device)
+          torch.polygamma(1, x, out=out)
+          return out
+
+        self.assert_close_tpu_vs_cpu(test_fn)
+
   def test_masked_softmax(self):
     def test_fn(device):
       results = []
@@ -23549,6 +23915,21 @@ class OpTestingFrameworkTest(op_testing.OpInfoTestBase):
         return res_func, out
 
       self.assert_close_tpu_vs_cpu(compute_f32_c64)
+
+  def test_add_float16_opmath_alpha(self):
+    a = torch.zeros(2, dtype=torch.float16, device="tpu")
+    b = torch.full((2,), 1e-4, dtype=torch.float16, device="tpu")
+    # PyTorch CUDA/TPU cast alpha to opmath_type (float32 for float16), whereas
+    # PyTorch CPU casts alpha directly to float16 and overflows for 70000.0.
+    expected = (a.cpu().float() + 70000.0 * b.cpu().float()).to(torch.float16)
+    res = torch.add(a, b, alpha=70000.0)
+    self.assertEqual(res.dtype, torch.float16)
+    utils.assert_close(actual=res.cpu(), expected=expected)
+
+    out = torch.empty_like(a)
+    torch.add(a, b, alpha=70000.0, out=out)
+    self.assertEqual(out.dtype, torch.float16)
+    utils.assert_close(actual=out.cpu(), expected=expected)
 
 
 if __name__ == "__main__":

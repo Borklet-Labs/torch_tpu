@@ -174,14 +174,33 @@ absl::Status CopyDeviceBufferRefToCpuPtrImpl(
     return absl::OkStatus();
   }
 
-  // In eager blocking mode, start a full stream materialization (ensuring that
-  // the copied buffer will be materialized), and then block until the event
-  // snapshot is complete. This will await both the materialization and the
-  // copy.
+  // Ensure that src_buffer_ref is materialized.
+  std::vector<SharedDeviceBufferList> must_materialize;
+  const auto [device_index, stream_id] = GetCurrentDeviceStreamId();
+  if (src_buffer_ref.device_index() == device_index &&
+      src_buffer_ref.stream_id() == stream_id) {
+    // The source buffer is on the same stream as the transfer. We can start the
+    // materialization in the background and sync on the materialization and
+    // transfer simultaneously.
+    must_materialize.push_back(src_buffer_ref.device_buffer_list());
+  } else {
+    // The source buffer is on a different stream. Materialize that stream and
+    // block until it completes, then block on the transfer afterward.
+    TT_RETURN_IF_ERROR(TranslateXlaTensorOomError(
+        Materialize(src_buffer_ref, MaterializationReason::kCpuTransfer,
+                    GraphSplitMode::kSplitGraph,
+                    MaterializationBlockMode::kNonBlocking),
+        ConvertTo<at::ScalarType>(src_buffer_ref.element_type()),
+        src_buffer_ref.dimensions()));
+    TT_RETURN_IF_ERROR(src_buffer_ref.Synchronize());
+  }
+
+  // Start the copy from TPU to CPU.
   xla::Future<> future = TpuMemcpyDtoHDirect(src_buffer_ref, dest_ptr);
   RecordAsyncDeviceToHost(std::move(future));
-  std::vector<SharedDeviceBufferList> must_materialize = {
-      src_buffer_ref.device_buffer_list()};
+
+  // Then wait for the copy (and materialization, if on the same stream) to
+  // complete, returning any errors.
   xla::Future<std::shared_ptr<EventSnapshot>> snapshot_future =
       MaterializeCurrentStream(MaterializationReason::kCpuTransfer,
                                GraphSplitMode::kSplitGraph, must_materialize);

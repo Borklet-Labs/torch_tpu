@@ -42,7 +42,6 @@
 #include "csrc/common/env_vars.h"
 #include "csrc/common/status_builder.h"
 #include "csrc/common/status_test_utils.h"
-#include "csrc/common/utils.h"
 #include "csrc/eager/eager_mode.h"
 #include "csrc/ops/macros/kernel.h"
 #include "csrc/ops/op_names.h"
@@ -1467,7 +1466,19 @@ TEST(VfioDeviceCollisionTest, AdaptOmitsDevicePathWhenUnparseable) {
                     HasSubstr("TPU_VISIBLE_DEVICES"), Not(HasSubstr("/dev/"))));
 }
 
-#if TT_CHECKS_ERROR_FORMAT
+// Fixture for the error message format checks. Skips the tests if the checks
+// are disabled in this build (e.g. the OSS build). The tests are still compiled
+// so that they are kept compilable.
+class ErrorMessageGuidelinesTest : public testing::Test {
+ protected:
+  void SetUp() override {
+    if (!kCheckErrorFormat) {
+      GTEST_SKIP() << "Error format checks are disabled in this build.";
+    }
+  }
+};
+using ErrorMessageGuidelinesDeathTest = ErrorMessageGuidelinesTest;
+using ErrorMessageGuidelinesPassTest = ErrorMessageGuidelinesTest;
 
 // Throws a c10::Error with `message` as its error message.
 //
@@ -1482,25 +1493,26 @@ void ThrowWithMessage(const std::string_view message) {
             { TT_THROW_IF_ERROR(TT_ERROR(error::kInternal) << message); });
 }
 
-TEST(ErrorMessageGuidelinesDeathTest, LeadingWhitespace) {
+TEST_F(ErrorMessageGuidelinesDeathTest, LeadingWhitespace) {
   EXPECT_DEATH(ThrowWithMessage("  dimension size negative"),
                HasSubstr("start with whitespace"));
   // After context prefix.
   EXPECT_DEATH(
       ThrowWithMessage("failed to materialize:  dimension size negative"),
-      HasSubstr("should not start with whitespace"));
+      HasSubstr("must not start with whitespace"));
 }
 
-TEST(ErrorMessageGuidelinesDeathTest, TrailingWhitespace) {
+TEST_F(ErrorMessageGuidelinesDeathTest, TrailingWhitespace) {
   EXPECT_DEATH(ThrowWithMessage("dimension size negative  "),
                HasSubstr("end with whitespace"));
 }
 
-TEST(ErrorMessageGuidelinesDeathTest, MessageContainsOnlyWhitespace) {
-  EXPECT_DEATH(ThrowWithMessage("   "), HasSubstr("should not be empty"));
+TEST_F(ErrorMessageGuidelinesDeathTest, MessageContainsOnlyWhitespace) {
+  EXPECT_DEATH(ThrowWithMessage("   "),
+               HasSubstr("must not be whitespace only"));
 }
 
-TEST(ErrorMessageGuidelinesDeathTest, StartsWithUppercaseLetter) {
+TEST_F(ErrorMessageGuidelinesDeathTest, StartsWithUppercaseLetter) {
   EXPECT_DEATH(ThrowWithMessage("Dimension size negative"),
                HasSubstr("start with a lowercase character"));
   // After context prefix.
@@ -1509,19 +1521,18 @@ TEST(ErrorMessageGuidelinesDeathTest, StartsWithUppercaseLetter) {
       HasSubstr("start with a lowercase character"));
 }
 
-TEST(ErrorMessageGuidelinesDeathTest,
-     StartsWithUppercaseLetterDoesNotSuggestReplacement) {
+TEST_F(ErrorMessageGuidelinesDeathTest,
+       StartsWithUppercaseLetterDoesNotSuggestReplacement) {
   // Lowercasing the first word may produce a wrong suggestion (e.g. for
   // acronyms), so the check must not suggest a replacement: the message ends
   // right after the sentence.
   EXPECT_DEATH(
       ThrowWithMessage("CPU tensors are not supported"),
-      HasSubstr(
-          "The error message should start with a lowercase character.\n"));
+      HasSubstr("The error message must start with a lowercase character.\n"));
 }
 
-TEST(ErrorMessageGuidelinesDeathTest,
-     StartsWithAllowedUppercaseWordAsPrefixOfLongerWord) {
+TEST_F(ErrorMessageGuidelinesDeathTest,
+       StartsWithAllowedUppercaseWordAsPrefixOfLongerWord) {
   // Allowed uppercase words must only match at a word boundary.
   EXPECT_DEATH(ThrowWithMessage("XLAB is not supported"),
                HasSubstr("start with a lowercase character"));
@@ -1536,7 +1547,7 @@ TEST(ErrorMessageGuidelinesDeathTest,
                HasSubstr("start with a lowercase character"));
 }
 
-TEST(ErrorMessageGuidelinesDeathTest, NoSpaceSurroundingXlaErrorSentinel) {
+TEST_F(ErrorMessageGuidelinesDeathTest, NoSpaceSurroundingXlaErrorSentinel) {
   // Missing space before.
   EXPECT_DEATH(
       ThrowWithMessage("context  -- the XLA compiler failed with: error"),
@@ -1547,7 +1558,7 @@ TEST(ErrorMessageGuidelinesDeathTest, NoSpaceSurroundingXlaErrorSentinel) {
       HasSubstr("spaces after the XLA compiler error sentinel"));
 }
 
-TEST(ErrorMessageGuidelinesDeathTest, ContainsStableHloTypeName) {
+TEST_F(ErrorMessageGuidelinesDeathTest, ContainsStableHloTypeName) {
   EXPECT_DEATH(ThrowWithMessage("unsupported type f32"),
                HasSubstr("StableHLO type names"));
   // On context prefix.
@@ -1556,7 +1567,23 @@ TEST(ErrorMessageGuidelinesDeathTest, ContainsStableHloTypeName) {
                HasSubstr("StableHLO type names"));
 }
 
-TEST(ErrorMessageGuidelinesDeathTest, NonAlphaNumTrailingChar) {
+TEST_F(ErrorMessageGuidelinesDeathTest,
+       StableHloTypeNameIsNotMatchedInsideLongerTypeName) {
+  // "f16" is a substring of "bf16", and "f32" is a substring of "complexf32".
+  // Only the whole type name should be reported, regardless of the order of
+  // entries in the dtype names table.
+  EXPECT_DEATH(ThrowWithMessage("unsupported type bf16"),
+               AllOf(HasSubstr("show 'bfloat16' instead of 'bf16'"),
+                     Not(HasSubstr("instead of 'f16'"))));
+  EXPECT_DEATH(ThrowWithMessage("unsupported type complexf32"),
+               AllOf(HasSubstr("show 'complex64' instead of 'complexf32'"),
+                     Not(HasSubstr("instead of 'f32'"))));
+  EXPECT_DEATH(ThrowWithMessage("unsupported type ui8"),
+               AllOf(HasSubstr("show 'uint8' instead of 'ui8'"),
+                     Not(HasSubstr("instead of 'i8'"))));
+}
+
+TEST_F(ErrorMessageGuidelinesDeathTest, NonAlphaNumTrailingChar) {
   EXPECT_DEATH(ThrowWithMessage("dimension size negative."),
                HasSubstr("end with either an alpha-numeric"));
   // Multiple non-alphanumeric characters.
@@ -1564,7 +1591,7 @@ TEST(ErrorMessageGuidelinesDeathTest, NonAlphaNumTrailingChar) {
                HasSubstr("end with either an alpha-numeric"));
 }
 
-TEST(ErrorMessageGuidelinesDeathTest, InvalidExpectedGotFormat) {
+TEST_F(ErrorMessageGuidelinesDeathTest, InvalidExpectedGotFormat) {
   // Missing ", got" part.
   EXPECT_DEATH(ThrowWithMessage("expected a 3D tensor"),
                HasSubstr("expected ..., got ..."));
@@ -1589,7 +1616,7 @@ TEST(ErrorMessageGuidelinesDeathTest, InvalidExpectedGotFormat) {
       HasSubstr("expected ..., got ..."));
 }
 
-TEST(ErrorMessageGuidelinesDeathTest, MultipleViolationsIncludingEnforced) {
+TEST_F(ErrorMessageGuidelinesDeathTest, MultipleViolations) {
   EXPECT_DEATH(ThrowWithMessage("Dimension size negative with f32"),
                AllOf(HasSubstr("start with a lowercase"),
                      HasSubstr("StableHLO type names")));
@@ -1610,14 +1637,55 @@ void ThrowWithContextForXlaError(const std::string_view context,
             });
 }
 
-TEST(ErrorMessageGuidelinesPassTest, StableHloTypeNameOnXlaError) {
+TEST_F(ErrorMessageGuidelinesPassTest, StableHloTypeNameOnXlaError) {
   EXPECT_THROW(ThrowWithContextForXlaError(
                    /* context= */ "the task has failed",
                    /* xla_error_message= */ "the dtype cannot be f32"),
                c10::Error);
 }
 
-TEST(ErrorMessageGuidelinesPassTest, ExpectedGotFormat) {
+TEST_F(ErrorMessageGuidelinesPassTest, NonAlphaNumTrailingCharOnXlaError) {
+  // The XLA compiler error is not under our control, so its last character is
+  // not checked.
+  EXPECT_THROW(ThrowWithContextForXlaError(
+                   /* context= */ "the task has failed",
+                   /* xla_error_message= */ "the dtype is invalid."),
+               c10::Error);
+}
+
+TEST_F(ErrorMessageGuidelinesDeathTest, NonAlphaNumTrailingCharBeforeXlaError) {
+  // The last character of the TorchTPU part of the message is checked, even if
+  // an XLA compiler error follows.
+  EXPECT_DEATH(ThrowWithContextForXlaError(
+                   /* context= */ "the task has failed.",
+                   /* xla_error_message= */ "error"),
+               HasSubstr("After removing the XLA compiler error: The error "
+                         "message must end with either an alpha-numeric"));
+}
+
+TEST_F(ErrorMessageGuidelinesDeathTest,
+       NonAlphaNumTrailingCharAfterContextPrefix) {
+  // Violations found after removing the context prefixes are labeled as such.
+  EXPECT_DEATH(
+      ThrowWithMessage("failed to materialize: dimension size negative."),
+      HasSubstr("After removing all context prefixes: The error message must "
+                "end with either an alpha-numeric"));
+}
+
+TEST_F(ErrorMessageGuidelinesDeathTest,
+       NonAlphaNumTrailingCharAfterContextPrefixAndBeforeXlaError) {
+  // Violations found after removing both the context prefixes and the XLA
+  // compiler error are labeled as such.
+  EXPECT_DEATH(
+      ThrowWithContextForXlaError(
+          /* context= */ "failed to compile: the task has failed.",
+          /* xla_error_message= */ "error"),
+      HasSubstr("After removing all context prefixes and the XLA compiler "
+                "error: The error message must end with either an "
+                "alpha-numeric"));
+}
+
+TEST_F(ErrorMessageGuidelinesPassTest, ExpectedGotFormat) {
   EXPECT_THROW(ThrowWithMessage("expected 3D tensor, got 2D"), c10::Error);
   // Valid format after a single context prefix.
   EXPECT_THROW(
@@ -1632,12 +1700,12 @@ TEST(ErrorMessageGuidelinesPassTest, ExpectedGotFormat) {
       c10::Error);
 }
 
-TEST(ErrorMessageGuidelinesPassTest, StartsWithNonLetter) {
+TEST_F(ErrorMessageGuidelinesPassTest, StartsWithNonLetter) {
   EXPECT_THROW(ThrowWithMessage("1D tensor is not supported"), c10::Error);
   EXPECT_THROW(ThrowWithMessage("-1 is not a valid dimension"), c10::Error);
 }
 
-TEST(ErrorMessageGuidelinesPassTest, StartsWithAllowedUppercaseWord) {
+TEST_F(ErrorMessageGuidelinesPassTest, StartsWithAllowedUppercaseWord) {
   EXPECT_THROW(ThrowWithMessage("TorchTPU does not support this"), c10::Error);
   EXPECT_THROW(ThrowWithMessage("TorchTPU's cache is full"), c10::Error);
   EXPECT_THROW(ThrowWithMessage("PjRt client must be initialized"), c10::Error);
@@ -1649,7 +1717,7 @@ TEST(ErrorMessageGuidelinesPassTest, StartsWithAllowedUppercaseWord) {
                c10::Error);
 }
 
-TEST(ErrorMessageGuidelinesPassTest, ArbitraryAllowedFormats) {
+TEST_F(ErrorMessageGuidelinesPassTest, ArbitraryAllowedFormats) {
   // Has 'must', but no 'got'.
   EXPECT_THROW(ThrowWithMessage("the dtype must not be float32"), c10::Error);
   EXPECT_THROW(ThrowWithMessage("PjRt client must be initialized"), c10::Error);
@@ -1658,7 +1726,7 @@ TEST(ErrorMessageGuidelinesPassTest, ArbitraryAllowedFormats) {
   EXPECT_THROW(ThrowWithMessage("failed to match label:Torch"), c10::Error);
 }
 
-TEST(ErrorMessageGuidelinesPassTest, MultilineErrorMessage) {
+TEST_F(ErrorMessageGuidelinesPassTest, MultilineErrorMessage) {
   EXPECT_THROW(ThrowWithMessage("multiline error message\nwith a second line"),
                c10::Error);
   // Multiline message after a single context prefix.
@@ -1674,8 +1742,6 @@ TEST(ErrorMessageGuidelinesPassTest, MultilineErrorMessage) {
           "message\nwith a second line"),
       c10::Error);
 }
-
-#endif  // TT_CHECKS_ERROR_FORMAT
 
 TEST(AdaptExternalErrorMessage, KeepsAllowedUppercaseStartingWords) {
   EXPECT_EQ(AdaptExternalErrorMessage("TorchTPU does not support this"),
