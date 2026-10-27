@@ -300,6 +300,11 @@ at::Tensor& AtenLogitBackwardGradInput(const at::Tensor& grad_output,
         TT_CHECK_THROW(!c10::isComplexType(self_dtype),
                        error::kPythonNotImplementedError)
             << "expected non-complex dtype, got " << ToString(self_dtype);
+        const c10::ScalarType grad_output_dtype = grad_output.scalar_type();
+        TT_CHECK_THROW(!c10::isComplexType(grad_output_dtype),
+                       error::kPythonNotImplementedError)
+            << "expected non-complex dtype, got "
+            << ToString(grad_output_dtype);
         TT_THROW_IF_ERROR(ValidateOutDtype(grad_input, InferOutputDtype(self)));
         const c10::ScalarType out_type = grad_input.scalar_type();
 
