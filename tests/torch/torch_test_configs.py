@@ -315,6 +315,41 @@ TEST_EXCLUSIONS: Final[
             "test_prune_linear_bias_linear",
         ],
     },
+    "test_autograd": {
+        "TestAutogradDeviceType": [
+            "test_backward_device",
+            "test_checkpointing_without_reentrant_dataparallel",
+            "test_graph_save_on_cpu",
+            "test_graph_save_on_cpu_device",
+            "test_inputbuffer_add_multidevice",
+            "test_min_max_aminmax_median_backprops_to_all_values",
+            "test_pdist_gradgrad",
+            "test_pdist_gradgrad_small_p",
+            "test_pow_real_negative_base_complex_exponent",
+            "test_pyscalar_conversions",
+            "test_reentrant_parent_error_on_cpu",
+            "test_resize_version_bump",
+            "test_scatter_index_reduce_amin_amax_aminmax_backprops_to_all_values",
+            "test_sparse_backward",
+            "test_sparse_ctor_getter_backward",
+            "test_sparse_mask_autograd",
+            "test_unused_output_device",
+        ],
+        "TestAutogradMultipleDispatch": [
+            "test_autograd_composite_implicit_and_dispatch_registration",
+            "test_autograd_multiple_dispatch_registrations",
+        ],
+        "TestAutogradStreamSynchronization": [
+            "test_consumer_to_multi_producer_case_4_correctness",
+            "test_consumer_to_single_producer_case_3_correctness",
+            "test_consumer_to_single_producer_case_3_correctness_non_default_ambient_stream",
+            "test_consumer_to_single_producer_case_4_correctness",
+        ],
+        "TestInputGradBuffers": [
+            "test_different_device_errors",
+            "test_lookup_does_not_deadlock_with_python_dispatch",
+        ],
+    },
     "test_bmm_outer_product": {
         "TestBmmOuterProductDevice": [
             "test_non_current_device_outer_product",

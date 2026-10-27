@@ -72,7 +72,6 @@ DISABLED_TEST_MODULES: Final[frozenset[str]] = frozenset({
     "nn/test_lazy_modules",
     "profiler/test_memory_profiler",
     "python_native/test_tensor_utils",
-    "test_autograd",
     "test_binary_ufuncs",
     "test_complex",
     "test_decomp",
