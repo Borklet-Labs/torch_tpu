@@ -89,6 +89,7 @@ torch_tpu_cc_library(
     hdrs = ["cpu_to_tpu.h"],
     deps = [
         ":copy_common",
+        ":tpu_to_tpu",
         "//csrc/common:error_utils",
         "//csrc/common:layout_utils",
         "//csrc/common:to_string",
@@ -99,8 +100,6 @@ torch_tpu_cc_library(
         "//csrc/eager:tensor_to_buffer",
         "//csrc/pjrt:pjrt_transfer",
         "//shims/torch:aten_headers",
-        "//shims/torch/c10/core:base_headers",
-        "//shims/torch/torch/headeronly:torch_headeronly",
         "@com_google_absl//absl/log:absl_log",
         "@com_google_absl//absl/status",
         "@xla//xla:xla_data_proto_cc",

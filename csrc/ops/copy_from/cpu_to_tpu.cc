@@ -17,14 +17,12 @@
 #include "csrc/ops/copy_from/cpu_to_tpu.h"
 
 #include <memory>
-#include <optional>
 #include <utility>
 
 #include "ATen/core/ATen_fwd.h"
 #include "ATen/core/TensorBody.h"
 #include "absl/log/absl_log.h"
 #include "absl/status/status.h"
-#include "c10/core/TensorOptions.h"
 #include "csrc/common/error_utils.h"
 #include "csrc/common/layout_utils.h"
 #include "csrc/common/to_string.h"
@@ -34,8 +32,8 @@
 #include "csrc/eager/structured_log_buffer.h"
 #include "csrc/eager/tensor_to_buffer.h"
 #include "csrc/ops/copy_from/copy_common.h"
+#include "csrc/ops/copy_from/tpu_to_tpu.h"
 #include "csrc/pjrt/pjrt_transfer.h"
-#include "torch/headeronly/core/MemoryFormat.h"
 #include "xla/xla_data.pb.h"
 
 namespace torch_tpu {
@@ -49,17 +47,25 @@ absl::Status CopyCpuToTpu(const at::Tensor& src, const at::Tensor& dest,
     return absl::OkStatus();
   }
 
-  // Ensure the source tensor has the correct dtype and is contiguous.
-  at::Tensor effective_src = src;
-  if (src.scalar_type() != dest.scalar_type() || !src.is_contiguous()) {
-    effective_src = src.to(at::TensorOptions()
-                               .dtype(dest.scalar_type())
-                               .memory_format(at::MemoryFormat::Contiguous),
-                           /*non_blocking=*/false, /*copy=*/true);
+  // In the most common case of `.to("tpu")`, src and dest will be the same size
+  // and dtype. However, `copy_()` allows broadcasting and dtype conversion.
+  // In these cases, we do a CPU->TPU copy with no broadcasting or dtype
+  // conversion, and then do a TPU->TPU copy to the target shape and dtype.
+  // The TPU->TPU copy will handle broadcasting and dtype conversion in a
+  // non-blocking fashion.
+  if (src.sizes() != dest.sizes() || src.scalar_type() != dest.scalar_type()) {
+    TT_ASSIGN_OR_RETURN(
+        at::Tensor src_tpu,
+        MakeEmptyTensor(src.sizes(), src.scalar_type(), dest.device()));
+    TT_RETURN_IF_ERROR(CopyCpuToTpu(src, src_tpu, transfer_sync_mode));
+    return CopyTpuToTpu(src_tpu, dest);
   }
+
+  // Ensure the source tensor is contiguous.
+  at::Tensor effective_src = src.contiguous();
   if (transfer_sync_mode == TransferSyncMode::kEagerNonBlocking &&
       effective_src.data_ptr() != src.data_ptr()) {
-    // If to() created a copy, then effective_src will be
+    // If contiguous() created a copy, then effective_src will be
     // dropped at the end of this function, invalidating the non-blocking
     // copy. We must do a blocking copy to avoid this.
     // TODO(bawilson): implement a non-blocking copy using a CPU->TPU->TPU path
