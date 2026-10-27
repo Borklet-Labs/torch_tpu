@@ -862,6 +862,31 @@ TEST(KilnTest, TileCompoundAssignmentBitwise) {
   )"));
 }
 
+TEST(KilnTest, TileReciprocal) {
+  EXPECT_THAT(CreateKernel(GridSpec{.name = "tile_reciprocal", .grid = {1}},
+                           InSpec{f32(32, 128)}, OutSpec{f32(32, 128)},
+                           [&](Ref in, Ref out) {
+                             Tile t(in);
+                             Tile exact_default = Reciprocal(t);
+                             Tile exact_explicit =
+                                 Reciprocal(t, ReciprocalMode::kExact);
+                             Tile approx =
+                                 Reciprocal(t, ReciprocalMode::kApprox);
+                             out = exact_default + exact_explicit + approx;
+                           }),
+              IsOkAndMatchesIr(R"(
+    CHECK-LABEL: func.func @tile_reciprocal(
+    CHECK-SAME:    %{{.*}}: i32, %[[IN:arg[0-9]+]]: memref<32x128xf32, #tpu.memory_space<vmem>>, %[[OUT:arg[0-9]+]]: memref<32x128xf32, #tpu.memory_space<vmem>>)
+    CHECK:         %[[V:.*]] = vector.load %[[IN]]
+    CHECK:         %[[EXACT0:.*]] = tpu.reciprocal %[[V]] {full_range = false} : vector<32x128xf32> -> vector<32x128xf32>
+    CHECK:         %[[EXACT1:.*]] = tpu.reciprocal %[[V]] {full_range = false} : vector<32x128xf32> -> vector<32x128xf32>
+    CHECK:         %[[APPROX:.*]] = tpu.reciprocal %[[V]] {approx = true, full_range = false} : vector<32x128xf32> -> vector<32x128xf32>
+    CHECK:         %[[SUM0:.*]] = arith.addf %[[EXACT0]], %[[EXACT1]] : vector<32x128xf32>
+    CHECK:         %[[SUM1:.*]] = arith.addf %[[SUM0]], %[[APPROX]] : vector<32x128xf32>
+    CHECK:         tpu.vector_store %[[OUT]][%{{.*}}, %{{.*}}], %[[SUM1]]
+  )"));
+}
+
 TEST(KilnTest, RotateGatherExtractBitcastAndMaskedStore) {
   absl::StatusOr<Kernel> kernel = CreateKernel(
       GridSpec{.name = "rotate_gather_extract_bitcast_store", .grid = {1}},
@@ -983,6 +1008,8 @@ TEST(KilnTest, ScalarMismatchedTypesFail) {
                      "Min\\(\\) requires operands of the same dtype");
         EXPECT_DEATH(t_f & t_f, "& requires integer or bool operands");
         EXPECT_DEATH(!t_i, "! requires a bool operand");
+        EXPECT_DEATH(Reciprocal(t_i),
+                     "Reciprocal\\(\\) requires a floating-point tile");
 
         EXPECT_DEATH(f_in(0, 0, 0), "Too many slice indices");
         EXPECT_DEATH(f_in(0, Slice(0, 0)), "Slice size must be positive");
