@@ -5011,6 +5011,30 @@ class OpsUnitTest(TorchTpuVsCpuTestBase):
     golden_result = torch.bitwise_left_shift(input_long, 1)
     self.assert_close(golden_result=golden_result, torch_tpu_result=tpu_result)
 
+    # Test bitwise shift with mixed bool and integer inputs (b/478955517).
+    int_a = torch.tensor([1, 2, 4], dtype=torch.int32)
+    bool_b = torch.tensor([True, False, True], dtype=torch.bool)
+    tpu_res = torch.bitwise_left_shift(
+        int_a.to(tpu_device), bool_b.to(tpu_device)
+    ).cpu()
+    golden_res = torch.bitwise_left_shift(int_a, bool_b)
+    self.assert_close(golden_result=golden_res, torch_tpu_result=tpu_res)
+
+    tpu_res = torch.bitwise_left_shift(
+        bool_b.to(tpu_device), int_a.to(tpu_device)
+    ).cpu()
+    golden_res = torch.bitwise_left_shift(bool_b, int_a)
+    self.assert_close(golden_result=golden_res, torch_tpu_result=tpu_res)
+
+    int64_a = torch.tensor([1, 2, 4], dtype=torch.int64)
+    tpu_res = (int64_a.to(tpu_device) << bool_b.to(tpu_device)).cpu()
+    golden_res = int64_a << bool_b
+    self.assert_close(golden_result=golden_res, torch_tpu_result=tpu_res)
+
+    tpu_res = (bool_b.to(tpu_device) << int64_a.to(tpu_device)).cpu()
+    golden_res = bool_b << int64_a
+    self.assert_close(golden_result=golden_res, torch_tpu_result=tpu_res)
+
   def test_upsample_bilinear2d_precision_edge_case(self):
     # This test targets a specific case where floating point precision issues
     # in coordinate calculation can cause out-of-bounds access if not clamped.
@@ -5726,6 +5750,30 @@ class OpsUnitTest(TorchTpuVsCpuTestBase):
     tpu_result = torch.bitwise_right_shift(input_long_tpu, 1).cpu()
     golden_result = torch.bitwise_right_shift(input_long, 1)
     self.assert_close(golden_result=golden_result, torch_tpu_result=tpu_result)
+
+    # Test bitwise shift with mixed bool and integer inputs (b/478955517).
+    int_a = torch.tensor([8, 16, 32], dtype=torch.int32)
+    bool_b = torch.tensor([True, False, True], dtype=torch.bool)
+    tpu_res = torch.bitwise_right_shift(
+        int_a.to(tpu_device), bool_b.to(tpu_device)
+    ).cpu()
+    golden_res = torch.bitwise_right_shift(int_a, bool_b)
+    self.assert_close(golden_result=golden_res, torch_tpu_result=tpu_res)
+
+    tpu_res = torch.bitwise_right_shift(
+        bool_b.to(tpu_device), int_a.to(tpu_device)
+    ).cpu()
+    golden_res = torch.bitwise_right_shift(bool_b, int_a)
+    self.assert_close(golden_result=golden_res, torch_tpu_result=tpu_res)
+
+    int64_a = torch.tensor([8, 16, 32], dtype=torch.int64)
+    tpu_res = (int64_a.to(tpu_device) >> bool_b.to(tpu_device)).cpu()
+    golden_res = int64_a >> bool_b
+    self.assert_close(golden_result=golden_res, torch_tpu_result=tpu_res)
+
+    tpu_res = (bool_b.to(tpu_device) >> int64_a.to(tpu_device)).cpu()
+    golden_res = bool_b >> int64_a
+    self.assert_close(golden_result=golden_res, torch_tpu_result=tpu_res)
 
   def test_bitwise_or(self):
     # tensor-tensor

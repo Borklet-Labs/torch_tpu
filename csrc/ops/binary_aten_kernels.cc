@@ -589,11 +589,18 @@ absl::Status ValidateBitwiseOpsInputs(const at::Tensor& self,
 
 absl::Status ValidateBitwiseShiftInputs(const at::Tensor& self,
                                         const at::Tensor& other) {
-  TT_RET_CHECK(IsInteger(self), error::kInvalidArgument)
+  const bool self_is_int = IsInteger(self);
+  const bool other_is_int = IsInteger(other);
+  const bool self_is_bool = IsBool(self);
+  const bool other_is_bool = IsBool(other);
+
+  TT_RET_CHECK(self_is_int || (self_is_bool && other_is_int),
+               error::kInvalidArgument)
       << "expected the dtype of the first argument to be integer, got "
       << ToString(self.scalar_type());
 
-  TT_RET_CHECK(IsInteger(other), error::kInvalidArgument)
+  TT_RET_CHECK(other_is_int || (other_is_bool && self_is_int),
+               error::kInvalidArgument)
       << "expected the dtype of the second argument to be integer, got "
       << ToString(other.scalar_type());
 
