@@ -113,6 +113,14 @@ torch_tpu_py_library(
 )
 
 torch_tpu_py_library(
+    name = "flex_attention",
+    srcs = ["flex_attention.py"],
+    deps = [
+        "//shims/torch:pytorch",
+    ],
+)
+
+torch_tpu_py_library(
     name = "grouped_mm_meta",
     srcs = ["grouped_mm_meta.py"],
     deps = [
