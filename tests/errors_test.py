@@ -10772,6 +10772,41 @@ Device-side assertion tracking was not enabled by user.""",
     ):
       torch.ops.aten.xlogy.OutTensor(x, y, out=out)
 
+  def test_xlogy_out_dtype_mismatch(self):
+    x = torch.tensor([1.0, 2.0], device=et.device(), dtype=torch.float32)
+    y = torch.tensor([2.0, 3.0], device=et.device(), dtype=torch.float32)
+    out = torch.empty(2, device=et.device(), dtype=torch.int32)
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""xlogy(): result type float32 can't be cast to the desired output type int32""",
+        gpu="""result type Float can't be cast to the desired output type Int""",
+        message_reviewed_by="gunhyun",
+    ):
+      torch.xlogy(x, y, out=out)
+
+  def test_xlogy_out_device_mismatch(self):
+    x = torch.tensor([1.0, 2.0], device=et.device(), dtype=torch.float32)
+    y = torch.tensor([2.0, 3.0], device=et.device(), dtype=torch.float32)
+    out = torch.empty(2, device="cpu", dtype=torch.float32)
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""xlogy(): expected out tensor to be on tpu, got cpu""",
+        gpu="""Expected all tensors to be on the same device, but found at least two devices, cuda:0 and cpu!""",
+        message_reviewed_by="gunhyun",
+    ):
+      torch.xlogy(x, y, out=out)
+
+  def test_xlogy_smaller_out_alias(self):
+    x = torch.ones((2, 1), device=et.device(), dtype=torch.float32)
+    y = torch.ones((2, 3), device=et.device(), dtype=torch.float32)
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""xlogy(): output with shape [2, 1] doesn't match the broadcast shape of the tensor being operated on in-place, which has shape [2, 3]""",
+        gpu="""output with shape [2, 1] doesn't match the broadcast shape [2, 3]""",
+        message_reviewed_by="gunhyun",
+    ):
+      torch.xlogy(x, y, out=x)
+
   def test_linalg_qr_insufficient_dims(self):
     input_tensor = torch.ones(1, device=et.device(), dtype=torch.float32)
     with et.assert_raises_message(
