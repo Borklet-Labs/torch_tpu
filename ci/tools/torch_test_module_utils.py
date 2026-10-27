@@ -89,7 +89,6 @@ DISABLED_TEST_MODULES: Final[frozenset[str]] = frozenset({
     "test_ops",
     "test_ops_fwd_gradients",
     "test_ops_gradients",
-    "test_ops_jit",
     "test_ops_unbacked",
     "test_overrides",
     "test_reductions",
@@ -133,7 +132,6 @@ TEST_MODULE_SHARDS: Final[Mapping[str, int]] = {
     "test_ops": 50,
     "test_ops_fwd_gradients": 5,
     "test_ops_gradients": 20,
-    "test_ops_jit": 6,
     "test_optim": 2,
     "test_overrides": 15,
     "test_reductions": 2,
@@ -230,6 +228,16 @@ _UNRUNNABLE_TEST_MODULES: Final[frozenset[str]] = frozenset({
     # go/keep-sorted end
 })
 
+# Test modules for PyTorch features unsupported by TorchTPU.
+_UNSUPPORTED_TEST_MODULES: Final[frozenset[str]] = frozenset({
+    # go/keep-sorted start
+    # Tests OpInfo operators with TorchScript, which is deprecated in PyTorch.
+    "test_ops_jit",
+    # go/keep-sorted end
+})
+
 EXCLUDED_TEST_MODULES: Final[frozenset[str]] = (
-    _ACCELERATOR_SPECIFIC_TEST_MODULES | _UNRUNNABLE_TEST_MODULES
+    _ACCELERATOR_SPECIFIC_TEST_MODULES
+    | _UNSUPPORTED_TEST_MODULES
+    | _UNRUNNABLE_TEST_MODULES
 )

@@ -906,13 +906,6 @@ torch_tpu_torch_test(
 )
 
 torch_tpu_torch_test(
-    name = "ops_jit_test",
-    notap = "b/563402379",  # NOTAP_OK=torch tests
-    shard_count = 6,
-    torch_test_module = "test_ops_jit",
-)
-
-torch_tpu_torch_test(
     name = "ops_unbacked_test",
     notap = "b/563402379",  # NOTAP_OK=torch tests
     torch_test_module = "test_ops_unbacked",
