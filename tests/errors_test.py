@@ -16192,6 +16192,27 @@ class MaskedSoftmaxErrorTest(et.ErrorTestBase):
     ):
       torch.pow(base, exp)
 
+  def test_pow_negative_integer_scalar_exponent(self):
+    for dtype in (torch.int32, torch.int64):
+      with self.subTest(dtype=dtype):
+        base = torch.tensor([2, 3], dtype=dtype, device=et.device())
+        out = torch.empty_like(base)
+        with et.assert_raises_message(
+            RuntimeError,
+            tpu="""pow(): integers to negative integer powers are not allowed""",
+            gpu="""Integers to negative integer powers are not allowed.""",
+            message_reviewed_by="gunhyun",
+        ):
+          torch.pow(base, -2, out=out)
+
+        with et.assert_raises_message(
+            RuntimeError,
+            tpu="""Integers to negative integer powers are not allowed.""",
+            gpu="""Integers to negative integer powers are not allowed.""",
+            message_reviewed_by="gunhyun",
+        ):
+          base.pow_(-2)
+
   def test_gather_out_dtype_mismatch(self):
     inp = torch.ones(2, 2, device=et.device(), dtype=torch.float32)
     index = torch.zeros(2, 2, device=et.device(), dtype=torch.int64)

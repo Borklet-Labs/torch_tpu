@@ -79,7 +79,7 @@ csrc/ops/assertion_aten_kernels.cc: {infeasible: 0, remaining: 1, total: 4}
 csrc/ops/baddbmm/baddbmm_aten_kernels.cc: {infeasible: 0, remaining: 0, total: 8}
 csrc/ops/bernoulli/bernoulli_aten_kernels.cc: {infeasible: 0, remaining: 0, total: 4}
 csrc/ops/binary.cc: {infeasible: 5, remaining: 0, total: 5}
-csrc/ops/binary_aten_kernels.cc: {infeasible: 0, remaining: 3, total: 34}
+csrc/ops/binary_aten_kernels.cc: {infeasible: 0, remaining: 3, total: 35}
 csrc/ops/binary_cross_entropy/binary_cross_entropy_aten_kernels.cc: {infeasible: 0, remaining: 1, total: 6}
 csrc/ops/bincount/bincount_aten_kernels.cc: {infeasible: 0, remaining: 0, total: 1}
 csrc/ops/bmm/bmm_aten_kernels.cc: {infeasible: 0, remaining: 0, total: 7}
