@@ -27,6 +27,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
@@ -2056,6 +2057,101 @@ TEST(KilnTest, GridFreeKernelOmitsGridAttributes) {
     CHECK-NOT:     dimension_semantics
     CHECK-NOT:     window_params
     CHECK:         tpu.enqueue_dma
+  )"));
+}
+
+TEST(KilnTest, EmitPipeline) {
+  constexpr int64_t kBlock = 128;
+  absl::StatusOr<Kernel> kernel = CreateKernel(
+      GridSpec{.name = "emit_pipeline_inputs"}, InSpec::Hbm(f32(kDynamic)),
+      OutSpec::Hbm(f32(kBlock)), ScratchSpec::Vmem(f32(kBlock)),
+      [&](Ref in, Ref out, Ref acc) {
+        PipelineOperand input{
+            .hbm = in, .block_shape = {kBlock}, .region = [](Scalar step) {
+              return BlockRegion{.offsets = {step * kBlock}, .sizes = {kBlock}};
+            }};
+        acc = Zeros(acc.shape());
+        EmitPipeline(0, in.Dim(0) / kBlock, {std::move(input)},
+                     [&](const PipelineStep& s) {
+                       acc = Tile(acc) + Tile(s.inputs[0]);
+                     });
+        AsyncCopy(acc, out, AllocaDmaSemaphore()).Wait();
+      });
+
+  // Each copy goes from a chunk of `in` into a slot of the two-slot buffer, and
+  // the copy of step s + 1 starts before the wait for step s.
+  EXPECT_THAT(kernel, IsOkAndMatchesIr(R"(
+    CHECK-LABEL: func.func @emit_pipeline_inputs(
+    CHECK-SAME:    %[[IN:arg[0-9]+]]: memref<?xf32, #tpu.memory_space<hbm>>, %[[OUT:arg[0-9]+]]: memref<128xf32, #tpu.memory_space<hbm>>, %[[ACC:arg[0-9]+]]: memref<128xf32, #tpu.memory_space<vmem>>
+    CHECK:         "tpu.region"() ({
+    CHECK:           %[[SLOTS:.*]] = memref.alloca() : memref<256xf32, #tpu.memory_space<vmem>>
+    CHECK:           %[[SEMS:.*]] = tpu.sem_alloc : memref<2x!tpu.dma_semaphore, #tpu.memory_space<semaphore_mem>>
+    CHECK:           scf.if
+    CHECK-DAG:         %[[FIRST_SRC:.*]] = tpu.memref_slice %[[IN]]
+    CHECK-DAG:         %[[FIRST_DST:.*]] = tpu.memref_slice %[[SLOTS]]
+    CHECK-DAG:         tpu.memref_slice %[[SEMS]]
+    CHECK:             tpu.enqueue_dma source(%[[FIRST_SRC]] : {{.*}}) target(%[[FIRST_DST]] : {{.*}})
+    CHECK:             scf.for
+    CHECK:               scf.if
+    CHECK-DAG:             %[[NEXT_SRC:.*]] = tpu.memref_slice %[[IN]]
+    CHECK-DAG:             %[[NEXT_DST:.*]] = tpu.memref_slice %[[SLOTS]]
+    CHECK:                 tpu.enqueue_dma source(%[[NEXT_SRC]] : {{.*}}) target(%[[NEXT_DST]] : {{.*}})
+    CHECK:               tpu.wait_dma
+    CHECK:               %[[SLOT:.*]] = tpu.memref_slice %[[SLOTS]]
+    CHECK:               vector.load %[[SLOT]]
+    CHECK:               arith.addf
+    CHECK:               tpu.vector_store %[[ACC]]
+    CHECK:           tpu.yield
+    CHECK:         tpu.enqueue_dma source(%[[ACC]] : {{.*}}) target(%[[OUT]] : {{.*}})
+  )"));
+}
+
+TEST(KilnTest, EmitPipelineWithTwo2dInputs) {
+  auto rows = [](Scalar step) {
+    return BlockRegion{.offsets = {step * 8, 0}, .sizes = {8, 128}};
+  };
+  absl::StatusOr<Kernel> kernel = CreateKernel(
+      GridSpec{.name = "emit_pipeline_2d"}, InSpec::Hbm(f32(kDynamic, 128)),
+      InSpec::Hbm(f32(kDynamic, 128)), OutSpec::Hbm(f32(8, 128)),
+      ScratchSpec::Vmem(f32(8, 128)), [&](Ref a, Ref b, Ref out, Ref acc) {
+        acc = Zeros(acc.shape());
+        EmitPipeline(0, a.Dim(0) / 8,
+                     {{.hbm = a, .block_shape = {8, 128}, .region = rows},
+                      {.hbm = b, .block_shape = {8, 128}, .region = rows}},
+                     [&](const PipelineStep& s) {
+                       acc = Tile(acc) + Tile(s.inputs[0]) * Tile(s.inputs[1]);
+                     });
+        AsyncCopy(acc, out, AllocaDmaSemaphore()).Wait();
+      });
+
+  // Each input has its own `{2, 8, 128}` buffer and semaphores. The copies of
+  // both inputs are started together, and both are waited for before the body.
+  EXPECT_THAT(kernel, IsOkAndMatchesIr(R"(
+    CHECK-LABEL: func.func @emit_pipeline_2d(
+    CHECK-SAME:    %[[A:arg[0-9]+]]: memref<?x128xf32, #tpu.memory_space<hbm>>, %[[B:arg[0-9]+]]: memref<?x128xf32, #tpu.memory_space<hbm>>
+    CHECK:         "tpu.region"() ({
+    CHECK:           %[[A_SLOTS:.*]] = memref.alloca() : memref<2x8x128xf32, #tpu.memory_space<vmem>>
+    CHECK:           %[[A_SEMS:.*]] = tpu.sem_alloc : memref<2x!tpu.dma_semaphore, #tpu.memory_space<semaphore_mem>>
+    CHECK:           %[[B_SLOTS:.*]] = memref.alloca() : memref<2x8x128xf32, #tpu.memory_space<vmem>>
+    CHECK:           %[[B_SEMS:.*]] = tpu.sem_alloc : memref<2x!tpu.dma_semaphore, #tpu.memory_space<semaphore_mem>>
+    CHECK:           scf.if
+    CHECK-DAG:         %[[A_SRC:.*]] = tpu.memref_slice %[[A]]
+    CHECK-DAG:         tpu.memref_slice %[[A_SLOTS]]
+    CHECK-DAG:         tpu.memref_slice %[[A_SEMS]]
+    CHECK:             tpu.enqueue_dma source(%[[A_SRC]] : {{.*}})
+    CHECK-DAG:         %[[B_SRC:.*]] = tpu.memref_slice %[[B]]
+    CHECK-DAG:         tpu.memref_slice %[[B_SLOTS]]
+    CHECK-DAG:         tpu.memref_slice %[[B_SEMS]]
+    CHECK:             tpu.enqueue_dma source(%[[B_SRC]] : {{.*}})
+    CHECK:             scf.for
+    CHECK:               scf.if
+    CHECK:                 tpu.enqueue_dma
+    CHECK:                 tpu.enqueue_dma
+    CHECK:               tpu.wait_dma
+    CHECK:               tpu.wait_dma
+    CHECK:               arith.mulf
+    CHECK:               arith.addf
+    CHECK:           tpu.yield
   )"));
 }
 
