@@ -316,7 +316,7 @@ torch_tpu_py_test(
     env = {
         "TORCH_TPU_TIER3_COMPILATION_CACHE_ROOT": "/tmp/collective_ops_test",
     },
-    shard_count = 12,
+    shard_count = if_oss(16, 12),
     tags = if_oss(
         ["exclusive"],
         [],
