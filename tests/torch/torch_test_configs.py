@@ -21,6 +21,27 @@ https://github.com/pytorch/pytorch/blob/main/docs/source/accelerator/testing.md.
 from collections.abc import Mapping, Sequence
 from typing import Final
 
+from torch.testing._internal.opinfo import core as opinfo_core
+
+# Decorators applied to OpInfo-based tests, i.e. tests parametrized by `@ops`,
+# for TPU.
+#
+# Keyed by test module and then by `OpInfo.full_name`, e.g.
+# "div.floor_rounding". Each `DecorateInfo` applies its decorators, e.g.
+# `unittest.skip`, `unittest.expectedFailure`, `toleranceOverride`, to the TPU
+# variants of the given generic test class and method, optionally narrowed down
+# by dtypes, e.g.
+#
+#   DecorateInfo(
+#       unittest.expectedFailure, "TestCommon", "test_out", dtypes=(torch.int8,)
+#   )
+#
+# Unlike `TEST_EXCLUSIONS`, which cannot tell apart the ops of an `@ops` test,
+# this targets individual ops and dtypes of a test method.
+OP_OVERRIDES: Final[
+    Mapping[str, Mapping[str, Sequence[opinfo_core.DecorateInfo]]]
+] = {}
+
 # Generic test classes or methods excluded from instantiation for TPU.
 #
 # Keyed by test module, tests are identified by their generic class and method

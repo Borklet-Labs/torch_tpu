@@ -30,6 +30,7 @@ torch_tpu_py_library(
     name = "torch_test_configs",
     testonly = True,
     srcs = ["torch_test_configs.py"],
+    deps = ["//shims/torch:testing_internal"],
 )
 
 pytype_strict_binary(
