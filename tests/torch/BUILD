@@ -868,8 +868,7 @@ torch_tpu_torch_test(
 
 torch_tpu_torch_test(
     name = "nn_test",
-    notap = "b/563402379",  # NOTAP_OK=torch tests
-    shard_count = 2,
+    shard_count = 10,
     torch_test_module = "test_nn",
 )
 
