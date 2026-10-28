@@ -350,7 +350,9 @@ torch_tpu_cc_library(
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:no_destructor",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/synchronization",
+        "@xla//xla:future",
         "@xla//xla/pjrt:host_memory_allocator",
     ],
 )

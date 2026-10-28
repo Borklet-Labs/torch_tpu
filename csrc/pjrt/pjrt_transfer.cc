@@ -28,6 +28,7 @@
 #include "absl/base/nullability.h"
 #include "absl/log/absl_check.h"
 #include "absl/log/absl_log.h"
+#include "absl/log/absl_vlog_is_on.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_join.h"
@@ -37,6 +38,7 @@
 #include "csrc/common/dtype.h"
 #include "csrc/common/error_utils.h"
 #include "csrc/eager/device_buffer.h"
+#include "csrc/eager/host_allocator.h"
 #include "csrc/pjrt/pjrt_utils.h"
 #include "stablehlo/integrations/cpp/builder/AttrTypeBuilderUtil.h"
 #include "tsl/profiler/lib/traceme.h"
@@ -110,9 +112,11 @@ void ValidateFp4Dimensions(absl::Span<const int64_t> dimensions) {
 
 }  // namespace
 
+// TODO(bawilson): refactor this to simplify
 absl::StatusOr<DeviceBufferRef> TpuMallocAndMemcpyHtoD(
     const void* host_data, mlir::ElementType element_type,
-    absl::Span<const int64_t> dimensions, std::vector<uint8_t> backing_data) {
+    absl::Span<const int64_t> dimensions, std::vector<uint8_t> backing_data,
+    const void* pinned_ptr) {
   tsl::profiler::TraceMe trace("TpuMallocAndMemcpyHtoD");
   if (!backing_data.empty()) {
     TT_RET_CHECK(  // ERROR_COV_INFEASIBLE=not visible to Python
@@ -189,6 +193,9 @@ absl::StatusOr<DeviceBufferRef> TpuMallocAndMemcpyHtoD(
   const xla::Layout* const layout_ptr =
       GetContextState<LayoutContextState>().value_or(nullptr).get();
 
+  bool should_hold =
+      (host_data != nullptr && pinned_ptr != nullptr && backing_data.empty());
+
   TT_ASSIGN_OR_RETURN(
       std::unique_ptr<xla::PjRtBuffer> buffer,
       AdaptXlaError(
@@ -201,6 +208,20 @@ absl::StatusOr<DeviceBufferRef> TpuMallocAndMemcpyHtoD(
               },
               memory_space, layout_ptr),
           /* context= */ "failed to start copy of buffer from host to device"));
+  if (should_hold) {
+    bool is_host_pinned =
+        HoldPinnedPointerUntil(pinned_ptr, buffer->GetReadyFuture());
+    if (ABSL_VLOG_IS_ON(1)) {
+      if (is_host_pinned) {
+        ABSL_VLOG(1) << "[TpuMallocAndMemcpyHtoD INTERNAL] Host buffer is "
+                        "pinned memory; keeping it alive until the "
+                        "host-to-device transfer completes.";
+      } else {
+        ABSL_VLOG(1) << "[TpuMallocAndMemcpyHtoD INTERNAL] Host buffer is not "
+                        "pinned, continuing";
+      }
+    }
+  }
 
   ABSL_VLOG(1) << "[TpuMallocAndMemcpyHtoD INTERNAL] "
                   "client->BufferFromHostBuffer SUCCEEDED.";
@@ -209,6 +230,7 @@ absl::StatusOr<DeviceBufferRef> TpuMallocAndMemcpyHtoD(
 
 namespace {
 
+// TODO(bawilson): refactor this to simplify
 void StartD2H(absl::Status materialization_status,
               const DeviceBufferRef& buffer_ref,
               std::vector<uint8_t> fp4_receiver, void* dst_ptr,
@@ -242,7 +264,7 @@ void StartD2H(absl::Status materialization_status,
       static_cast<char*>(effective_dst_ptr), xla_shape);
 
   // Start the transfer.
-  xla::Future<> future = (*buffer_or)->ToLiteral(literal.get());
+  xla::Future<> to_literal_future = (*buffer_or)->ToLiteral(literal.get());
 
   // When the transfer completes we will:
   //   1. Pack FP4 data if necessary.
@@ -251,25 +273,28 @@ void StartD2H(absl::Status materialization_status,
   //   4. Set the chained promise.
   // `literal` and `device_buffer_list` are kept alive until the transfer
   // completes.
-  future.OnReady([literal = std::move(literal),
-                  device_buffer_list = buffer_ref.device_buffer_list(),
-                  promise = std::move(promise),
-                  fp4_receiver = std::move(fp4_receiver),
-                  dst_ptr](absl::Status s) mutable {
-    if (s.ok() && !fp4_receiver.empty()) {
-      PackFp4Vector(fp4_receiver, static_cast<uint8_t*>(dst_ptr));
-    }
-    device_buffer_list.reset();
-    promise.Set(
-        AdaptXlaError(s,
-                      /*context=*/"failed to copy buffer from device to host"));
-  });
+  to_literal_future.OnReady(
+      [literal = std::move(literal),
+       device_buffer_list = buffer_ref.device_buffer_list(),
+
+       promise = std::move(promise), fp4_receiver = std::move(fp4_receiver),
+       dst_ptr](absl::Status s) mutable {
+        if (s.ok() && !fp4_receiver.empty()) {
+          PackFp4Vector(fp4_receiver, static_cast<uint8_t*>(dst_ptr));
+        }
+        device_buffer_list.reset();
+        promise.Set(AdaptXlaError(
+            s,
+            /*context=*/"failed to copy buffer from device to host"));
+      });
 }
 
 }  // namespace
 
+// TODO(bawilson): refactor this to simplify
 xla::Future<void> TpuMemcpyDtoHDirect(const DeviceBufferRef& buffer_ref,
-                                      void* dst_ptr) {
+                                      void* dst_ptr,
+                                      const void* dst_pinned_ptr) {
   if (buffer_ref.size_bytes() == 0) {
     return absl::OkStatus();
   }
@@ -282,6 +307,20 @@ xla::Future<void> TpuMemcpyDtoHDirect(const DeviceBufferRef& buffer_ref,
   }
 
   auto [chained_promise, chained_future] = xla::MakePromise<void>();
+  if (dst_pinned_ptr != nullptr) {
+    bool dst_held = HoldPinnedPointerUntil(dst_pinned_ptr, chained_future);
+    if (ABSL_VLOG_IS_ON(1)) {
+      if (dst_held) {
+        ABSL_VLOG(1) << "[TpuMemcpyDtoHDirect] Destination pointer is pinned "
+                        "memory; keeping it alive until the "
+                        "device-to-host transfer completes.";
+      } else {
+        ABSL_VLOG(1)
+            << "[TpuMemcpyDtoHDirect] Destination pointer is not pinned "
+               "memory, continuing";
+      }
+    }
+  }
 
   if (buffer_ref.is_materialized()) {
     // The buffer is already materialized, so we can start the transfer now.

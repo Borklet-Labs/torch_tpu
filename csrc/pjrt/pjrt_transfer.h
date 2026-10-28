@@ -42,12 +42,13 @@ namespace torch_tpu {
 absl::StatusOr<DeviceBufferRef> TpuMallocAndMemcpyHtoD(
     const void* host_data, mlir::ElementType element_type,
     absl::Span<const int64_t> dimensions,
-    std::vector<uint8_t> backing_data = {});
+    std::vector<uint8_t> backing_data = {}, const void* pinned_ptr = nullptr);
 
 // Copies the data from the device directly into the provided host buffer.
 // This is always non-blocking; the future may be awaited to make this blocking.
 xla::Future<void> TpuMemcpyDtoHDirect(const DeviceBufferRef& buffer_ref,
-                                      void* dst_ptr);
+                                      void* dst_ptr,
+                                      const void* dst_pinned_ptr = nullptr);
 
 // Owns a prepared PJRT raw buffer alias and its underlying DeviceBufferRef for
 // zero-copy asynchronous DMA transfers.

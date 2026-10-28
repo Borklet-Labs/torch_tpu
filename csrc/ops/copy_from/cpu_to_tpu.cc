@@ -28,6 +28,7 @@
 #include "csrc/common/to_string.h"
 #include "csrc/eager/device_buffer.h"
 #include "csrc/eager/events_queue.h"
+#include "csrc/eager/host_allocator.h"
 #include "csrc/eager/materialize.h"
 #include "csrc/eager/structured_log_buffer.h"
 #include "csrc/eager/tensor_to_buffer.h"
@@ -63,25 +64,30 @@ absl::Status CopyCpuToTpu(const at::Tensor& src, const at::Tensor& dest,
 
   // Ensure the source tensor is contiguous.
   at::Tensor effective_src = src.contiguous();
+
+  // Ensure that we're copying from pinned memory if the copy is non-blocking.
+  // This is reference-counted to prevent use-after-free if the user drops the
+  // source tensor before the copy completes.
+  // If the copy is blocking, then the copy will complete before we drop
+  // effective_src, so we don't need to pin.
   if (transfer_sync_mode == TransferSyncMode::kEagerNonBlocking &&
-      effective_src.data_ptr() != src.data_ptr()) {
-    // If contiguous() created a copy, then effective_src will be
-    // dropped at the end of this function, invalidating the non-blocking
-    // copy. We must do a blocking copy to avoid this.
-    // TODO(bawilson): implement a non-blocking copy using a CPU->TPU->TPU path
-    transfer_sync_mode = TransferSyncMode::kEagerBlocking;
+      !IsTpuPinnedPtr(effective_src.storage().data_ptr().get())) {
+    effective_src = effective_src.pin_memory(dest.device());
   }
 
   TT_ASSIGN_OR_RETURN(TpuLayout tpu_layout, ResolveTpuLayout(effective_src));
 
-  // NOTE: we are intentionally using Tensor::data_ptr() here,
+  // NOTE: we are intentionally copying from Tensor::data_ptr() here,
   // and **not** Tensor::storage().data_ptr().get().
   // On CPU, Tensor::data_ptr() will account for the storage offset, while
   // Tensor::storage().data_ptr().get() will not.
+  // However, we also need to pass in the storage pointer to indicate that the
+  // host buffer should be kept alive during the transfer if it's pinned.
   TT_ASSIGN_OR_RETURN(
       DeviceBufferRef tpu_buf,
       TpuMallocAndMemcpyHtoD(effective_src.data_ptr(), tpu_layout.element_type,
-                             tpu_layout.sizes));
+                             tpu_layout.sizes, /*backing_data=*/{},
+                             effective_src.storage().data_ptr().get()));
   if (transfer_sync_mode == TransferSyncMode::kIsolated) {
     // Block until the transfer completes, assign the buffer, and return without
     // touching any streams.
