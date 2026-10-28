@@ -236,6 +236,22 @@ TEST(AutoDonateInPlaceBuffer, EligibilityAndAliasingTests) {
   at::Tensor t_zero_sized = MakeTensor(std::move(dummy_buffer));
   EXPECT_FALSE(should_donate(t_zero_sized, {t_zero_sized}, f32_type));
 
+  // Contiguous FP4 tensor donates, while transposed or sliced FP4 views do not.
+  constexpr auto fp4_type = mlir::ElementType::F4E2M1FN;
+  TT_ASSERT_OK_AND_ASSIGN(dummy_buffer,
+                          CreateEmptyDeviceBufferRef({2, 8}, fp4_type));
+  at::Tensor t_fp4 = MakeTensor(std::move(dummy_buffer));
+  EXPECT_TRUE(should_donate(t_fp4, {t_fp4}, fp4_type));
+
+  at::Tensor t_fp4_transposed = t_fp4;
+  t_fp4_transposed.t_();
+  EXPECT_FALSE(should_donate(t_fp4_transposed, {t_fp4_transposed}, fp4_type));
+
+  at::Tensor t_fp4_sliced = t_fp4;
+  t_fp4_sliced.as_strided_(/*size=*/{1, 4}, /*stride=*/{4, 1},
+                           /*storage_offset=*/4);
+  EXPECT_FALSE(should_donate(t_fp4_sliced, {t_fp4_sliced}, fp4_type));
+
   // Restore default mode.
   SetEagerMode(EagerMode::kDeferAndFuse);
 }

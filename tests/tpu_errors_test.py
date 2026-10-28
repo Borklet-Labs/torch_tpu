@@ -553,6 +553,18 @@ Please use clone() or contiguous() to copy the tensor before writing""",
     ):
       op(fp4, 1)
 
+  @et.why_tpu_only(
+      "ResolveTpuLayout packed-dimension contiguity check is TPU-specific."
+  )
+  def test_fp4_non_contiguous_packed_dim_view_raises(self):
+    """Tests that a float4_e2m1fn_x2 view with non-contiguous packed dim fails."""
+    x = torch.empty((2, 4), dtype=torch.float4_e2m1fn_x2, device=et.device())
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""to_copy(): expected packed dimension to be contiguous (stride 1) for float4_e2m1fn_x2 view, got strides [4, 2]""",
+    ):
+      x[:, ::2].cpu()
+
   @et.why_tpu_only("TODO: investigate why this is TPU-only.")
   def test_histc_bounds_unsupported_dtype(self):
     """Tests that torch.histc() fails when the bounds have an unsupported dtype."""

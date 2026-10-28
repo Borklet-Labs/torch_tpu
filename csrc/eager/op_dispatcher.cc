@@ -26,6 +26,7 @@
 
 #include "ATen/ScalarOps.h"
 #include "ATen/core/ATen_fwd.h"
+#include "ATen/core/TensorBody.h"
 #include "absl/base/no_destructor.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/absl_check.h"
@@ -176,6 +177,14 @@ bool IsEligibleDonor(const at::Tensor& in, const at::Tensor& out,
   if (!in_dtype.ok() || *in_dtype != out_dtype) {
     return false;
   }
+  if (*in_dtype == mlir::ElementType::F4E2M1FN &&
+      (!in.is_contiguous() || !out.is_contiguous() ||
+       in.storage_offset() != 0 || out.storage_offset() != 0 || in.dim() == 0 ||
+       in.stride(in.dim() - 1) != 1)) {
+    // Non-contiguous or sliced FP4 views cannot safely donate their underlying
+    // packed storage buffer in-place.
+    return false;
+  }
   // Note: We explicitly guard this check with `GetPrivateUse1DeviceType()`
   // because standalone C++ unit tests (e.g. in op_dispatcher_test) test ATen
   // layout, contiguity, and offset properties using CPU tensors. In standalone
@@ -192,6 +201,12 @@ bool IsEligibleDonor(const at::Tensor& in, const at::Tensor& out,
     return false;
   }
   const auto& in_buf = *in_buf_or;
+  if (*in_dtype == mlir::ElementType::F4E2M1FN &&
+      (in_buf.dimensions().empty() ||
+       in.size(in.dim() - 1) * 2 != in_buf.dimensions().back() ||
+       in.nbytes() * 2 != in_buf.size_bytes())) {
+    return false;
+  }
   if (in_buf.live_data_ptrs() > 1) {
     // Because XLA tensors are immutable, TorchTPU uses copy-on-write semantics.
     // This means that if a tensor is cloned, we construct a new `c10::Storage`
@@ -300,8 +315,15 @@ absl::Status AssignBufferToOutput(const at::Tensor& output,
   TT_RET_CHECK(  // ERROR_COV_INFEASIBLE=Output tensors are always defined.
       output.defined(), error::kInvalidArgument)
       << "expected defined output tensor";
-  TT_RETURN_IF_ERROR(
-      ResizeTensorIfShapeDiffers(output, result_buffer.dimensions()));
+  Dimensions logical_dims(result_buffer.dimensions().begin(),
+                          result_buffer.dimensions().end());
+  if (result_buffer.element_type() == mlir::ElementType::F4E2M1FN) {
+    ABSL_CHECK(!logical_dims.empty());         // CRASH_OK
+    ABSL_CHECK_EQ(logical_dims.back() % 2, 0)  // CRASH_OK
+        << "Last dimension of FP4 must be even, got " << logical_dims.back();
+    logical_dims.back() /= 2;
+  }
+  TT_RETURN_IF_ERROR(ResizeTensorIfShapeDiffers(output, logical_dims));
   return AssignBufferToAtTensor(std::move(result_buffer), output,
                                 enable_autodonation);
 }

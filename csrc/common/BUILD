@@ -169,6 +169,7 @@ torch_tpu_cc_library(
         ":dimension_types",
         ":dtype",
         ":error_utils",
+        ":to_string",
         "//shims/torch:aten_headers",
         "//shims/torch/c10/core:base_headers",
         "@com_google_absl//absl/status:statusor",
