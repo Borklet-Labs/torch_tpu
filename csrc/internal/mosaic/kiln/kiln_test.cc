@@ -2085,7 +2085,7 @@ TEST(KilnTest, EmitPipeline) {
             }};
         acc = Zeros(acc.shape());
         EmitPipeline(0, in.Dim(0) / kBlock, {std::move(input)},
-                     [&](const PipelineStep& s) {
+                     /*outputs=*/{}, [&](const PipelineStep& s) {
                        acc = Tile(acc) + Tile(s.inputs[0]);
                      });
         AsyncCopy(acc, out, AllocaDmaSemaphore()).Wait();
@@ -2131,7 +2131,7 @@ TEST(KilnTest, EmitPipelineWithTwo2dInputs) {
         EmitPipeline(0, a.Dim(0) / 8,
                      {{.hbm = a, .block_shape = {8, 128}, .region = rows},
                       {.hbm = b, .block_shape = {8, 128}, .region = rows}},
-                     [&](const PipelineStep& s) {
+                     /*outputs=*/{}, [&](const PipelineStep& s) {
                        acc = Tile(acc) + Tile(s.inputs[0]) * Tile(s.inputs[1]);
                      });
         AsyncCopy(acc, out, AllocaDmaSemaphore()).Wait();
@@ -2164,6 +2164,67 @@ TEST(KilnTest, EmitPipelineWithTwo2dInputs) {
     CHECK:               tpu.wait_dma
     CHECK:               arith.mulf
     CHECK:               arith.addf
+    CHECK:           tpu.yield
+  )"));
+}
+
+TEST(KilnTest, EmitPipelineWithOutputs) {
+  constexpr int64_t kBlock = 128;
+  auto block = [](Scalar step) {
+    return BlockRegion{.offsets = {step * kBlock}, .sizes = {kBlock}};
+  };
+  // Each output copy goes from an output slot to a chunk of `out`. Step s
+  // starts the input copy of step s + 1 before waiting for the output copy of
+  // step s - 2, whose slot it reuses; the last two are waited for after the
+  // loop.
+  EXPECT_THAT(
+      CreateKernel(
+          GridSpec{.name = "emit_pipeline_io"}, InSpec::Hbm(f32(kDynamic)),
+          OutSpec::Hbm(f32(kDynamic)),
+          [&](Ref in, Ref out) {
+            EmitPipeline(
+                0, in.Dim(0) / kBlock,
+                {{.hbm = in, .block_shape = {kBlock}, .region = block}},
+                {{.hbm = out, .block_shape = {kBlock}, .region = block}},
+                [&](const PipelineStep& s) {
+                  Store(s.outputs[0], Tile(s.inputs[0]) * 2.0);
+                });
+          }),
+      IsOkAndMatchesIr(R"(
+    CHECK-LABEL: func.func @emit_pipeline_io(
+    CHECK-SAME:    %{{.*}}: memref<?xf32, #tpu.memory_space<hbm>>, %[[OUT:arg[0-9]+]]: memref<?xf32, #tpu.memory_space<hbm>>
+    CHECK:         "tpu.region"() ({
+    CHECK:           %[[IN_SLOTS:.*]] = memref.alloca() : memref<256xf32, #tpu.memory_space<vmem>>
+    CHECK:           tpu.sem_alloc
+    CHECK:           %[[OUT_SLOTS:.*]] = memref.alloca() : memref<256xf32, #tpu.memory_space<vmem>>
+    CHECK:           %[[OUT_SEMS:.*]] = tpu.sem_alloc
+    CHECK:           scf.if
+    CHECK:             tpu.enqueue_dma source(%{{.*}} : memref<128xf32, #tpu.memory_space<hbm>>)
+    CHECK:             scf.for
+    CHECK:               scf.if
+    CHECK:                 tpu.enqueue_dma source(%{{.*}} : memref<128xf32, #tpu.memory_space<hbm>>)
+    CHECK:               tpu.wait_dma source(%{{.*}} : memref<128xf32, #tpu.memory_space<hbm>>)
+    CHECK:               scf.if
+    CHECK-DAG:             %[[REUSE_SRC:.*]] = tpu.memref_slice %[[OUT_SLOTS]]
+    CHECK-DAG:             %[[REUSE_DST:.*]] = tpu.memref_slice %[[OUT]]
+    CHECK-DAG:             tpu.memref_slice %[[OUT_SEMS]]
+    CHECK:                 tpu.wait_dma source(%[[REUSE_SRC]] : {{.*}}) target(%[[REUSE_DST]] : {{.*}})
+    CHECK:               %[[IN_SLOT:.*]] = tpu.memref_slice %[[IN_SLOTS]]
+    CHECK:               %[[OUT_SLOT:.*]] = tpu.memref_slice %[[OUT_SLOTS]]
+    CHECK:               vector.load %[[IN_SLOT]]
+    CHECK:               arith.mulf
+    CHECK:               tpu.vector_store %[[OUT_SLOT]]
+    CHECK-DAG:           %[[COPY_SRC:.*]] = tpu.memref_slice %[[OUT_SLOTS]]
+    CHECK-DAG:           %[[COPY_DST:.*]] = tpu.memref_slice %[[OUT]]
+    CHECK-DAG:           tpu.memref_slice %[[OUT_SEMS]]
+    CHECK:               tpu.enqueue_dma source(%[[COPY_SRC]] : {{.*}}) target(%[[COPY_DST]] : {{.*}})
+    CHECK:             }
+    CHECK:             scf.if
+    CHECK:               tpu.memref_slice %[[OUT_SEMS]]
+    CHECK:               tpu.wait_dma source({{.*}}vmem>>) target({{.*}}hbm>>)
+    CHECK:             }
+    CHECK:             tpu.memref_slice %[[OUT_SEMS]]
+    CHECK:             tpu.wait_dma source({{.*}}vmem>>) target({{.*}}hbm>>)
     CHECK:           tpu.yield
   )"));
 }

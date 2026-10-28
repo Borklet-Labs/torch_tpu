@@ -39,7 +39,8 @@ struct BlockRegion {
 };
 
 // An HBM operand streamed by `EmitPipeline` through VMEM blocks of
-// `block_shape`: step `s` copies `region(s)` of `hbm` into a block.
+// `block_shape`: step `s` copies `region(s)` of `hbm` into a block (inputs), or
+// a block to `region(s)` after the step (outputs).
 struct PipelineOperand {
   Ref hbm;
   Dimensions block_shape;
@@ -52,14 +53,21 @@ struct PipelineStep {
   // The VMEM blocks of the inputs, filled for this step. The body may modify
   // them (e.g. to mask padding).
   llvm::SmallVector<Ref, 4> inputs;
+  // The VMEM blocks of the outputs. After `body` returns, the leading
+  // `region(step).sizes` part of each is copied to HBM, so `body` must write
+  // all of it.
+  llvm::SmallVector<Ref, 2> outputs;
 };
 
 // Software-pipelines a loop over steps [begin, end) (with 0 <= begin) that
-// streams HBM inputs through double-buffered VMEM blocks: the input copies
-// of step s + 1 are in flight while `body` runs step s. Allocates the VMEM
-// blocks and DMA semaphores, and waits for every copy before returning.
+// streams HBM operands through double-buffered VMEM blocks: while `body` runs
+// step s, the input copies of step s + 1 and the output copies of step s - 1
+// may be in flight (an output slot is only waited for before its reuse).
+// Allocates the VMEM blocks and DMA semaphores, and waits for every copy before
+// returning.
 void EmitPipeline(IndexArg begin, IndexArg end,
                   llvm::ArrayRef<PipelineOperand> inputs,
+                  llvm::ArrayRef<PipelineOperand> outputs,
                   absl::FunctionRef<void(const PipelineStep&)> body);
 
 }  // namespace torch_tpu::kiln
