@@ -16,18 +16,15 @@
 
 #include "csrc/experimental/precompiled_kernels/kernel_utils.h"
 
-#include <string>
-#include <utility>
-
 #include "csrc/common/cache_key.h"
 #include "csrc/common/compile_options_key.h"
 
 namespace torch_tpu {
 
 CompilationCacheKey MakeUnboundedDynamicKernelCacheKey(ShapelessKey key,
-                                                       std::string id) {
+                                                       int id_key) {
   return CompilationCacheKey(GraphKey(key, DimensionsKey({})),
-                             CompileOptionsKey({}), std::move(id));
+                             CompileOptionsKey({}), id_key);
 }
 
 }  // namespace torch_tpu

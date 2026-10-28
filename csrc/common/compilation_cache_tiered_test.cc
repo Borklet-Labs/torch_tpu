@@ -65,7 +65,7 @@ class TieredCompilationCacheTest : public testing::Test {
 TEST_F(TieredCompilationCacheTest, UnboundedDynamicCacheTier2Hit) {
   CompilationCache& cache = CompilationCache::GetInstance();
   const CompilationCacheKey key(GraphKey(ShapelessKey(2), DimensionsKey({})),
-                                CompileOptionsKey({}), "tier2");
+                                CompileOptionsKey({}), /*id_key=*/2);
   ASSERT_TRUE(cache
                   .AddUnboundedDynamicCacheEntry(key, CreateDummyExecutable,
                                                  MakeDummyDynamicMetadata())
@@ -87,7 +87,7 @@ TEST_F(TieredCompilationCacheTest, UnboundedDynamicCacheTier2Hit) {
 TEST_F(TieredCompilationCacheTest, UnboundedDynamicCacheTier3Hit) {
   CompilationCache& cache = CompilationCache::GetInstance();
   const CompilationCacheKey key(GraphKey(ShapelessKey(3), DimensionsKey({})),
-                                CompileOptionsKey({}), "tier3");
+                                CompileOptionsKey({}), /*id_key=*/3);
   ASSERT_TRUE(cache
                   .AddUnboundedDynamicCacheEntry(key, CreateDummyExecutable,
                                                  MakeDummyDynamicMetadata())

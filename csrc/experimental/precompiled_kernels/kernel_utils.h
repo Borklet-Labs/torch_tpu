@@ -17,18 +17,16 @@
 #ifndef TORCH_TPU_CSRC_EXPERIMENTAL_PRECOMPILED_KERNELS_KERNEL_UTILS_H_
 #define TORCH_TPU_CSRC_EXPERIMENTAL_PRECOMPILED_KERNELS_KERNEL_UTILS_H_
 
-#include <string>
-
 #include "csrc/common/cache_key.h"
 
 namespace torch_tpu {
 
 // Returns the compilation cache key that a precompiled unbounded dynamic kernel
 // serving graphs with shapeless key `key` is registered under: `key` with empty
-// dimensions and compile options keys, and `id`, which tells apart kernels that
-// share a shapeless key.
+// dimensions and compile options keys, and `id_key`, which tells apart kernels
+// that share a shapeless key.
 CompilationCacheKey MakeUnboundedDynamicKernelCacheKey(ShapelessKey key,
-                                                       std::string id);
+                                                       int id_key);
 
 }  // namespace torch_tpu
 

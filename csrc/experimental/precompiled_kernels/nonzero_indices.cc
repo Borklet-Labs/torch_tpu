@@ -50,6 +50,16 @@
 namespace torch_tpu {
 namespace {
 
+// Identifies a precompiled nonzero indices kernel. The value is used as the
+// `id_key` of the kernel's `CompilationCacheKey`, which is persisted in the
+// names of the tier-2 cache entries, so values must be explicit, non-negative,
+// and must never be reused or renumbered. -1 is reserved for keys that don't
+// identify a dynamic kernel.
+enum class NonzeroKernelId : int {
+  // The nonzero indices kernel for 2D inputs.
+  kNonzeroKGreaterThan2 = 1,
+};
+
 using kiln::Ref;
 using kiln::Scalar;
 using kiln::Tile;
@@ -563,8 +573,9 @@ UnboundedDynamicKernel GetNonzeroUnboundedDynamicKernel() {
   return UnboundedDynamicKernel{
       .build = BuildNonzeroIndicesExecutable,
       .metadata = MakeNonzeroDynamicMetadata(),
-      .key =
-          MakeUnboundedDynamicKernelCacheKey(NonZeroCacheKey(), "nonzero_2d"),
+      .key = MakeUnboundedDynamicKernelCacheKey(
+          NonZeroCacheKey(),
+          static_cast<int>(NonzeroKernelId::kNonzeroKGreaterThan2)),
   };
 }
 
