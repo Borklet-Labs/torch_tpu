@@ -214,8 +214,11 @@ class NonzeroIndicesTest : public testing::Test {
 };
 
 TEST_F(NonzeroIndicesTest, ReusesExecutableAcrossShapesAndCounts) {
+  // {9, 1100} and {17, 3000} span several 1024-column tiles per row, with a
+  // masked last tile and a partial last row block.
   const std::pair<int64_t, int64_t> shapes[] = {
-      {1, 3}, {3, 1}, {3, 7}, {9, 129}, {17, 257}, {1, 16385}};
+      {1, 3},    {3, 1},    {3, 7},     {9, 129},
+      {17, 257}, {9, 1100}, {17, 3000}, {1, 16385}};
   for (auto [rows, cols] : shapes) {
     const int64_t size = rows * cols;
     const int64_t ks[] = {3, 127, 128, 129, 1023, 1024, 1025, size};
