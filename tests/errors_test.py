@@ -1372,6 +1372,24 @@ class TpuVsGpuErrorTest(et.ErrorTestBase):
           gpu_dtype="Bool",
       ),
       dict(
+          testcase_name="uint8",
+          dtype=torch.uint8,
+          tpu_dtype="uint8",
+          gpu_dtype="Byte",
+      ),
+      dict(
+          testcase_name="int8",
+          dtype=torch.int8,
+          tpu_dtype="int8",
+          gpu_dtype="Char",
+      ),
+      dict(
+          testcase_name="int16",
+          dtype=torch.int16,
+          tpu_dtype="int16",
+          gpu_dtype="Short",
+      ),
+      dict(
           testcase_name="int32",
           dtype=torch.int32,
           tpu_dtype="int32",
@@ -1396,7 +1414,7 @@ class TpuVsGpuErrorTest(et.ErrorTestBase):
           NotImplementedError,
           tpu=f"""mm(): not implemented for {tpu_dtype}""",
           gpu=f""""addmm_cuda" not implemented for '{gpu_dtype}'""",
-          message_reviewed_by="wan",
+          message_reviewed_by="gunhyun",
       ):
         op(a, b)
 
@@ -7460,6 +7478,62 @@ Supported combinations for non-constant padding:
         message_reviewed_by="wan",
     ):
       torch.mm(lhs, rhs, out=out)
+
+  def test_mm_dtype_not_a_matrix(self):
+    not_a_matrix_tensor = torch.ones(3, 4, 5, device=et.device())
+    matrix_tensor = torch.ones(4, 4, device=et.device())
+
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""mm(): expected the first argument to be a 2D tensor (matrix), got 3D of shape [3, 4, 5]""",
+        gpu="""_mm_dtype: self must be a matrix, got 3-D tensor""",
+        message_reviewed_by="gunhyun",
+    ):
+      torch.ops.aten.mm.dtype(not_a_matrix_tensor, matrix_tensor, torch.float32)
+
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""mm(): expected the second argument to be a 2D tensor (matrix), got 3D of shape [3, 4, 5]""",
+        gpu="""_mm_dtype: mat2 must be a matrix, got 3-D tensor""",
+        message_reviewed_by="gunhyun",
+    ):
+      torch.ops.aten.mm.dtype(matrix_tensor, not_a_matrix_tensor, torch.float32)
+
+  def test_mm_invalid_out_dtype(self):
+    lhs = torch.ones(2, 3, device=et.device(), dtype=torch.float32)
+    rhs = torch.ones(3, 4, device=et.device(), dtype=torch.float32)
+
+    for bad_dtype, tpu_dtype in (
+        (torch.int32, "int32"),
+        (torch.float64, "float64"),
+        (torch.bfloat16, "bfloat16"),
+    ):
+      with et.assert_raises_message(
+          RuntimeError,
+          tpu=f"""mm(): expected out_dtype to be the same as input dtype, float32 for float16/bfloat16 inputs, or bfloat16/float32 for float8 inputs, got {tpu_dtype}""",
+          gpu="""out_dtype must be the same as input dtype or fp32 for fp16/bf16 inputs""",
+          message_reviewed_by="gunhyun",
+      ):
+        torch.mm(lhs, rhs, out_dtype=bad_dtype)
+
+      out = torch.empty(2, 4, device=et.device(), dtype=bad_dtype)
+      with et.assert_raises_message(
+          RuntimeError,
+          tpu=f"""mm(): expected out_dtype to be the same as input dtype, float32 for float16/bfloat16 inputs, or bfloat16/float32 for float8 inputs, got {tpu_dtype}""",
+          gpu="""out_dtype must be the same as input dtype or fp32 for fp16/bf16 inputs""",
+          message_reviewed_by="gunhyun",
+      ):
+        torch.mm(lhs, rhs, out_dtype=bad_dtype, out=out)
+
+    lhs_fp8 = lhs.to(torch.float8_e4m3fn)
+    rhs_fp8 = rhs.to(torch.float8_e4m3fn)
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""mm(): expected out_dtype to be the same as input dtype, float32 for float16/bfloat16 inputs, or bfloat16/float32 for float8 inputs, got int32""",
+        gpu="""out_dtype must be the same as input dtype or fp32 for fp16/bf16 inputs""",
+        message_reviewed_by="gunhyun",
+    ):
+      torch.mm(lhs_fp8, rhs_fp8, out_dtype=torch.int32)
 
   def test_linalg_lu_factor_ex_no_pivoting(self):
     if et.is_on_gpu():

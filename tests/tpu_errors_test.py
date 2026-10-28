@@ -438,6 +438,28 @@ Please use clone() or contiguous() to copy the tensor before writing""",
       t3.to("cpu")
     tt_testing.reset_eager_state()
 
+  @et.why_tpu_only(
+      "PyTorch CUDA _mm_dtype_cuda indexes self.size(0) and mat2.size(1)"
+      " before check_mm_shapes, raising IndexError instead of RuntimeError."
+  )
+  def test_mm_dtype_not_a_matrix_rank_below_2(self):
+    matrix_tensor = torch.ones(4, 4, device=et.device())
+    scalar_tensor = torch.tensor(1.0, device=et.device())
+    vector_tensor = torch.ones(4, device=et.device())
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""mm(): expected the first argument to be a 2D tensor (matrix), got 0D of shape []""",
+        message_reviewed_by="gunhyun",
+    ):
+      torch.ops.aten.mm.dtype(scalar_tensor, matrix_tensor, torch.float32)
+
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""mm(): expected the second argument to be a 2D tensor (matrix), got 1D of shape [4]""",
+        message_reviewed_by="gunhyun",
+    ):
+      torch.ops.aten.mm.dtype(matrix_tensor, vector_tensor, torch.float32)
+
   @et.why_tpu_only("TODO: support complex32 on TPU.")
   def test_dtype_complex32_unsupported(self):
     with et.assert_raises_message(
