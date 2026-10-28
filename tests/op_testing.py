@@ -5437,8 +5437,6 @@ class OpInfoTestBase(TorchTpuTestBase):
           # gen_gpu_golden mode, torch.arange(5) should return a tensor on
           # CPU instead of GPU.
           check_device=False,
-          # No need to mark inputs as dynamic when computing golden results.
-          check_dynamism=False,
           **run_op_kwargs,
       )
       pairs.append((golden_input, OpOutput(golden_result)))
@@ -5454,7 +5452,6 @@ class OpInfoTestBase(TorchTpuTestBase):
       *,
       subtest_name: str,
       check_device: bool,
-      check_dynamism: bool,
       out: Any = None,
       compute_grad: bool = False,
       use_compiled: bool = False,
@@ -5476,9 +5473,6 @@ class OpInfoTestBase(TorchTpuTestBase):
         represent multiple runs of the same subtest.
       check_device: If True, check that the result tensors are on the given
         device.
-      check_dynamism: If True and the test is running in dynamism checking mode
-        (i.e. the --check_dynamism_using_seed flag is set), check that the op
-        supports dynamism.
       out: If variant is OUT, this can be either the out argument to be used
         when running the op or None if this function should create the out
         argument itself. Otherwise this must be None.
@@ -5512,7 +5506,6 @@ class OpInfoTestBase(TorchTpuTestBase):
           device,
           subtest_name=subtest_name,
           check_device=check_device,
-          check_dynamism=check_dynamism,
           use_compiled=use_compiled,
           out_dtype_override=out_dtype_override,
       )
@@ -5538,7 +5531,6 @@ class OpInfoTestBase(TorchTpuTestBase):
           dtype,
           op_input,
           device_op_input,
-          check_dynamism=check_dynamism,
           use_compiled=use_compiled,
       )
     if use_compiled:
@@ -5625,7 +5617,6 @@ class OpInfoTestBase(TorchTpuTestBase):
       *,
       subtest_name: str,
       check_device: bool,
-      check_dynamism: bool,
       use_compiled: bool,
       out_dtype_override: torch.dtype | None,
   ) -> Any:
@@ -5649,7 +5640,6 @@ class OpInfoTestBase(TorchTpuTestBase):
         device=device,
         subtest_name=subtest_name,
         check_device=check_device,
-        check_dynamism=check_dynamism,
         # This _run_op() call is for preparing test data, not part of the test
         # itself, so don't measure its performance to avoid skewing metrics.
         measure_perf=False,
@@ -5674,14 +5664,10 @@ class OpInfoTestBase(TorchTpuTestBase):
       op_input: OpInput,
       device_op_input: OpInput,
       *,
-      check_dynamism: bool,
       use_compiled: bool,
   ) -> None:
     """Marks dimensions of `device_op_input` dynamic, or skips the test."""
     op_name = _op_name_for_logging(op, variant)
-    if not check_dynamism:
-      self.skipTest(f"Dynamism check is explicitly disabled for {op_name}.")
-
     dynamism_mode = DynamismMode.COMPILE if use_compiled else DynamismMode.EAGER
     print(
         f">>> Marking dynamism for {op_name} with dtype {dtype}"
@@ -6130,7 +6116,6 @@ class OpInfoTestBase(TorchTpuTestBase):
       check_value: CheckValueMode | Iterable[CheckValueMode] | None,
       check_dtype: bool,
       check_device: bool,
-      check_dynamism: bool,
       check_op_failures: bool,
       skip_output_indices: Sequence[int],
       skip_if: Callable[[OpVariant, OpInput], bool] | None,
@@ -6153,9 +6138,6 @@ class OpInfoTestBase(TorchTpuTestBase):
       check_dtype: Check if the dtypes are the same.
       check_device: Whether to check that the result tensors are on the expected
         device.
-      check_dynamism: If True and the test is running in dynamism checking mode,
-        i.e. --check_dynamsim_using_seed is set, check that the op supports
-        dynamism.
       check_op_failures: Whether to check that the op fails on TorchTPU when it
         fails on the golden device.
       skip_output_indices: The indices of the output to skip checking.
@@ -6263,7 +6245,6 @@ class OpInfoTestBase(TorchTpuTestBase):
                   dtype,
                   golden_input=golden_input,
                   check_device=check_device,
-                  check_dynamism=check_dynamism,
                   compute_grad=compute_grad,
                   use_compiled=use_compiled,
                   out_dtype_override=out_dtype_override,
@@ -6296,7 +6277,6 @@ class OpInfoTestBase(TorchTpuTestBase):
       check_out_variant: bool = True,
       check_grad: bool = True,
       check_device: bool = True,
-      check_dynamism: bool = True,
       check_value: CheckValueMode | Iterable[CheckValueMode] | None = None,
       check_dtype: bool = True,
       check_op_failures: bool = True,
@@ -6318,9 +6298,6 @@ class OpInfoTestBase(TorchTpuTestBase):
       check_grad: Whether to check the gradient of the op.
       check_device: Whether to check that the op's result is on the correct
         device.
-      check_dynamism: If True and the test is running in dynamism checking mode,
-        i.e. --check_dynamsim_using_seed is set, check that the op supports
-        dynamism.
       check_value: Mode for checking the values. If SKIP, only the output's
         dtype and shape will be checked. If an iterable is provided, it must
         have the same length as the op's output list, and the i-th element will
@@ -6460,7 +6437,6 @@ class OpInfoTestBase(TorchTpuTestBase):
               check_value=check_value,
               check_dtype=check_dtype,
               check_device=check_device,
-              check_dynamism=check_dynamism,
               skip_output_indices=skip_output_indices,
               skip_if=skip_if,
           )

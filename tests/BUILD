@@ -1298,8 +1298,10 @@ torch_tpu_py_test(
     name = "op_testing_test",
     srcs = ["op_testing_test.py"],
     deps = [
+        ":dynamism_test_utils",
         ":goldens_pin",
         ":op_testing",
+        ":seed_test_utils",
         ":test_utils",
         "//shims/absl_py/testing:absltest",
         "//shims/absl_py/testing:flagsaver",

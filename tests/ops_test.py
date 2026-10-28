@@ -1628,9 +1628,6 @@ class TestOps(op_testing.OpInfoTestBase):
         "clamp",
         # TODO: b/478321000 remove when PyTorch#173110 is fixed.
         skip_if=_inplace_clamp_input_has_negative_values_uint8_gpu,
-        # TODO: fix clamp() returning enormous errors or nans when dynamism is
-        # enabled.
-        check_dynamism=False,
         exclude_dtypes=(torch.bool,),
         exclude_inplace_dtypes=(torch.bool,),
     )
@@ -1973,7 +1970,6 @@ class TestOps(op_testing.OpInfoTestBase):
         # TODO(b/485291373): fix _foreach_addcdiv_() failing with complex
         # dtypes.
         exclude_inplace_dtypes=COMPLEX_DTYPES,
-        check_dynamism=False,  # TODO(b/488338235): dynamism is flaky
         # TODO(b/552441831): Skip legacy GPU golden samples with 'scalars' in kwargs
         # and calls where 'value' is a list of scalars (PyTorch OpInfo passes
         # 'value' kwarg which the C++ binding rejects for list of scalars).
@@ -2285,10 +2281,8 @@ class TestOps(op_testing.OpInfoTestBase):
     self.do_test_op(
         "_fused_adagrad_",
         exclude_dtypes=COMPLEX_DTYPES + INTEGRAL_DTYPES,
-        # Intentional overrides (desired by design, not a bug): optimizer steps
-        # update fixed-shape model parameters/states in place and are
-        # non-differentiable.
-        check_dynamism=False,
+        # Intentional override (desired by design, not a bug): optimizer steps
+        # are non-differentiable.
         check_grad=False,
     )
 
@@ -2296,10 +2290,8 @@ class TestOps(op_testing.OpInfoTestBase):
     self.do_test_op(
         "_fused_adagrad_.tensor_lr",
         exclude_dtypes=COMPLEX_DTYPES + INTEGRAL_DTYPES,
-        # Intentional overrides (desired by design, not a bug): optimizer steps
-        # update fixed-shape model parameters/states in place and are
-        # non-differentiable.
-        check_dynamism=False,
+        # Intentional override (desired by design, not a bug): optimizer steps
+        # are non-differentiable.
         check_grad=False,
     )
 
@@ -2307,10 +2299,8 @@ class TestOps(op_testing.OpInfoTestBase):
     self.do_test_op(
         "_fused_adam_",
         exclude_dtypes=COMPLEX_DTYPES + INTEGRAL_DTYPES,
-        # Intentional overrides (desired by design, not a bug): optimizer steps
-        # update fixed-shape model parameters/states in place and are
-        # non-differentiable.
-        check_dynamism=False,
+        # Intentional override (desired by design, not a bug): optimizer steps
+        # are non-differentiable.
         check_grad=False,
     )
 
@@ -2318,10 +2308,8 @@ class TestOps(op_testing.OpInfoTestBase):
     self.do_test_op(
         "_fused_adam_.tensor_lr",
         exclude_dtypes=COMPLEX_DTYPES + INTEGRAL_DTYPES,
-        # Intentional overrides (desired by design, not a bug): optimizer steps
-        # update fixed-shape model parameters/states in place and are
-        # non-differentiable.
-        check_dynamism=False,
+        # Intentional override (desired by design, not a bug): optimizer steps
+        # are non-differentiable.
         check_grad=False,
     )
 
@@ -2329,10 +2317,8 @@ class TestOps(op_testing.OpInfoTestBase):
     self.do_test_op(
         "_fused_adamw_",
         exclude_dtypes=COMPLEX_DTYPES + INTEGRAL_DTYPES,
-        # Intentional overrides (desired by design, not a bug): optimizer steps
-        # update fixed-shape model parameters/states in place and are
-        # non-differentiable.
-        check_dynamism=False,
+        # Intentional override (desired by design, not a bug): optimizer steps
+        # are non-differentiable.
         check_grad=False,
     )
 
@@ -2340,10 +2326,8 @@ class TestOps(op_testing.OpInfoTestBase):
     self.do_test_op(
         "_fused_adamw_.tensor_lr",
         exclude_dtypes=COMPLEX_DTYPES + INTEGRAL_DTYPES,
-        # Intentional overrides (desired by design, not a bug): optimizer steps
-        # update fixed-shape model parameters/states in place and are
-        # non-differentiable.
-        check_dynamism=False,
+        # Intentional override (desired by design, not a bug): optimizer steps
+        # are non-differentiable.
         check_grad=False,
     )
 
@@ -2351,10 +2335,8 @@ class TestOps(op_testing.OpInfoTestBase):
     self.do_test_op(
         "_fused_sgd_",
         exclude_dtypes=COMPLEX_DTYPES + INTEGRAL_DTYPES,
-        # Intentional overrides (desired by design, not a bug): optimizer steps
-        # update fixed-shape model parameters/states in place and are
-        # non-differentiable.
-        check_dynamism=False,
+        # Intentional override (desired by design, not a bug): optimizer steps
+        # are non-differentiable.
         check_grad=False,
     )
 
@@ -2362,10 +2344,8 @@ class TestOps(op_testing.OpInfoTestBase):
     self.do_test_op(
         "_fused_sgd_.tensor_lr",
         exclude_dtypes=COMPLEX_DTYPES + INTEGRAL_DTYPES,
-        # Intentional overrides (desired by design, not a bug): optimizer steps
-        # update fixed-shape model parameters/states in place and are
-        # non-differentiable.
-        check_dynamism=False,
+        # Intentional override (desired by design, not a bug): optimizer steps
+        # are non-differentiable.
         check_grad=False,
     )
 
@@ -2619,7 +2599,6 @@ class TestOps(op_testing.OpInfoTestBase):
         # ambiguity across backends; singular value gradients are tested in
         # test_linalg_svdvals.
         skip_output_indices=[0, 2],
-        check_dynamism=False,
         check_grad=False,
     )
 
@@ -2629,7 +2608,6 @@ class TestOps(op_testing.OpInfoTestBase):
         # TODO(b/553658275): support data sampling of integral and
         # half-precision float dtypes for SVD-based linear algebra ops.
         exclude_dtypes=INTEGRAL_DTYPES + (torch.half, torch.bfloat16),
-        check_dynamism=False,
         # TODO(b/544855640): TPU implementation of _linalg_svd(compute_uv=True)
         # invoked by svdvals backward hangs on float64 (subtest18), causing
         # shard timeouts.
@@ -2809,7 +2787,6 @@ class TestOps(op_testing.OpInfoTestBase):
   def test_max_pool1d(self):
     self.do_test_op(
         "nn.functional.max_pool1d",
-        check_dynamism=False,
         # TODO: complex64, float64, and int64 dtypes are not supported on TPU.
         exclude_dtypes=(
             torch.complex64,
@@ -3311,9 +3288,6 @@ class TestOps(op_testing.OpInfoTestBase):
         # aten._scaled_mm.out only supports tensorwise scaling in PyTorch.
         check_out_variant=False,
         check_grad=False,
-        # TODO(amainz): Bounded dynamism requires synchronized scale/operand
-        # dimension marking and dynamic scale reshape support.
-        check_dynamism=False,
         # TODO(amainz): Test the use_fast_accum samples once cl/990400735 lets
         # TorchTPU's torch._scaled_mm accept use_fast_accum=True.
         skip_if=lambda _, op_input: op_input.kwargs["use_fast_accum"],
@@ -3336,9 +3310,6 @@ class TestOps(op_testing.OpInfoTestBase):
         ),
         check_out_variant=False,
         check_grad=False,
-        # TODO(amainz): Bounded dynamism requires synchronized group offset,
-        # scale, and operand dimension marking.
-        check_dynamism=False,
         # TODO(amainz): Enable compiled mode once cl/995189061 registers a TPU
         # meta override that accepts non-col-major mat_b strides, and enable
         # use_fast_accum samples once cl/990400735 lands.
@@ -3364,7 +3335,6 @@ class TestOps(op_testing.OpInfoTestBase):
         ),
         check_out_variant=False,
         check_grad=False,
-        check_dynamism=False,
         max_samples_per_op_dtype=5,
     )
 
@@ -3427,9 +3397,6 @@ class TestOps(op_testing.OpInfoTestBase):
         exclude_dtypes=COMPLEX_DTYPES,
         # TODO: _segment_reduce_backward is not implemented on TPU.
         check_grad=False,
-        # TODO: segment_reduce requires length/offset dimension matching under
-        # dynamism.
-        check_dynamism=False,
     )
 
   def test_segment_reduce_offsets(self):
@@ -3439,9 +3406,6 @@ class TestOps(op_testing.OpInfoTestBase):
         exclude_dtypes=COMPLEX_DTYPES,
         # TODO: _segment_reduce_backward is not implemented on TPU.
         check_grad=False,
-        # TODO: segment_reduce requires length/offset dimension matching under
-        # dynamism.
-        check_dynamism=False,
     )
 
   def test_sigmoid(self):
@@ -3482,7 +3446,6 @@ class TestOps(op_testing.OpInfoTestBase):
     self.do_test_op(
         "sparse_coo_add",
         check_grad=False,
-        check_dynamism=False,
         check_op_failures=False,
         check_inplace_op_failures=False,
         exclude_dtypes=_SPARSE_COO_EXCLUDE_DTYPES,
@@ -3493,7 +3456,6 @@ class TestOps(op_testing.OpInfoTestBase):
     self.do_test_op(
         "sparse_coo_add_dense_sparse",
         check_grad=False,
-        check_dynamism=False,
         check_op_failures=False,
         check_inplace_op_failures=False,
         exclude_dtypes=_SPARSE_COO_EXCLUDE_DTYPES,
@@ -3504,7 +3466,6 @@ class TestOps(op_testing.OpInfoTestBase):
     self.do_test_op(
         "sparse_coo_clone",
         check_grad=False,
-        check_dynamism=False,
         check_op_failures=False,
         check_inplace_op_failures=False,
         exclude_dtypes=_SPARSE_COO_EXCLUDE_DTYPES,
@@ -3514,7 +3475,6 @@ class TestOps(op_testing.OpInfoTestBase):
     self.do_test_op(
         "sparse_coo_coalesce",
         check_grad=False,
-        check_dynamism=False,
         check_op_failures=False,
         check_inplace_op_failures=False,
         exclude_dtypes=_SPARSE_COO_EXCLUDE_DTYPES,
@@ -3524,7 +3484,6 @@ class TestOps(op_testing.OpInfoTestBase):
     self.do_test_op(
         "sparse_coo_copy_",
         check_grad=False,
-        check_dynamism=False,
         check_op_failures=False,
         check_inplace_op_failures=False,
         exclude_dtypes=_SPARSE_COO_EXCLUDE_DTYPES,
@@ -3535,7 +3494,6 @@ class TestOps(op_testing.OpInfoTestBase):
     self.do_test_op(
         "sparse_coo_empty_like",
         check_grad=False,
-        check_dynamism=False,
         check_op_failures=False,
         check_inplace_op_failures=False,
         exclude_dtypes=_SPARSE_COO_EXCLUDE_DTYPES,
@@ -3545,7 +3503,6 @@ class TestOps(op_testing.OpInfoTestBase):
     self.do_test_op(
         "sparse_coo_mul",
         check_grad=False,
-        check_dynamism=False,
         check_op_failures=False,
         check_inplace_op_failures=False,
         exclude_dtypes=_SPARSE_COO_EXCLUDE_DTYPES,
@@ -3556,7 +3513,6 @@ class TestOps(op_testing.OpInfoTestBase):
     self.do_test_op(
         "sparse_coo_neg",
         check_grad=False,
-        check_dynamism=False,
         check_op_failures=False,
         check_inplace_op_failures=False,
         exclude_dtypes=_SPARSE_COO_EXCLUDE_DTYPES + (torch.uint8, torch.bool),
@@ -3568,7 +3524,6 @@ class TestOps(op_testing.OpInfoTestBase):
     self.do_test_op(
         "sparse_coo_sub",
         check_grad=False,
-        check_dynamism=False,
         check_op_failures=False,
         check_inplace_op_failures=False,
         exclude_dtypes=_SPARSE_COO_EXCLUDE_DTYPES + (torch.uint8, torch.bool),
@@ -3580,7 +3535,6 @@ class TestOps(op_testing.OpInfoTestBase):
     self.do_test_op(
         "sparse_coo_sub_dense_sparse",
         check_grad=False,
-        check_dynamism=False,
         check_op_failures=False,
         check_inplace_op_failures=False,
         exclude_dtypes=_SPARSE_COO_EXCLUDE_DTYPES + (torch.uint8, torch.bool),
@@ -3592,7 +3546,6 @@ class TestOps(op_testing.OpInfoTestBase):
     self.do_test_op(
         "sparse_coo_to_dense",
         check_grad=False,
-        check_dynamism=False,
         check_op_failures=False,
         check_inplace_op_failures=False,
         exclude_dtypes=_SPARSE_COO_EXCLUDE_DTYPES,
@@ -3602,7 +3555,6 @@ class TestOps(op_testing.OpInfoTestBase):
     self.do_test_op(
         "sparse_coo_zero_",
         check_grad=False,
-        check_dynamism=False,
         check_op_failures=False,
         check_inplace_op_failures=False,
         exclude_dtypes=_SPARSE_COO_EXCLUDE_DTYPES,
@@ -3618,7 +3570,6 @@ class TestOps(op_testing.OpInfoTestBase):
   def test_split_with_sizes_copy(self):
     self.do_test_op(
         "split_with_sizes_copy",
-        check_dynamism=False,  # b/483055194
     )
 
   def test_sqrt(self):
@@ -3729,7 +3680,6 @@ class TestOps(op_testing.OpInfoTestBase):
         # PyTorch autograd backward is not implemented for _unique2.
         check_grad=False,
         exclude_dtypes=COMPLEX_DTYPES,
-        check_dynamism=False,
         # TODO: _unique2 on 0D inputs with return_inverse=True produces a 1D
         # PjRtBuffer for a 0D ATen inverse_indices output tensor.
         skip_if=lambda _variant, op_input: (
@@ -3758,7 +3708,6 @@ class TestOps(op_testing.OpInfoTestBase):
         # RuntimeError: the derivative for 'unique_consecutive' is not implemented.
         check_grad=False,
         exclude_dtypes=COMPLEX_DTYPES,
-        check_dynamism=False,
     )
 
   def test_unsqueeze(self):
@@ -3945,7 +3894,6 @@ class TestOps(op_testing.OpInfoTestBase):
         # Exclude integral and complex dtypes: unsupported on TPU and GPU.
         # Error parity is verified in errors_test.py.
         exclude_dtypes=(INTEGRAL_DTYPES + COMPLEX_DTYPES),
-        check_dynamism=False,
     )
 
   def test_thnn_fused_lstm_cell(self):
@@ -3956,7 +3904,6 @@ class TestOps(op_testing.OpInfoTestBase):
             + INTEGRAL_DTYPES
             + COMPLEX_DTYPES
         ),
-        check_dynamism=False,
     )
 
   def test_native_multi_head_attention(self):
@@ -3968,7 +3915,6 @@ class TestOps(op_testing.OpInfoTestBase):
             + INTEGRAL_DTYPES
             + _if_tpu_vs_gpu_compiled((torch.float64,), ())
         ),
-        check_dynamism=False,
         check_grad=False,
     )
 
@@ -3977,7 +3923,6 @@ class TestOps(op_testing.OpInfoTestBase):
         "_transformer_encoder_layer_fwd",
         # TODO(b/557286629): support data sampling for non-floating-point dtypes.
         exclude_dtypes=((torch.float64,) + COMPLEX_DTYPES + INTEGRAL_DTYPES),
-        check_dynamism=False,
         check_grad=False,
     )
 
