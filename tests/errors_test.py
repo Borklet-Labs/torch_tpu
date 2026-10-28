@@ -6200,6 +6200,24 @@ Supported combinations for non-constant padding:
 
   @parameterized.named_parameters(
       dict(
+          testcase_name="uint8",
+          dtype=torch.uint8,
+          tpu_dtype="uint8",
+          gpu_dtype="Byte",
+      ),
+      dict(
+          testcase_name="int8",
+          dtype=torch.int8,
+          tpu_dtype="int8",
+          gpu_dtype="Char",
+      ),
+      dict(
+          testcase_name="int16",
+          dtype=torch.int16,
+          tpu_dtype="int16",
+          gpu_dtype="Short",
+      ),
+      dict(
           testcase_name="int32",
           dtype=torch.int32,
           tpu_dtype="int32",
@@ -7866,6 +7884,24 @@ Supported combinations for non-constant padding:
 
   @parameterized.named_parameters(
       dict(
+          testcase_name="uint8",
+          dtype=torch.uint8,
+          tpu_dtype="uint8",
+          gpu_dtype="Byte",
+      ),
+      dict(
+          testcase_name="int8",
+          dtype=torch.int8,
+          tpu_dtype="int8",
+          gpu_dtype="Char",
+      ),
+      dict(
+          testcase_name="int16",
+          dtype=torch.int16,
+          tpu_dtype="int16",
+          gpu_dtype="Short",
+      ),
+      dict(
           testcase_name="int32",
           dtype=torch.int32,
           tpu_dtype="int32",
@@ -7892,7 +7928,35 @@ Supported combinations for non-constant padding:
     ):
       torch.dot(lhs, rhs)
 
+    empty_lhs = torch.ones(0, device=et.device(), dtype=dtype)
+    empty_rhs = torch.ones(0, device=et.device(), dtype=dtype)
+    with et.assert_raises_message(
+        NotImplementedError,
+        tpu=f"""dot(): not implemented for {tpu_dtype}""",
+        gpu=f""""dot" not implemented for '{gpu_dtype}'""",
+        message_reviewed_by="gunhyun",
+    ):
+      torch.dot(empty_lhs, empty_rhs)
+
   @parameterized.named_parameters(
+      dict(
+          testcase_name="uint8",
+          dtype=torch.uint8,
+          tpu_dtype="uint8",
+          gpu_dtype="Byte",
+      ),
+      dict(
+          testcase_name="int8",
+          dtype=torch.int8,
+          tpu_dtype="int8",
+          gpu_dtype="Char",
+      ),
+      dict(
+          testcase_name="int16",
+          dtype=torch.int16,
+          tpu_dtype="int16",
+          gpu_dtype="Short",
+      ),
       dict(
           testcase_name="int32",
           dtype=torch.int32,
@@ -7919,6 +7983,32 @@ Supported combinations for non-constant padding:
         message_reviewed_by="wan",
     ):
       torch.vdot(lhs, rhs)
+
+    empty_lhs = torch.ones(0, device=et.device(), dtype=dtype)
+    empty_rhs = torch.ones(0, device=et.device(), dtype=dtype)
+    with et.assert_raises_message(
+        NotImplementedError,
+        tpu=f"""vdot(): not implemented for {tpu_dtype}""",
+        gpu=f""""dot" not implemented for '{gpu_dtype}'""",
+        message_reviewed_by="gunhyun",
+    ):
+      torch.vdot(empty_lhs, empty_rhs)
+
+  @parameterized.named_parameters(
+      {"testcase_name": "dot", "op": torch.dot, "op_name": "dot"},
+      {"testcase_name": "vdot", "op": torch.vdot, "op_name": "vdot"},
+  )
+  def test_dot_dtype_mismatch(self, op, op_name: str):
+    lhs = torch.ones(2, device=et.device(), dtype=torch.float16)
+    rhs = torch.ones(2, device=et.device(), dtype=torch.float32)
+
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu=f"""{op_name}(): expected both vectors to have the same dtype, got float16 and float32""",
+        gpu="""dot : expected both vectors to have same dtype, but found Half and Float""",
+        message_reviewed_by="gunhyun",
+    ):
+      op(lhs, rhs)
 
   def test_vdot_size_mismatch(self):
     lhs = torch.ones(2, device=et.device())

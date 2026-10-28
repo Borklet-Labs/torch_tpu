@@ -1337,7 +1337,6 @@ class TestOps(op_testing.OpInfoTestBase):
     )
 
   def test_addmv(self):
-    # TODO: make addmv fail for integral dtypes to match GPU.
     self.do_test_op(
         "addmv",
         # GPU (CUDA) does not support integral dtypes for addmv.
