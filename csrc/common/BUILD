@@ -1073,6 +1073,7 @@ torch_tpu_cc_library(
     hdrs = ["aten_utils.h"],
     deps = [
         ":device_type",
+        ":dimension_types",
         ":dtype",
         ":error_utils",
         ":to_string",
@@ -1092,8 +1093,11 @@ torch_tpu_cc_test(
     srcs = ["aten_utils_test.cc"],
     deps = [
         ":aten_utils",
+        ":dimension_types",
         ":status_test_utils",
         "//csrc/common:oss_test_main",
+        "//shims/torch/c10/core:base_headers",
+        "//shims/torch/c10/util:base_headers",
         "@stablehlo//stablehlo/integrations/cpp/builder:attr_type_builder_util",
     ],
 )
