@@ -21502,6 +21502,216 @@ class OpsGradUnitTest(TorchTpuVsCpuTestBase):
     )
     utils.assert_close(run(mask_1d), run(mask_2d))
 
+  def test_splash_sdpa_gqa_fwd_bwd(self):
+    batch, n_heads, n_kv_heads, seq_len, head_dim = 2, 8, 2, 512, 128
+    dtype = torch.bfloat16
+    torch.manual_seed(42)
+    q = torch.randn(
+        batch, n_heads, seq_len, head_dim, device="tpu", dtype=dtype
+    ).requires_grad_(True)
+    k = torch.randn(
+        batch, n_kv_heads, seq_len, head_dim, device="tpu", dtype=dtype
+    ).requires_grad_(True)
+    v = torch.randn(
+        batch, n_kv_heads, seq_len, head_dim, device="tpu", dtype=dtype
+    ).requires_grad_(True)
+    dy = torch.randn(
+        batch, n_heads, seq_len, head_dim, device="tpu", dtype=dtype
+    )
+
+    q_ref = q.detach().clone().requires_grad_(True)
+    k_ref = k.detach().clone().requires_grad_(True)
+    v_ref = v.detach().clone().requires_grad_(True)
+    out_ref = torch.nn.functional.scaled_dot_product_attention(
+        q_ref, k_ref, v_ref, is_causal=True, enable_gqa=True
+    )
+    out_ref.backward(dy)
+
+    out = torch.tpu.ops.splash_sdpa(q, k, v, is_causal=True, enable_gqa=True)
+    out.backward(dy)
+
+    self.assertEqual(k.grad.shape, (batch, n_kv_heads, seq_len, head_dim))
+    self.assertEqual(v.grad.shape, (batch, n_kv_heads, seq_len, head_dim))
+    utils.assert_close(out, out_ref, rtol=2e-2, atol=2e-2)
+    utils.assert_close(q.grad, q_ref.grad, rtol=3e-2, atol=3e-2)
+    utils.assert_close(k.grad, k_ref.grad, rtol=3e-2, atol=3e-2)
+    utils.assert_close(v.grad, v_ref.grad, rtol=3e-2, atol=3e-2)
+
+  @parameterized.product(
+      seq_len=[384, 768],
+      compiled=[False, True],
+  )
+  def test_splash_sdpa_non_512_seq_len(self, seq_len: int, compiled: bool):
+    batch, n_heads, head_dim = 1, 4, 128
+    dtype = torch.bfloat16
+    torch.manual_seed(42)
+    q = torch.randn(
+        batch, n_heads, seq_len, head_dim, device="tpu", dtype=dtype
+    ).requires_grad_(True)
+    k = torch.randn(
+        batch, n_heads, seq_len, head_dim, device="tpu", dtype=dtype
+    ).requires_grad_(True)
+    v = torch.randn(
+        batch, n_heads, seq_len, head_dim, device="tpu", dtype=dtype
+    ).requires_grad_(True)
+    dy = torch.randn(
+        batch, n_heads, seq_len, head_dim, device="tpu", dtype=dtype
+    )
+
+    q_ref = q.detach().clone().requires_grad_(True)
+    k_ref = k.detach().clone().requires_grad_(True)
+    v_ref = v.detach().clone().requires_grad_(True)
+    out_ref = torch.nn.functional.scaled_dot_product_attention(
+        q_ref, k_ref, v_ref, is_causal=True
+    )
+    out_ref.backward(dy)
+
+    fn = torch.tpu.ops.splash_sdpa
+    if compiled:
+      fn = torch.compile(fn, backend="tpu")
+    out = fn(q, k, v, is_causal=True)
+    out.backward(dy)
+
+    utils.assert_close(out, out_ref, rtol=2e-2, atol=2e-2)
+    utils.assert_close(q.grad, q_ref.grad, rtol=3e-2, atol=3e-2)
+    utils.assert_close(k.grad, k_ref.grad, rtol=3e-2, atol=3e-2)
+    utils.assert_close(v.grad, v_ref.grad, rtol=3e-2, atol=3e-2)
+
+  @parameterized.parameters(
+      {"block_dkv": 256},
+      {"block_kv": 256},
+  )
+  def test_splash_sdpa_small_explicit_blocks(self, **block_kwargs):
+    batch, n_heads, seq_len, head_dim = 1, 4, 1024, 128
+    dtype = torch.bfloat16
+    torch.manual_seed(42)
+    q = torch.randn(
+        batch, n_heads, seq_len, head_dim, device="tpu", dtype=dtype
+    ).requires_grad_(True)
+    k = torch.randn(
+        batch, n_heads, seq_len, head_dim, device="tpu", dtype=dtype
+    ).requires_grad_(True)
+    v = torch.randn(
+        batch, n_heads, seq_len, head_dim, device="tpu", dtype=dtype
+    ).requires_grad_(True)
+    dy = torch.randn(
+        batch, n_heads, seq_len, head_dim, device="tpu", dtype=dtype
+    )
+
+    q_ref = q.detach().clone().requires_grad_(True)
+    k_ref = k.detach().clone().requires_grad_(True)
+    v_ref = v.detach().clone().requires_grad_(True)
+    out_ref = torch.nn.functional.scaled_dot_product_attention(
+        q_ref, k_ref, v_ref, is_causal=True
+    )
+    out_ref.backward(dy)
+
+    out = torch.tpu.ops.splash_sdpa(q, k, v, is_causal=True, **block_kwargs)
+    out.backward(dy)
+
+    utils.assert_close(out, out_ref, rtol=2e-2, atol=2e-2)
+    utils.assert_close(q.grad, q_ref.grad, rtol=3e-2, atol=3e-2)
+    utils.assert_close(k.grad, k_ref.grad, rtol=3e-2, atol=3e-2)
+    utils.assert_close(v.grad, v_ref.grad, rtol=3e-2, atol=3e-2)
+
+  @parameterized.product(
+      seg_dtype=[torch.int32, torch.int64],
+      compiled=[False, True],
+  )
+  def test_splash_sdpa_segment_ids_packed_documents(
+      self, seg_dtype: torch.dtype, compiled: bool
+  ):
+    batch, n_heads, n_kv_heads, seq_len, head_dim = 2, 4, 2, 768, 128
+    dtype = torch.bfloat16
+    torch.manual_seed(42)
+    q = torch.randn(
+        batch, n_heads, seq_len, head_dim, device="tpu", dtype=dtype
+    ).requires_grad_(True)
+    k = torch.randn(
+        batch, n_kv_heads, seq_len, head_dim, device="tpu", dtype=dtype
+    ).requires_grad_(True)
+    v = torch.randn(
+        batch, n_kv_heads, seq_len, head_dim, device="tpu", dtype=dtype
+    ).requires_grad_(True)
+    dy = torch.randn(
+        batch, n_heads, seq_len, head_dim, device="tpu", dtype=dtype
+    )
+
+    seg_row0 = [0] * 200 + [1] * 312 + [2] * 256
+    seg_row1 = [0] * 384 + [1] * 128 + [2] * 256
+    segment_ids = torch.tensor(
+        [seg_row0, seg_row1], device="tpu", dtype=seg_dtype
+    )
+
+    causal = torch.ones(seq_len, seq_len, device="tpu", dtype=torch.bool).tril()
+    same_seg = segment_ids[:, None, :, None] == segment_ids[:, None, None, :]
+    attn_mask = causal[None, None, :, :] & same_seg
+
+    q_ref = q.detach().clone().requires_grad_(True)
+    k_ref = k.detach().clone().requires_grad_(True)
+    v_ref = v.detach().clone().requires_grad_(True)
+    out_ref = torch.nn.functional.scaled_dot_product_attention(
+        q_ref, k_ref, v_ref, attn_mask=attn_mask, enable_gqa=True
+    )
+    out_ref.backward(dy)
+
+    fn = torch.tpu.ops.splash_sdpa
+    if compiled:
+      fn = torch.compile(fn, backend="tpu")
+    out = fn(q, k, v, is_causal=True, enable_gqa=True, segment_ids=segment_ids)
+    out.backward(dy)
+
+    utils.assert_close(out, out_ref, rtol=2e-2, atol=2e-2)
+    utils.assert_close(q.grad, q_ref.grad, rtol=3e-2, atol=3e-2)
+    utils.assert_close(k.grad, k_ref.grad, rtol=3e-2, atol=3e-2)
+    utils.assert_close(v.grad, v_ref.grad, rtol=3e-2, atol=3e-2)
+
+    # Verify zero cross-document gradient leakage: a loss depending only on
+    # document 0 in batch 0 (positions < 200) must produce zero gradients on
+    # documents 1 and 2 (positions >= 200).
+    q2 = q.detach().clone().requires_grad_(True)
+    k2 = k.detach().clone().requires_grad_(True)
+    v2 = v.detach().clone().requires_grad_(True)
+    out2 = torch.tpu.ops.splash_sdpa(
+        q2, k2, v2, is_causal=True, enable_gqa=True, segment_ids=segment_ids
+    )
+    out2[0, :, :200, :].sum().backward()
+    self.assertEqual(q2.grad[0, :, 200:, :].abs().max().item(), 0.0)
+    self.assertEqual(k2.grad[0, :, 200:, :].abs().max().item(), 0.0)
+    self.assertEqual(v2.grad[0, :, 200:, :].abs().max().item(), 0.0)
+
+  def test_splash_sdpa_invalid_inputs(self):
+    q = torch.randn(2, 8, 512, 128, device="tpu", dtype=torch.bfloat16)
+    k_bad_gqa = torch.randn(2, 3, 512, 128, device="tpu", dtype=torch.bfloat16)
+    v_bad_gqa = torch.randn(2, 3, 512, 128, device="tpu", dtype=torch.bfloat16)
+    with self.assertRaisesRegex(  # ASSERT_RAISES_OK=no jax in errors tests
+        ValueError, r"n_heads \(8\) must be divisible by n_kv_heads \(3\)"
+    ):
+      torch.tpu.ops.splash_sdpa(q, k_bad_gqa, v_bad_gqa, enable_gqa=True)
+
+    q_bad_seq = torch.randn(1, 4, 100, 128, device="tpu", dtype=torch.bfloat16)
+    with self.assertRaisesRegex(  # ASSERT_RAISES_OK=no jax in errors tests
+        ValueError, r"seq_len \(100\) must be a positive multiple of 128"
+    ):
+      torch.tpu.ops.splash_sdpa(q_bad_seq, q_bad_seq, q_bad_seq)
+
+    with self.assertRaisesRegex(  # ASSERT_RAISES_OK=no jax in errors tests
+        ValueError, r"block_kv \(200\) must be a positive multiple of 128"
+    ):
+      torch.tpu.ops.splash_sdpa(q, q, q, block_kv=200)
+
+    bad_seg_1d = torch.zeros(512, device="tpu", dtype=torch.int32)
+    with self.assertRaisesRegex(  # ASSERT_RAISES_OK=no jax in errors tests
+        ValueError, "segment_ids"
+    ):
+      torch.tpu.ops.splash_sdpa(q, q, q, segment_ids=bad_seg_1d)
+
+    bad_seg_float = torch.zeros(2, 512, device="tpu", dtype=torch.float32)
+    with self.assertRaisesRegex(  # ASSERT_RAISES_OK=no jax in errors tests
+        ValueError, "segment_ids"
+    ):
+      torch.tpu.ops.splash_sdpa(q, q, q, segment_ids=bad_seg_float)
+
   def test_pointwise_op_dtype_promotion(self):
     """Ensure that pointwise ops promote as expected.
 
