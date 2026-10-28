@@ -6641,8 +6641,89 @@ class OpsUnitTest(TorchTpuVsCpuTestBase):
     t2 = torch.empty(shape, device=tpu_device).exponential_(lambd)
     self.assert_close(golden_result=t1.cpu(), torch_tpu_result=t2.cpu())
 
-    # Test properties (non-negative)
-    self.assertGreaterEqual(t1.min(), 0)
+    # Test strict positivity on (0, inf) and no -0.0
+    self.assertGreater(t1.min().item(), 0)
+    self.assertFalse(torch.signbit(t1).any().item())
+
+  @parameterized.named_parameters(
+      ("float32", torch.float32),
+      ("bfloat16", torch.bfloat16),
+      ("float16", torch.float16),
+      ("float64", torch.float64),
+  )
+  def test_exponential_support_and_precision(self, dtype: torch.dtype) -> None:
+    """Tests exponential_ strict (0, inf) support, acc_type precision, and edge cases."""
+    tpu_device = torch.device("tpu")
+    torch.manual_seed(42)
+
+    num_elements = 100_000
+    q = torch.empty(num_elements, device=tpu_device, dtype=dtype).exponential_(
+        1.0
+    )
+    self.assertTrue(torch.all(q > 0).item())
+    self.assertFalse(torch.signbit(q).any().item())
+
+    if dtype == torch.bfloat16:
+      # With f32 computation precision, bfloat16 draws must have far more than
+      # 2^7 = 128 distinct values and reach past the 7 * ln(2) ~= 4.85 ceiling.
+      self.assertGreater(q.unique().numel(), 128)
+      self.assertGreater(q.max().item(), 5.0)
+
+      rate = 1e30
+      q_rate = torch.empty(
+          100_000, device=tpu_device, dtype=dtype
+      ).exponential_(rate)
+      self.assertTrue(torch.all(q_rate > 0).item())
+      self.assertFalse(torch.signbit(q_rate).any().item())
+
+    if dtype == torch.float16:
+      # Verify lambd >= 2.0 and large lambd (1e5 > f16 max 65504) do not
+      # underflow to 0.0 on cast or overflow lambd to inf on the host.
+      for rate in (2.0, 1e5):
+        q_rate = torch.empty(
+            100_000, device=tpu_device, dtype=dtype
+        ).exponential_(rate)
+        self.assertTrue(torch.all(q_rate > 0).item())
+        self.assertFalse(torch.signbit(q_rate).any().item())
+
+    # lambd = inf must still produce 0.0 (upstream PyTorch contract).
+    q_inf = torch.empty(16, device=tpu_device, dtype=dtype).exponential_(
+        float("inf")
+    )
+    self.assertTrue(torch.all(q_inf == 0).item())
+
+    # Non-contiguous strided slice test
+    base = torch.zeros((16, 32), device=tpu_device, dtype=dtype)
+    strided_view = base[:, ::2]
+    strided_view.exponential_(1.0)
+    self.assertTrue(torch.all(strided_view > 0).item())
+    self.assertFalse(torch.signbit(strided_view).any().item())
+    self.assertTrue(torch.all(base[:, 1::2] == 0).item())
+
+    # Downstream Gumbel-max / exponential race sampler: -log(q) and argmax(p / q)
+    q_race = torch.empty(
+        (4096, 2), device=tpu_device, dtype=dtype
+    ).exponential_(1.0)
+    self.assertTrue(torch.isfinite(-torch.log(q_race)).all().item())
+    probs = torch.tensor([0.0, 1.0], device=tpu_device, dtype=dtype).expand(
+        4096, 2
+    )
+    scores = probs / q_race
+    self.assertFalse(torch.isnan(scores).any().item())
+    sampled = torch.argmax(scores, dim=-1)
+    self.assertTrue(torch.all(sampled == 1).item())
+
+    # Generator offset advancement must use compute_dtype bitwidth (32 for
+    # float16/bfloat16/float32, 64 for float64).
+    gen = torch.Generator(device=tpu_device).manual_seed(1234)
+    self.assertEqual(gen.get_offset(), 0)
+    n_gen = 256
+    torch.empty(n_gen, device=tpu_device, dtype=dtype).exponential_(
+        1.0, generator=gen
+    )
+    compute_bits = 64 if dtype == torch.float64 else 32
+    expected_offset = (n_gen * compute_bits + 127) // 128
+    self.assertEqual(gen.get_offset(), expected_offset)
 
   def test_random_distribution(self):
     for dtype in [
