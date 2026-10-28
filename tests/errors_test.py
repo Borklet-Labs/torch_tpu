@@ -5842,6 +5842,120 @@ Supported combinations for non-constant padding:
     ):
       torch._foreach_pow(True, [t])
 
+  def test_foreach_pow_empty_tensor_list(self):
+    t = torch.tensor([2.0], dtype=torch.float32, device=et.device())
+    with torch.inference_mode():
+      with et.assert_raises_message(
+          RuntimeError,
+          tpu="""foreach_pow(): expected tensor list to have at least one tensor, got an empty list""",
+          gpu="""Tensor list must have at least one tensor.""",
+          message_reviewed_by="gunhyun",
+      ):
+        torch._foreach_pow([], [t])
+
+      with et.assert_raises_message(
+          RuntimeError,
+          tpu="""foreach_pow_(): expected tensor list to have at least one tensor, got an empty list""",
+          gpu="""Tensor list must have at least one tensor.""",
+          message_reviewed_by="gunhyun",
+      ):
+        torch._foreach_pow_([], [t])
+
+  def test_foreach_pow_list_length_mismatch(self):
+    t = torch.tensor([2.0], dtype=torch.float32, device=et.device())
+    with torch.inference_mode():
+      with et.assert_raises_message(
+          RuntimeError,
+          tpu="""foreach_pow(): expected tensor lists to have the same number of tensors, got 1 and 2""",
+          gpu="""Tensor lists must have the same number of tensors, got 1 and 2""",
+          message_reviewed_by="gunhyun",
+      ):
+        torch._foreach_pow([t], [t, t])
+
+      with et.assert_raises_message(
+          RuntimeError,
+          tpu="""foreach_pow_(): expected tensor lists to have the same number of tensors, got 1 and 2""",
+          gpu="""Tensor lists must have the same number of tensors, got 1 and 2""",
+          message_reviewed_by="gunhyun",
+      ):
+        torch._foreach_pow_([t], [t, t])
+
+  def test_foreach_pow_scalar_list_length_mismatch(self):
+    t = torch.tensor([2.0], dtype=torch.float32, device=et.device())
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""foreach_pow(): expected tensor list to have the same number of elements as scalar list, got 1 and 2""",
+        gpu="""Tensor list must have same number of elements as scalar list.""",
+        message_reviewed_by="gunhyun",
+    ):
+      torch._foreach_pow([t], [2.0, 3.0])
+
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""foreach_pow_(): expected tensor list to have the same number of elements as scalar list, got 1 and 2""",
+        gpu="""Tensor list must have same number of elements as scalar list.""",
+        message_reviewed_by="gunhyun",
+    ):
+      torch._foreach_pow_([t], [2.0, 3.0])
+
+  def test_foreach_pow_negative_integer_scalar_exponent(self):
+    x = torch.tensor([2, 3], dtype=torch.int32, device=et.device())
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""foreach_pow(): integers to negative integer powers are not allowed""",
+        gpu="""Integers to negative integer powers are not allowed.""",
+        message_reviewed_by="gunhyun",
+    ):
+      torch._foreach_pow([x], -2)
+
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""foreach_pow_(): integers to negative integer powers are not allowed""",
+        gpu="""Integers to negative integer powers are not allowed.""",
+        message_reviewed_by="gunhyun",
+    ):
+      torch._foreach_pow_([x], -2)
+
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""foreach_pow(): integers to negative integer powers are not allowed""",
+        gpu="""Integers to negative integer powers are not allowed.""",
+        message_reviewed_by="gunhyun",
+    ):
+      torch._foreach_pow([x], [-2])
+
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""foreach_pow_(): integers to negative integer powers are not allowed""",
+        gpu="""Integers to negative integer powers are not allowed.""",
+        message_reviewed_by="gunhyun",
+    ):
+      torch._foreach_pow_([x], [-2])
+
+    f = torch.tensor([2.0], dtype=torch.float32, device=et.device())
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""foreach_pow_(): integers to negative integer powers are not allowed""",
+        gpu="""Integers to negative integer powers are not allowed.""",
+        message_reviewed_by="gunhyun",
+    ):
+      torch._foreach_pow_([f, x], -2)
+    if et.is_on_tpu():
+      # PyTorch CUDA falls back to foreach_tensor_pow_scalar_kernel_slow_ for
+      # mixed-dtype lists and mutates earlier tensors before failing.
+      self.assertEqual(f.tolist(), [2.0])
+
+    f = torch.tensor([2.0], dtype=torch.float32, device=et.device())
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""foreach_pow_(): integers to negative integer powers are not allowed""",
+        gpu="""Integers to negative integer powers are not allowed.""",
+        message_reviewed_by="gunhyun",
+    ):
+      torch._foreach_pow_([f, x], [-2, -2])
+    if et.is_on_tpu():
+      self.assertEqual(f.tolist(), [2.0])
+
   def test_foreach_unary_ops_complex(self):
     for dtype in [torch.complex64, torch.complex128]:
       t = torch.randn(2, 2, dtype=dtype, device=et.device())
