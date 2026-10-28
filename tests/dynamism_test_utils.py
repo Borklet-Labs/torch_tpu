@@ -209,6 +209,8 @@ DYNAMISM_DENY_LISTS: DenyList = {
     # TODO: b/449736443 - Support bounded dimensions in these lowerings.
     "linalg decompositions do not support bounded dimensions": {
         "geqrf": {EAGER},  # Aborts the test process with a CHECK failure.
+        "linalg.cholesky": {EAGER},
+        "linalg.cholesky_ex": {EAGER},
         "linalg.inv": {EAGER},
         "linalg.lu": {EAGER},
         "linalg.solve_ex": {EAGER},

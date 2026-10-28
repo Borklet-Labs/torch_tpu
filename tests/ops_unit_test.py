@@ -11955,6 +11955,173 @@ class OpsUnitTest(TorchTpuVsCpuTestBase):
 
     self.assert_close_tpu_vs_cpu(run)
 
+  @parameterized.product(
+      shape=[
+          (4, 4),
+          (10, 10),
+          (2, 3, 3),
+          (2, 3, 4, 4),
+          (0, 0),
+          (0, 3, 3),
+          (2, 0, 0),
+      ],
+      dtype=[
+          torch.float32,
+          torch.float64,
+          torch.complex64,
+          torch.complex128,
+      ],
+      upper=[False, True],
+  )
+  def test_linalg_cholesky_ex(self, shape, dtype, upper):
+    n = shape[-1]
+    a = torch.randn(shape, dtype=dtype)
+    eye = torch.eye(n, dtype=dtype).expand(shape)
+    spd = a @ a.mH + eye * max(n, 1)
+    if (
+        dtype == torch.complex128
+        and oss_utils.is_oss()
+        and (ver := utils.libtpu_version()) is not None
+        and ver < (0, 0, 52)
+    ):
+      with self.assertRaisesRegex(  # ASSERT_RAISES_OK=OSS libtpu < 0.0.52 version guard.
+          RuntimeError, "complex128 requires libtpu >= 0.0.52"
+      ):
+        torch.linalg.cholesky_ex(spd.to("tpu"), upper=upper)
+      return
+
+    def run(device):
+      l_func, info_func = torch.linalg.cholesky_ex(spd.to(device), upper=upper)
+      l_out = torch.empty_like(spd, device=device)
+      info_out = torch.empty(shape[:-2], dtype=torch.int32, device=device)
+      torch.linalg.cholesky_ex(
+          spd.to(device), upper=upper, out=(l_out, info_out)
+      )
+      # Also test pre-allocated non-contiguous (Fortran-strided)
+      # destination `l`.
+      l_noncontig = torch.empty_like(spd, device=device).mT
+      info_noncontig = torch.empty(shape[:-2], dtype=torch.int32, device=device)
+      torch.linalg.cholesky_ex(
+          spd.to(device), upper=upper, out=(l_noncontig, info_noncontig)
+      )
+      return (
+          l_func,
+          info_func,
+          l_out,
+          info_out,
+          l_noncontig,
+          info_noncontig,
+      )
+
+    rtol = 1e-6 if dtype in (torch.float64, torch.complex128) else 1e-4
+    atol = 1e-6 if dtype in (torch.float64, torch.complex128) else 1e-4
+    self.assert_close_tpu_vs_cpu(run, rtol=rtol, atol=atol)
+
+  @parameterized.product(
+      dtype=[
+          torch.float32,
+          torch.float64,
+          torch.complex64,
+          torch.complex128,
+      ],
+      upper=[False, True],
+  )
+  def test_linalg_cholesky_ex_non_positive_definite(self, dtype, upper):
+    # Batch of 3 matrices:
+    # - batch 0: positive-definite (succeeds, info == 0)
+    # - batch 1: fails at 1st leading minor (A[0, 0] == -1, info == 1)
+    # - batch 2: fails at 2nd leading minor (A[1, 1] == -1, info > 0)
+    batch = torch.stack([
+        torch.tensor([[4.0, 0.0], [0.0, 9.0]], dtype=dtype),
+        torch.tensor([[-1.0, 0.0], [0.0, 4.0]], dtype=dtype),
+        torch.tensor([[4.0, 0.0], [0.0, -1.0]], dtype=dtype),
+    ]).to("tpu")
+    if (
+        dtype == torch.complex128
+        and oss_utils.is_oss()
+        and (ver := utils.libtpu_version()) is not None
+        and ver < (0, 0, 52)
+    ):
+      with self.assertRaisesRegex(  # ASSERT_RAISES_OK=OSS libtpu < 0.0.52 version guard.
+          RuntimeError, "complex128 requires libtpu >= 0.0.52"
+      ):
+        torch.linalg.cholesky_ex(batch, upper=upper, check_errors=False)
+      return
+
+    l_tpu, info_tpu = torch.linalg.cholesky_ex(
+        batch, upper=upper, check_errors=False
+    )
+    info_cpu = info_tpu.cpu()
+    self.assertEqual(info_cpu[0].item(), 0)
+    self.assertEqual(info_cpu[1].item(), 1)
+    self.assertGreater(info_cpu[2].item(), 0)
+
+    # Verify the valid batch element (index 0) still matches CPU factor.
+    l_expected, _ = torch.linalg.cholesky_ex(batch[0].cpu(), upper=upper)
+    self.assertEqual(l_tpu[0].cpu(), l_expected)
+
+  def test_linalg_cholesky_multivariate_normal_and_constraint(self):
+    from torch.distributions import constraints, MultivariateNormal
+
+    covariance = torch.eye(4, device="tpu") * 2.0
+    self.assertTrue(constraints.positive_definite.check(covariance).item())
+    non_pd = torch.tensor([[-1.0, 0.0], [0.0, 1.0]], device="tpu")
+    self.assertFalse(constraints.positive_definite.check(non_pd).item())
+
+    mean = torch.zeros(4, device="tpu")
+    dist = MultivariateNormal(mean, covariance_matrix=covariance)
+    sample = dist.sample((10,))
+    self.assertEqual(sample.shape, (10, 4))
+    self.assertEqual(sample.device.type, "tpu")
+    log_prob = dist.log_prob(sample)
+    self.assertEqual(log_prob.shape, (10,))
+
+    # Test the exact HuggingFace transformers resize_token_embeddings pattern:
+    old_embeddings_weight = torch.randn(100, 32, device="tpu")
+    mean_embeddings = old_embeddings_weight.mean(dim=0)
+    old_centered_embeddings = old_embeddings_weight - mean_embeddings
+    cov = old_centered_embeddings.T @ old_centered_embeddings / 100
+    eps = 1e-4
+    cov_reg = eps * cov + torch.eye(32, device="tpu") * 1e-6
+    self.assertTrue(constraints.positive_definite.check(cov_reg).all().item())
+    mvn = MultivariateNormal(mean_embeddings, covariance_matrix=cov_reg)
+    new_weights = mvn.sample((15,))
+    self.assertEqual(new_weights.shape, (15, 32))
+    self.assertEqual(new_weights.device.type, "tpu")
+
+  def test_linalg_cholesky_ex_out_views_and_strides(self):
+    device = "tpu"
+    # 1. Sliced view with non-zero storage_offset
+    base_l = torch.zeros(2, 2, 2, dtype=torch.float32, device=device)
+    l_slice = base_l[1]  # offset = 4
+    base_info = torch.full((2,), -1, dtype=torch.int32, device=device)
+    info_slice = base_info[1]  # offset = 1
+
+    a = torch.tensor(
+        [[4.0, 0.0], [0.0, 9.0]], dtype=torch.float32, device=device
+    )
+    torch.linalg.cholesky_ex(a, out=(l_slice, info_slice))
+
+    self.assertEqual(l_slice.storage_offset(), 4)
+    self.assertEqual(info_slice.storage_offset(), 1)
+    self.assertTrue(torch.equal(base_l[0].cpu(), torch.zeros(2, 2)))
+    self.assertTrue(
+        torch.equal(base_l[1].cpu(), torch.tensor([[2.0, 0.0], [0.0, 3.0]]))
+    )
+    self.assertTrue(
+        torch.equal(base_info.cpu(), torch.tensor([-1, 0], dtype=torch.int32))
+    )
+
+    # 2. Transposed out tensor strides preserved
+    l_transposed = torch.empty(2, 2, dtype=torch.float32, device=device).t()
+    self.assertEqual(l_transposed.stride(), (1, 2))
+    info = torch.empty((), dtype=torch.int32, device=device)
+    torch.linalg.cholesky_ex(a, out=(l_transposed, info))
+    self.assertEqual(l_transposed.stride(), (1, 2))
+    self.assertTrue(
+        torch.equal(l_transposed.cpu(), torch.tensor([[2.0, 0.0], [0.0, 3.0]]))
+    )
+
   def _assert_all_nan(self, *tensors):
     for t in tensors:
       self.assertTrue(torch.isnan(t.to("cpu")).all())
