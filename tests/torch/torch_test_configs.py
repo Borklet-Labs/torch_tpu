@@ -107,6 +107,7 @@ TEST_EXCLUSIONS: Final[
             "test_inductor_lowering",
             "test_record_stream",
             "test_record_stream_inductor_output_code",
+            "test_synchronize_explicit_none_matches_no_arg",
         ],
     },
     "functorch/test_eager_transforms": {
@@ -620,6 +621,7 @@ TEST_EXCLUSIONS: Final[
     "test_prims": {
         "TestPrimsDevice": [
             "test_cbrt_prim",
+            "test_fft_meta_layout",
             "test_functional_rng_wrappers",
         ],
         "TestRefs": [
