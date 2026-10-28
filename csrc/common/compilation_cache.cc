@@ -177,7 +177,9 @@ void CompilationCache::EnsureInitialized() {
       // The actual thread name will be "tf_tt_compile" in logs.
       "tt_compile", GetNumCompilationThreads());
 
-  if (UsesLocalBackupTaskForTier3Read()) {
+  // When the tier-3 cache is enabled, a local backup compilation is scheduled
+  // in parallel with every tier-3 cache read.
+  if (UsesTier3CompilationCache()) {
     backup_compilation_pool_ = std::make_unique<torch_tpu::ThreadPool>(
         // The actual thread name will be "tf_tt_compile2" in
         // logs. Unfortunately, we cannot use a longer, more
@@ -1199,8 +1201,10 @@ void CompilationCache::GetFromTier3OrCompile(
   absl::StatusOr<SharedLoadedExecutableWithMetadata> executable_or;
   CacheTier tier = CacheTier::kUnknown;
 
-  const bool backup_compilation = UsesLocalBackupTaskForTier3Read();
-  if (backup_compilation) {
+  // If tier-3 cache is enabled, schedule local compilation right away as a
+  // backup to the tier-3 cache read. Whichever succeeds first unblocks
+  // execution.
+  if (uses_tier3) {
     backup_compilation_pool_->Schedule(
         [this, key, kind, builder = std::move(executable_builder),
          options = std::move(compile_options)]() mutable {
@@ -1238,11 +1242,10 @@ void CompilationCache::GetFromTier3OrCompile(
     // Either tier-3 cache is disabled, or the executable was not found in it.
     // Compile the graph and save the result to the tier-1 cache.
     tier = CacheTier::kTier1;
-    if (!backup_compilation) {
+    if (!uses_tier3) {
       // Clang-tidy reports a false positive here that executable_builder and
       // compile_options are used after being moved in the backup compilation
-      // above. It is wrong as that move only happens when backup_compilation is
-      // true.
+      // above. It is wrong as that move only happens when uses_tier3 is true.
       Compile(key, kind, std::move(executable_builder),  // NOLINT
               std::move(compile_options));               // NOLINT
     }

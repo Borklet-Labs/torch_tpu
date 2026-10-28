@@ -1582,46 +1582,6 @@ torch_tpu_py_test(
     ],
 )
 
-# Tests the tier-3 compilation cache without local backup compilation.
-torch_tpu_py_test(
-    name = "ops_unit_test_tier3_cache_no_backup",
-    timeout = "long",  # Needed for asan.
-    srcs = ["ops_unit_test.py"],
-    env = {
-        "TORCH_TPU_INTERNAL_TIER3_COMPILATION_CACHE_LOCAL_BACKUP_TASK": "0",
-        "TORCH_TPU_TIER3_COMPILATION_CACHE_ROOT": "/tmp/my_cache",
-    },
-    main = "ops_unit_test.py",
-    shard_count = 50,
-    tags = [
-        "fails-on-tpu-v7",  # Numeric divergence in scaled_mm on TPU v7.
-        "nomsan",  # TODO: fix the test in msan mode.
-        "notsan",  # TODO: fix the test in tsan mode.
-        "requires-tpu-v5lite",
-    ],
-    deps = [
-        ":op_testing",
-        ":ops_test_data",
-        ":oss_utils",
-        ":quantize_utils",
-        "//csrc/eager:tpu_aten_kernels",
-        "//shims/absl_py/testing:absltest",
-        "//shims/absl_py/testing:flagsaver",
-        "//shims/absl_py/testing:parameterized",
-        "//shims/torch:pytorch",
-        "//shims/torch:testing_internal",
-        "//src/torch_tpu",
-        "//src/torch_tpu/_internal/compile:compiler",
-        "//src/torch_tpu/_internal/compile:flex_attention_redirect",
-        "//src/torch_tpu/_internal/compile:tpu_torch_compile",
-        "//src/torch_tpu/_internal/dynamism",
-        "//src/torch_tpu/_internal/execution_mode",
-        "//src/torch_tpu/_internal/sync",
-        "//src/torch_tpu/_internal/utils:test_utils",
-        "@pypi//scipy",
-    ],
-)
-
 torch_tpu_py_test(
     name = "compiler_option_test",
     srcs = ["compiler_option_test.py"],

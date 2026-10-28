@@ -163,15 +163,6 @@ inline constexpr char kTorchTpuInternalSplitRngStateUpdate[] =
 // placeholders are always enabled.
 inline constexpr char kTorchTpuInternalStorageAwarePlaceholdersEnvVar[] =
     "TORCH_TPU_INTERNAL_STORAGE_AWARE_PLACEHOLDERS";
-// If unset or set to "1", schedule local compilation right away as a backup to
-// tier-3 compilation cache read (whichever succeeds first will unblock
-// execution). If set to "0", local compilation is done only after tier-3
-// compilation cache read fails.
-//
-// This env var is only used when the tier-3 compilation cache is enabled.
-inline constexpr char
-    kTorchTpuInternalTier3CompilationCacheLocalBackupTaskEnvVar[] =
-        "TORCH_TPU_INTERNAL_TIER3_COMPILATION_CACHE_LOCAL_BACKUP_TASK";
 // TorchTPU-internal XLA compiler option overrides, in the format of
 // "key1=value1 key2=value2 ...". It is used to update `xla::CompileOptions`
 // through `env_option_overrides`, and takes precedence over `debug_options` set
@@ -319,8 +310,6 @@ inline constexpr auto kEnvVarToStage =
         {kTorchTpuInternalSkinnyScOffloadEnvVar, SymbolStage::InternalApi()},
         {kTorchTpuInternalSplitRngStateUpdate, SymbolStage::InternalApi()},
         {kTorchTpuInternalStorageAwarePlaceholdersEnvVar,
-         SymbolStage::InternalApi()},
-        {kTorchTpuInternalTier3CompilationCacheLocalBackupTaskEnvVar,
          SymbolStage::InternalApi()},
         {kTorchTpuInternalXlaOptionsEnvVar, SymbolStage::InternalApi()},
         {kTorchTpuLaunchBlockingEnvVar, SymbolStage::Experimental()},
