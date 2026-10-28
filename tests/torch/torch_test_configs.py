@@ -167,6 +167,25 @@ TEST_EXCLUSIONS: Final[
             "test_per_sample_grads_simple",
         ],
     },
+    "inductor/test_flex_attention": {
+        "TestBlockMask": [
+            "test_backward_error_with_none_q_indices",
+            "test_block_mask_check_does_not_specialize_backed_dynamic_length",
+            "test_block_mask_vs_sequence_lengths",
+            "test_broadcasted_head_block_mask",
+            "test_compiling_create_block_mask_no_recompile",
+            "test_create_is_cuda_graphable",
+            "test_eager_tracing_correctness",
+            "test_flex_attention_poison_mod_bwd",
+            "test_flex_attention_poison_mod_fwd",
+            "test_flex_attention_poisoned_rel_logits",
+            "test_forward_pass_with_none_q_indices",
+            "test_upcast_appropriately",
+        ],
+        "TestFlexAttention": "*",
+        "TestLearnableBiases": "*",
+        "TestPagedAttention": "*",
+    },
     "inductor/test_slice_scatter_chunking": {
         "TestSliceScatterChunking": [
             "test_functionalized_copy_chain_compile",

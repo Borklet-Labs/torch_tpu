@@ -505,7 +505,6 @@ torch_tpu_torch_test(
 
 torch_tpu_torch_test(
     name = "inductor_flex_attention_test",
-    notap = "b/563402379",  # NOTAP_OK=torch tests
     torch_test_module = "inductor/test_flex_attention",
 )
 

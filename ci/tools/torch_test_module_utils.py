@@ -57,7 +57,6 @@ DISABLED_TEST_MODULES: Final[frozenset[str]] = frozenset({
     "inductor/test_compiled_optimizers",
     "inductor/test_custom_lowering",
     "inductor/test_decompose_mem_bound_mm",
-    "inductor/test_flex_attention",
     "inductor/test_flex_decoding",
     "inductor/test_fp8",
     "inductor/test_inductor_scheduler",
