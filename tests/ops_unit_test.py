@@ -24279,6 +24279,63 @@ class OpTestingFrameworkTest(op_testing.OpInfoTestBase):
     self.assertEqual(out.dtype, torch.float16)
     utils.assert_close(actual=out.cpu(), expected=expected)
 
+  def test_addmm_bool_scalars_on_float(self):
+    b = torch.ones(2, 2, dtype=torch.float32)
+    m1 = torch.full((2, 2), 2.0, dtype=torch.float32)
+    m2 = torch.full((2, 2), 3.0, dtype=torch.float32)
+    for beta, alpha in ((False, True), (True, True), (True, False)):
+      with self.subTest(beta=beta, alpha=alpha):
+        self.assert_close_tpu_vs_cpu(
+            lambda device, beta=beta, alpha=alpha: torch.addmm(
+                b.to(device),
+                m1.to(device),
+                m2.to(device),
+                beta=beta,
+                alpha=alpha,
+            )
+        )
+
+  def test_addmm_out_dtype_float32_from_low_precision(self):
+    for mat_dtype in (torch.bfloat16, torch.float16):
+      for self_dtype in (mat_dtype, torch.float32):
+        for beta, alpha in ((1.0, 1.0), (0.0, 2.0), (2.0, 3.0)):
+          with self.subTest(
+              mat_dtype=mat_dtype, self_dtype=self_dtype, beta=beta, alpha=alpha
+          ):
+            b_cpu = torch.ones(3, 4, dtype=self_dtype)
+            m1_cpu = torch.ones(3, 5, dtype=mat_dtype)
+            m2_cpu = torch.ones(5, 4, dtype=mat_dtype)
+            expected = beta * b_cpu.float() + alpha * (
+                m1_cpu.float() @ m2_cpu.float()
+            )
+
+            b_tpu = b_cpu.to("tpu")
+            m1_tpu = m1_cpu.to("tpu")
+            m2_tpu = m2_cpu.to("tpu")
+            res = torch.addmm(
+                b_tpu,
+                m1_tpu,
+                m2_tpu,
+                beta=beta,
+                alpha=alpha,
+                out_dtype=torch.float32,
+            )
+            self.assertEqual(res.dtype, torch.float32)
+            utils.assert_close(res.cpu(), expected)
+
+            out_tpu = torch.empty(3, 4, dtype=torch.float32, device="tpu")
+            torch.addmm(
+                b_tpu,
+                m1_tpu,
+                m2_tpu,
+                beta=beta,
+                alpha=alpha,
+                out_dtype=torch.float32,
+                out=out_tpu,
+            )
+            self.assertEqual(out_tpu.dtype, torch.float32)
+            utils.assert_close(out_tpu.cpu(), expected)
+
 
 if __name__ == "__main__":
   absltest.main()

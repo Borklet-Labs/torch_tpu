@@ -3251,6 +3251,24 @@ Device-side assertion tracking was not enabled by user.""",
 
   @parameterized.named_parameters(
       dict(
+          testcase_name="uint8",
+          dtype=torch.uint8,
+          tpu_dtype="uint8",
+          gpu_dtype="Byte",
+      ),
+      dict(
+          testcase_name="int8",
+          dtype=torch.int8,
+          tpu_dtype="int8",
+          gpu_dtype="Char",
+      ),
+      dict(
+          testcase_name="int16",
+          dtype=torch.int16,
+          tpu_dtype="int16",
+          gpu_dtype="Short",
+      ),
+      dict(
           testcase_name="int32",
           dtype=torch.int32,
           tpu_dtype="int32",
@@ -3340,6 +3358,65 @@ Device-side assertion tracking was not enabled by user.""",
 
     with et.assert_raises_message(RuntimeError, gpu=gpu_msg, tpu=tpu_msg):
       torch.addmm(input_, mat1, mat2, out=out)
+
+  def test_addmm_out_mismatched_mat1_mat2_dtypes(self):
+    input_ = torch.ones(3, 4, dtype=torch.float32, device=et.device())
+    mat1 = torch.ones(3, 5, dtype=torch.bfloat16, device=et.device())
+    mat2 = torch.ones(5, 4, dtype=torch.float32, device=et.device())
+    out = torch.empty(3, 4, dtype=torch.float32, device=et.device())
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""addmm(): expected mat1 and mat2 to have the same dtype, got bfloat16 and float32""",
+        gpu="""mat1 and mat2 must have the same dtype, but got BFloat16 and Float""",
+        message_reviewed_by="gunhyun",
+    ):
+      torch.addmm(input_, mat1, mat2, out=out)
+
+    mat1_i8 = torch.ones(3, 5, dtype=torch.int8, device=et.device())
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""addmm(): expected mat1 and mat2 to have the same dtype, got int8 and float32""",
+        gpu="""mat1 and mat2 must have the same dtype, but got Char and Float""",
+        message_reviewed_by="gunhyun",
+    ):
+      torch.addmm(input_, mat1_i8, mat2, out=out)
+
+  def test_addmm_out_mismatched_self_mat1_dtypes(self):
+    self_f32 = torch.ones(3, 4, dtype=torch.float32, device=et.device())
+    mat1_bf16 = torch.ones(3, 5, dtype=torch.bfloat16, device=et.device())
+    mat2_bf16 = torch.ones(5, 4, dtype=torch.bfloat16, device=et.device())
+    out_f32 = torch.empty(3, 4, dtype=torch.float32, device=et.device())
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""addmm(): expected self and mat1 to have the same dtype, got float32 and bfloat16""",
+        gpu="""self and mat2 must have the same dtype, but got Float and BFloat16""",
+        message_reviewed_by="gunhyun",
+    ):
+      torch.addmm(self_f32, mat1_bf16, mat2_bf16, out=out_f32)
+
+  def test_addmm_invalid_out_dtype(self):
+    input_ = torch.ones(3, 4, dtype=torch.float32, device=et.device())
+    mat1 = torch.ones(3, 5, dtype=torch.float32, device=et.device())
+    mat2 = torch.ones(5, 4, dtype=torch.float32, device=et.device())
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""addmm(): expected out_dtype to be the same as input dtype or float32 for float16/bfloat16 inputs, got int32""",
+        gpu="""out_dtype must be the same as input dtype or fp32 for fp16/bf16 inputs""",
+        message_reviewed_by="gunhyun",
+    ):
+      torch.addmm(input_, mat1, mat2, out_dtype=torch.int32)
+
+  def test_addmm_dtype_mismatched_self_dtype(self):
+    input_ = torch.ones(3, 4, dtype=torch.float16, device=et.device())
+    mat1 = torch.ones(3, 5, dtype=torch.bfloat16, device=et.device())
+    mat2 = torch.ones(5, 4, dtype=torch.bfloat16, device=et.device())
+    with et.assert_raises_message(
+        RuntimeError,
+        tpu="""addmm(): expected self dtype to match either out_dtype (float32) or mat1 dtype (bfloat16), got float16""",
+        gpu="""self dtype must match either out_dtype or mat1 dtype""",
+        message_reviewed_by="gunhyun",
+    ):
+      torch.addmm(input_, mat1, mat2, out_dtype=torch.float32)
 
   def test_addmm_outdtype_must_match_out_dtype(self):
     input_ = torch.ones(2, 2, device=et.device(), dtype=torch.float32)
