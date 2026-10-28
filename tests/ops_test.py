@@ -31,6 +31,7 @@ from torch.nn import attention
 from torch_tpu._internal.utils import test_utils
 from tests import dynamism_test_utils
 from tests import op_testing
+from tests import oss_utils
 from tests import quantize_utils
 
 _TEST_CATEGORIES = flags.DEFINE_list(
@@ -1204,6 +1205,44 @@ def _tril_indices_bool_zero_arg_eager_gpu(
   )
 
 
+# Ops that TorchTPU specializes or throws on symbolic dims for, while CPU
+# doesn't, under --check_symbolic_shapes (see the ops_test_symbolic_shapes
+# target). Maps the op name (with `.{variant_test_name}` if the test uses one)
+# to the reason. Such specializations make torch.compile recompile for every new
+# input shape. They usually come from calling `numel()`, `sizes()` etc. on
+# symbolic tensors in C++ kernels: use `torch_tpu::ConstTensor` to fix them.
+# TODO(wan): Fix these ops and make this empty.
+SYMBOLIC_SHAPES_KNOWN_FAILURES = {
+    # go/keep-sorted start
+    # The CPU control of the fused RNN cells runs their Python reference
+    # (`OpInfo.ref`).
+    "_thnn_fused_gru_cell": (
+        "TorchTPU's autograd pins all input and hidden dims"
+    ),
+    "_thnn_fused_lstm_cell": (
+        "TorchTPU's autograd pins all input and hidden dims"
+    ),
+    "fft.fft": "TorchTPU's FFT pins all input dims",
+    "fft.ifft": "TorchTPU's FFT pins all input dims",
+    "fft.rfft": "TorchTPU's FFT pins all input dims with requires_grad",
+    "nn.functional.max_pool1d": "TorchTPU's max_pool pins the channel dim",
+    "nn.functional.max_pool2d": (
+        "TorchTPU's max_pool pins the channel and spatial dims"
+    ),
+    "nn.functional.max_pool3d": (
+        "TorchTPU's max_pool pins the channel and spatial dims"
+    ),
+    # go/keep-sorted end
+}
+if oss_utils.is_oss():
+  # The older PyTorch that OSS pins throws on symbolic dims on CPU for the
+  # samples that TorchTPU's FFT fails on, so the check skips those samples and
+  # these ops pass there.
+  del SYMBOLIC_SHAPES_KNOWN_FAILURES["fft.fft"]
+  del SYMBOLIC_SHAPES_KNOWN_FAILURES["fft.ifft"]
+  del SYMBOLIC_SHAPES_KNOWN_FAILURES["fft.rfft"]
+
+
 def _if_tpu_vs_gpu_compiled(true_value: Any, false_value: Any) -> Any:
   """Returns true_value if the test is TPU vs GPU compiled, false_value otherwise."""
   return true_value if op_testing.is_tpu_vs_gpu_compiled() else false_value
@@ -1254,6 +1293,7 @@ class TestOps(op_testing.OpInfoTestBase):
         dynamism_test_utils.verify_op_supports_dynamism,
         dynamism_test_utils.mark_input_dynamic,
     )
+    self.set_symbolic_shapes_known_failures(SYMBOLIC_SHAPES_KNOWN_FAILURES)
 
   def test_abs(self):
     self.do_test_op(

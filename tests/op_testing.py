@@ -43,7 +43,10 @@ import unittest
 from absl import flags
 from etils import epath
 import safetensors.torch as st
+import sympy
 import torch
+from torch._subclasses import fake_tensor
+from torch.fx.experimental import symbolic_shapes
 from torch.testing._internal import autograd_function_db
 from torch.testing._internal import common_dtype
 from torch.testing._internal import common_methods_invocations
@@ -184,6 +187,16 @@ _CHECK_DYNAMISM_USING_SEED: Final[flags.FlagHolder[int]] = flags.DEFINE_integer(
     "Only picks dimensions with size >=2, "
     "and bounds for size+10. Allows for explicitly setting the seed value for "
     "reproducibility, or -1 for random seed.",
+)
+
+_CHECK_SYMBOLIC_SHAPES: Final[flags.FlagHolder[bool]] = flags.DEFINE_bool(
+    "check_symbolic_shapes",
+    False,
+    "If set, instead of comparing results with the golden results, runs each"
+    " golden input on FakeTensors whose dims of size >= 2 are symbolic, and"
+    " fails if TorchTPU specializes (pins to a constant) or throws on a"
+    " symbolic dim that CPU keeps symbolic. Such specializations make"
+    " torch.compile recompile for every new input shape.",
 )
 
 _OPT_LEVEL: Final[flags.FlagHolder[str]] = flags.DEFINE_string(
@@ -3705,6 +3718,13 @@ def _op_name_for_logging(op: OpInfo, variant: OpVariant) -> str:
   return f"{op.name}.out"
 
 
+def _symbolic_shapes_key(op: OpInfo) -> str:
+  """Returns the key of `op` in the --check_symbolic_shapes known failures."""
+  if op.variant_test_name:
+    return f"{op.name}.{op.variant_test_name}"
+  return op.name
+
+
 def _tensor_tree_map(
     leaf_func: Callable[[Any], Any], x: _pytree.PyTree
 ) -> _pytree.PyTree:
@@ -4745,6 +4765,156 @@ def _compute_grad(
   return _tensor_tree_map(get_grad, input_value)
 
 
+@dataclasses.dataclass(frozen=True)
+class _SymbolicRunResult:
+  """The result of running an op on FakeTensors with symbolic dims.
+
+  Attributes:
+    specialized: The names (e.g. `args[0].size(1)`) of the symbolic input dims
+      that running the op specialized, i.e. pinned to a constant.
+    error: The exception raised by the op, or None if it succeeded.
+  """
+
+  specialized: frozenset[str]
+  error: Exception | None = None
+
+
+def _has_differentiable_input(op_input: OpInput) -> bool:
+  """Returns whether `op_input.input_value` has a float or complex tensor."""
+  return any(
+      isinstance(t, torch.Tensor)
+      and (t.is_floating_point() or t.is_complex())
+      and t.numel() > 0
+      for t in _pytree.tree_leaves(op_input.input_value)
+  )
+
+
+def _pinned_symbols(shape_env: symbolic_shapes.ShapeEnv) -> set[sympy.Basic]:
+  """Returns the symbols that `shape_env` pinned to a constant.
+
+  A symbol is pinned if it was replaced with a constant (e.g. by a guard
+  `s0 == 5` from calling `size()` on a FakeTensor), or if it occurs in a guard
+  that equates an expression with a constant (e.g. `s0 * s1 == 12` from calling
+  `numel()`). Either way, torch.compile recompiles when the dim changes.
+
+  Args:
+    shape_env: The ShapeEnv that the op ran with.
+  """
+  pinned: set[sympy.Basic] = {
+      symbol
+      for symbol in shape_env.var_to_val
+      if shape_env.replace(symbol).is_number
+  }
+  for guard in shape_env.guards:
+    expr = guard.expr
+    if isinstance(expr, sympy.Eq) and (
+        expr.lhs.is_number or expr.rhs.is_number
+    ):
+      pinned |= expr.free_symbols
+  return pinned
+
+
+def _run_with_symbolic_dims(
+    op_func: Callable[..., Any],
+    op_input: OpInput,
+    device: torch.device,
+    *,
+    requires_grad: bool,
+) -> _SymbolicRunResult:
+  """Runs `op_func` on FakeTensors made from `op_input` with symbolic dims.
+
+  Every dim of size >= 2 of every input tensor (including tensors nested in args
+  and kwargs) gets a backed symbolic size whose hint is the real size. Dims of
+  size 0 and 1 stay static, as torch.compile always specializes them. The input
+  tensors must be strided.
+
+  Args:
+    op_func: The function to run.
+    op_input: The input to run `op_func` on. Not mutated.
+    device: The device of the FakeTensors.
+    requires_grad: If True, the non-empty float and complex tensors in
+      `op_input.input_value` require grad (like with --compute_grad), and the
+      gradients of the outputs w.r.t. them are computed too, so that autograd
+      kernels and backward formulas are covered.
+
+  Returns:
+    The input dims that the op specialized, or the exception it raised.
+  """
+  device_input = to(copy.deepcopy(op_input), device)
+  shape_env = symbolic_shapes.ShapeEnv()
+  fake_mode = fake_tensor.FakeTensorMode(
+      shape_env=shape_env, allow_non_fake_inputs=True
+  )
+  # Maps each input symbol to the input dims that have it. With duck sizing,
+  # dims that have the same size share a symbol.
+  dim_names: dict[sympy.Basic, list[str]] = collections.defaultdict(list)
+  grad_inputs = []
+
+  def make_fake(
+      prefix: str, needs_grad: bool, path: _pytree.KeyPath, t: Any
+  ) -> Any:
+    if not isinstance(t, torch.Tensor):
+      return t
+    differentiable = (t.is_floating_point() or t.is_complex()) and t.numel() > 0
+    fake = fake_mode.from_tensor(
+        t,
+        symbolic_context=symbolic_shapes.StatelessSymbolicContext(
+            dynamic_sizes=[
+                symbolic_shapes.DimDynamic.DYNAMIC
+                if size >= 2
+                else symbolic_shapes.DimDynamic.STATIC
+                for size in t.shape
+            ]
+        ),
+    )
+    for dim, size in enumerate(fake.shape):
+      if isinstance(size, torch.SymInt):
+        dim_names[size.node.expr].append(
+            f"{prefix}{_pytree.keystr(path)}.size({dim})"
+        )
+    if needs_grad and differentiable:
+      fake.requires_grad_(True)
+      grad_inputs.append(fake)
+    return fake
+
+  def make_fakes(
+      prefix: str, tree: _pytree.PyTree, needs_grad: bool = False
+  ) -> _pytree.PyTree:
+    return _pytree.tree_map_with_path(
+        functools.partial(make_fake, prefix, needs_grad), tree
+    )
+
+  try:
+    input_value = make_fakes(
+        "input", device_input.input_value, needs_grad=requires_grad
+    )
+    args = make_fakes("args", device_input.args)
+    kwargs = make_fakes("kwargs", device_input.kwargs)
+    with fake_mode:
+      result = op_func(input_value, *args, **kwargs)
+      outputs = [
+          t
+          for t in _pytree.tree_leaves(result)
+          if isinstance(t, torch.Tensor) and t.requires_grad
+      ]
+      if grad_inputs and outputs:
+        torch.autograd.grad(
+            outputs,
+            grad_inputs,
+            grad_outputs=[torch.ones_like(t) for t in outputs],
+            allow_unused=True,
+        )
+  except Exception as e:  # pylint: disable=broad-except
+    return _SymbolicRunResult(specialized=frozenset(), error=e)
+  return _SymbolicRunResult(
+      specialized=frozenset(
+          name
+          for symbol in _pinned_symbols(shape_env)
+          for name in dim_names.get(symbol, ())
+      )
+  )
+
+
 def _dtypes_to_test_for_op(
     op: OpInfo, recording: bool
 ) -> Sequence[torch.dtype]:
@@ -4872,6 +5042,9 @@ class TorchTpuTestBase(seed_test_utils.RepeatableTest, common_utils.TestCase):
     self.golden_device = (
         torch.device("cuda") if _gen_gpu_golden_mode() else None
     )
+    self.symbolic_shapes_known_failures: Mapping[str, str] = {}
+    # Whether a known --check_symbolic_shapes failure was observed.
+    self._known_symbolic_shapes_failure_seen = False
 
   def set_accuracy_overrides(
       self,
@@ -4912,6 +5085,21 @@ class TorchTpuTestBase(seed_test_utils.RepeatableTest, common_utils.TestCase):
 
     self.dynamism_filter_fn = filter_fn
     self.dynamism_mark_dynamic_fn = mark_dynamic_fn
+
+  def set_symbolic_shapes_known_failures(
+      self, known_failures: Mapping[str, str]
+  ) -> None:
+    """Sets the ops that are known to fail --check_symbolic_shapes.
+
+    Args:
+      known_failures: Maps the name of an op (with `.{variant_test_name}` if the
+        test uses one) to the reason why TorchTPU specializes or throws on its
+        symbolic dims. Such an op must still fail the check on some sample, so
+        that the entry is removed once the op is fixed.
+
+    To be called by a subclass's setUp() method.
+    """
+    self.symbolic_shapes_known_failures = known_failures
 
   def skipTest(self, reason: typing.Any) -> typing.NoReturn:
     """Overrides TestCase.skipTest to bypass skips during dtype exclusion collection."""
@@ -5821,6 +6009,116 @@ class OpInfoTestBase(TorchTpuTestBase):
           accuracy_override=accuracy_override,
       )
 
+  def _check_symbolic_shapes_sub_test(
+      self,
+      subtest_name: str,
+      op: OpInfo,
+      variant: OpVariant,
+      dtype: torch.dtype,
+      *,
+      golden_input: OpInput,
+      golden_result: Any,
+      **unused_run_op_kwargs: Any,
+  ) -> None:
+    """Checks that TorchTPU keeps the symbolic dims that CPU keeps.
+
+    Runs `golden_input` on CPU and TorchTPU FakeTensors with symbolic dims (see
+    `_run_with_symbolic_dims`), once without and once with autograd, and fails
+    if TorchTPU specializes a dim that CPU doesn't, or throws when CPU doesn't.
+    CPU is the control: specializations that upstream PyTorch also makes (e.g.
+    for data-dependent output shapes or shape arguments) are expected.
+
+    Args:
+      subtest_name: The name of the subtest.
+      op: The op to check.
+      variant: The variant of the op to check.
+      dtype: The dtype of the op's inputs.
+      golden_input: The input to check the op with.
+      golden_result: The golden result for `golden_input`. If it's an exception,
+        the check is skipped, as the op fails on real tensors too.
+      **unused_run_op_kwargs: The `_run_op` kwargs of the other test modes.
+    """
+    del dtype, unused_run_op_kwargs  # Unused.
+    op_name = _op_name_for_logging(op, variant)
+    if isinstance(golden_result, Exception):
+      print(
+          f"Skipping {subtest_name} as it failed on"
+          f" {self.golden_device_name()}: {golden_result}",
+          flush=True,
+      )
+      return
+    # torch.compile doesn't support sparse tensors (see _compiled_supports_op).
+    if any(
+        isinstance(t, torch.Tensor) and t.layout != torch.strided
+        for t in _pytree.tree_leaves(
+            (golden_input.input_value, golden_input.args, golden_input.kwargs)
+        )
+    ):
+      print(f"Skipping {subtest_name} as it has sparse tensors.", flush=True)
+      return
+
+    print(f">>>> Checking symbolic shapes in {subtest_name} ...", flush=True)
+    if _PRINT_OP_INPUTS.value > 0:
+      print_op_input(golden_input, data=_PRINT_OP_INPUTS.value > 1)
+    grad_modes = [False]
+    # Autograd doesn't work with inplace ops, as they erase the input tensor.
+    if (
+        op.supports_autograd
+        and variant != OpVariant.INPLACE
+        and _has_differentiable_input(golden_input)
+    ):
+      grad_modes.append(True)
+    failures = []
+    for requires_grad in grad_modes:
+      run_with_symbolic_dims = functools.partial(
+          _run_with_symbolic_dims, requires_grad=requires_grad
+      )
+      cpu_device = torch.device("cpu")
+      cpu = run_with_symbolic_dims(
+          _op_func(op, variant, cpu_device), golden_input, cpu_device
+      )
+      if cpu.error is not None:
+        # The control can't tell which specializations are expected.
+        print(
+            f"Skipping {subtest_name} (requires_grad={requires_grad}) as CPU"
+            f" threw on symbolic dims: {type(cpu.error).__name__}:"
+            f" {cpu.error}",
+            flush=True,
+        )
+        continue
+      tpu_device = torch.device("tpu")
+      tpu = run_with_symbolic_dims(
+          _op_func(op, variant, tpu_device), golden_input, tpu_device
+      )
+      if tpu.error is not None:
+        failures.append(
+            f"With requires_grad={requires_grad}, TorchTPU threw on symbolic"
+            f" dims but CPU didn't: {type(tpu.error).__name__}: {tpu.error}"
+        )
+      elif extra := tpu.specialized - cpu.specialized:
+        failures.append(
+            f"With requires_grad={requires_grad}, TorchTPU specialized"
+            f" {sorted(extra)}, which CPU keeps symbolic (CPU specialized"
+            f" {sorted(cpu.specialized)})."
+        )
+    if not failures:
+      return
+
+    message = (
+        f"{op_name}() specializes or throws on symbolic dims on TorchTPU but"
+        " not on CPU, which makes torch.compile recompile for every new"
+        f" shape.\n{golden_input.summary()}\n"
+        + "\n".join(failures)
+    )
+    known_failure = self.symbolic_shapes_known_failures.get(
+        _symbolic_shapes_key(op)
+    )
+    if known_failure is not None:
+      self._known_symbolic_shapes_failure_seen = True
+      print(f"Known failure ({known_failure}): {message}", flush=True)
+      return
+    self.fail(message)
+
   def _test_torch_tpu_vs_golden(
       self,
       op: OpInfo,
@@ -5941,6 +6239,10 @@ class OpInfoTestBase(TorchTpuTestBase):
 
       if _perf_mode():
         test = functools.partial(self._run_on_tpu, measure_perf=True)
+      elif _CHECK_SYMBOLIC_SHAPES.value:
+        test = functools.partial(
+            self._check_symbolic_shapes_sub_test, golden_result=golden_result
+        )
       else:
         test = functools.partial(
             self._sub_test,
@@ -5967,6 +6269,23 @@ class OpInfoTestBase(TorchTpuTestBase):
                   out_dtype_override=out_dtype_override,
               )
           )
+
+  def _assert_known_symbolic_shapes_failure_seen(
+      self, op_name: str, variant_test_name: str | None
+  ) -> None:
+    """Fails if a known --check_symbolic_shapes failure no longer fails."""
+    key = f"{op_name}.{variant_test_name}" if variant_test_name else op_name
+    reason = self.symbolic_shapes_known_failures.get(key)
+    if reason is None or self._known_symbolic_shapes_failure_seen:
+      return
+    # Runs restricted to some dtypes may miss the failing samples.
+    if _DTYPES.value != ["all"] or self._subtests_run == 0:
+      return
+    self.fail(
+        f"{key} is a known --check_symbolic_shapes failure ({reason}), but no"
+        " sample specialized or threw on TorchTPU. If it's fixed, remove it"
+        " from the known failures."
+    )
 
   def do_test_op(
       self,
@@ -6095,7 +6414,13 @@ class OpInfoTestBase(TorchTpuTestBase):
 
       # (variant, excluded dtypes, check_op_failures) for each variant to test.
       variants = [(OpVariant.BASE, exclude_dtypes, check_op_failures)]
-      if check_out_variant and _supports_out(op):
+      # --check_symbolic_shapes skips the out variant: it dispatches to the same
+      # autograd and Meta kernels as the base variant on FakeTensors.
+      if (
+          check_out_variant
+          and _supports_out(op)
+          and not _CHECK_SYMBOLIC_SHAPES.value
+      ):
         variants.append((OpVariant.OUT, exclude_dtypes, check_op_failures))
       if op.inplace_variant:
         variants.append((
@@ -6155,6 +6480,11 @@ class OpInfoTestBase(TorchTpuTestBase):
             )
 
     _run_and_print_exception(_test_op_variants)
+
+    if _CHECK_SYMBOLIC_SHAPES.value:
+      self._assert_known_symbolic_shapes_failure_seen(
+          op_name, variant_test_name
+      )
 
     # We have available dtypes to check and not intentionally excluded, but every sample disappeared, which is not expected.
     if _torch_tpu_vs_gpu_mode() and not is_compiled_mode():
@@ -6456,6 +6786,26 @@ def set_up_test_module() -> None:
     # will run in all three modes without --config=cuda, and we don't want the
     # test to always fail in this case.
     sys.exit(0)
+
+  if _CHECK_SYMBOLIC_SHAPES.value and (
+      not _torch_tpu_vs_gpu_mode()
+      or is_compiled_mode()
+      or _COMPUTE_GRAD.value
+      or _CHECK_DYNAMISM_USING_SEED.value
+  ):
+    raise ValueError(
+        "--check_symbolic_shapes reads the GPU golden inputs of the"
+        " torch_tpu_vs_gpu test mode and checks gradients itself, so it can't"
+        " be combined with another --test_mode, --use_compiled,"
+        " --compute_grad or --check_dynamism_using_seed."
+    )
+  if _CHECK_SYMBOLIC_SHAPES.value:
+    # Don't log every symbol and guard that the checks create.
+    logging.getLogger(symbolic_shapes.__name__).setLevel(logging.WARNING)
+    # Don't log the traceback of every exception that an op raises on
+    # FakeTensors: the checks report them, and the logs can exceed the size of
+    # the test output that CI shows.
+    logging.getLogger(fake_tensor.__name__).setLevel(logging.CRITICAL)
 
   # Note that global APIs must be configured before seeding PyTorch RNGs on TPU
   # as it triggers compilation of the seed modules.
