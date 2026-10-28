@@ -151,9 +151,9 @@ TEST_F(EventsQueueTest, IgnoresAlreadyMaterializedBuffers) {
 
   // Create a fully-materialized buffer (filled with zeros) and record its
   // DataPtr creation.
-  TT_ASSERT_OK_AND_ASSIGN(auto ref,
-                          TpuMallocAndMemcpyHtoD(/*host_data=*/nullptr,
-                                                 mlir::ElementType::UI8, {1}));
+  TT_ASSERT_OK_AND_ASSIGN(
+      auto ref,
+      HostToDeviceTransfer::FromZeroes(mlir::ElementType::UI8, {1}).Run());
   ASSERT_TRUE(ref.Synchronize().ok()) << ref.Synchronize();
   ref.device_buffer_list()->IncrementLiveDataPtrs(ref.index());
 
@@ -171,9 +171,9 @@ TEST_F(EventsQueueTest, ClearsBuffersAfterMaterialization) {
   ScopedPythonContextCapturer capturer(OpName::kEmpty);
   Shape shape(Dimensions{1}, mlir::ElementType::UI8);
 
-  TT_ASSERT_OK_AND_ASSIGN(auto input_ref,
-                          TpuMallocAndMemcpyHtoD(/*host_data=*/nullptr,
-                                                 mlir::ElementType::UI8, {1}));
+  TT_ASSERT_OK_AND_ASSIGN(
+      auto input_ref,
+      HostToDeviceTransfer::FromZeroes(mlir::ElementType::UI8, {1}).Run());
   ASSERT_TRUE(input_ref.Synchronize().ok()) << input_ref.Synchronize();
   input_ref.device_buffer_list()->IncrementLiveDataPtrs(input_ref.index());
 

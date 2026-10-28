@@ -123,15 +123,15 @@ absl::StatusOr<DeviceBufferRef> MakeBuffer(
     std::vector<uint8_t> scalar_bytes(scalar_tensor.storage().nbytes());
     std::memcpy(scalar_bytes.data(), scalar_tensor.data_ptr(),
                 scalar_tensor.storage().nbytes());
-    const void* scalar_data = scalar_bytes.data();
 
     // Then asynchronously copy it to device as a materialized DeviceBufferRef.
     TT_ASSIGN_OR_RETURN(mlir::ElementType element_type,
                         ConvertTo<mlir::ElementType>(scalar_type));
-    TT_ASSIGN_OR_RETURN(
-        DeviceBufferRef buf_ref,
-        TpuMallocAndMemcpyHtoD(scalar_data, element_type, /*dimensions=*/{},
-                               std::move(scalar_bytes)));
+    TT_ASSIGN_OR_RETURN(DeviceBufferRef buf_ref,
+                        HostToDeviceTransfer::FromBytesVector(
+                            std::move(scalar_bytes), element_type,
+                            /*dimensions=*/{})
+                            .Run());
     RecordAsyncHostToDevice(buf_ref);
     scalar_map.insert({hashable_scalar, buf_ref});
     return buf_ref;
