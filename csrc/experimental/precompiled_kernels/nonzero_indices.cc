@@ -28,10 +28,11 @@
 #include "csrc/common/cache_key.h"
 #include "csrc/common/compilation.h"
 #include "csrc/common/compilation_spec.h"
-#include "csrc/common/compile_options_key.h"
 #include "csrc/common/dimension_types.h"
 #include "csrc/common/error_utils.h"
 #include "csrc/common/shape.h"
+#include "csrc/common/unbounded_dynamic_kernel_registry.h"
+#include "csrc/experimental/precompiled_kernels/kernel_utils.h"
 #include "csrc/experimental/precompiled_kernels/mosaic_custom_call.h"
 #include "csrc/internal/mosaic/kiln/kiln.h"
 #include "csrc/ops/op_names.h"
@@ -258,8 +259,8 @@ std::vector<xla::Shape> NonzeroParameters() {
   return {input, output_view, dims, dims};
 }
 
-}  // namespace
-
+// Returns the UnboundedDynamicExecutionMetadata for the nonzero indices
+// kernel.
 UnboundedDynamicExecutionMetadata MakeNonzeroDynamicMetadata() {
   // One logical input, the F32[M,N] payload. The S64[K,2] destination is a
   // donated output: `Execute` allocates it directly in the S32[R,128] view the
@@ -303,6 +304,8 @@ UnboundedDynamicExecutionMetadata MakeNonzeroDynamicMetadata() {
   return dynamic_meta;
 }
 
+// Builds and compiles the Mosaic nonzero kernel. See
+// `GetNonzeroUnboundedDynamicKernel` for its contract.
 absl::StatusOr<std::unique_ptr<xla::PjRtLoadedExecutable>>
 BuildNonzeroIndicesExecutable(xla::PjRtClient& client,
                               UniqueCompileOptions compile_options) {
@@ -326,7 +329,8 @@ BuildNonzeroIndicesExecutable(xla::PjRtClient& client,
       /*context=*/"failed to compile the nonzero indices kernel");
 }
 
-CompilationCacheKey NonZeroCacheKey() {
+// Returns the ShapelessKey a nonzero graph would be lowered to.
+ShapelessKey NonZeroCacheKey() {
   // Only ranks and dtypes reach the shapeless key, so these extents are
   // placeholders. The rank must be 2: the kernel only accepts F32[M,N].
   const Dimensions input_dims = {-1, -1};
@@ -344,8 +348,18 @@ CompilationCacheKey NonZeroCacheKey() {
                 out = op.AddOutput(out_dims, mlir::ElementType::I64);
               });
   graph.AddGraphOutput(out);
-  return CompilationCacheKey(graph.GetKey(), CompileOptionsKey({}),
-                             "nonzero_2d");
+  return graph.GetKey().shapeless_key();
+}
+
+}  // namespace
+
+UnboundedDynamicKernel GetNonzeroUnboundedDynamicKernel() {
+  return UnboundedDynamicKernel{
+      .build = BuildNonzeroIndicesExecutable,
+      .metadata = MakeNonzeroDynamicMetadata(),
+      .key =
+          MakeUnboundedDynamicKernelCacheKey(NonZeroCacheKey(), "nonzero_2d"),
+  };
 }
 
 }  // namespace torch_tpu

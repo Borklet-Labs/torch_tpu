@@ -1407,6 +1407,52 @@ torch_tpu_cc_library(
     ],
 )
 
+torch_tpu_cc_library(
+    name = "unbounded_dynamic_kernel_registry",
+    srcs = ["unbounded_dynamic_kernel_registry.cc"],
+    hdrs = ["unbounded_dynamic_kernel_registry.h"],
+    deps = [
+        ":cache_key",
+        ":compilation",
+        ":compilation_spec",
+        ":error_utils",
+        ":shape",
+        "@com_google_absl//absl/base:no_destructor",
+        "@com_google_absl//absl/base:nullability",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/types:span",
+        "@xla//xla/pjrt:pjrt_client",
+        "@xla//xla/pjrt:pjrt_executable",
+    ],
+)
+
+torch_tpu_cc_test(
+    name = "unbounded_dynamic_kernel_registry_test",
+    srcs = ["unbounded_dynamic_kernel_registry_test.cc"],
+    requires_libtpu = True,
+    deps = [
+        ":cache_key",
+        ":compilation",
+        ":compilation_spec",
+        ":compile_options_key",
+        ":dimension_types",
+        ":error_utils",
+        ":fingerprint_utils",
+        ":shape",
+        ":unbounded_dynamic_kernel_registry",
+        "//csrc/common:oss_test_main",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/types:span",
+        "@stablehlo//stablehlo/integrations/cpp/builder:attr_type_builder_util",
+        "@xla//xla/pjrt:pjrt_client",
+        "@xla//xla/pjrt:pjrt_executable",
+    ],
+)
+
 oss_target(
     torch_tpu_cc_library,
     name = "contain",
